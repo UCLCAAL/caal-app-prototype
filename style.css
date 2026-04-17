@@ -140,6 +140,25 @@ body {
   background: #fafcfc;
 }
 
+/* Group headers inside the form panel */
+.section-header {
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  padding: 0;
+  margin-top: 1rem;
+  margin-bottom: 0.2rem;
+  box-shadow: none;
+}
+
+.detail-section-title {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
 /*  2 column layout for fields inside the side panel */
 .detail-grid {
   display: grid;
