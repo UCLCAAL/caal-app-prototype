@@ -1,0 +1,56 @@
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "properties": {
+        "caal_id": "Mon_KAZ_0001",
+        "primary_name": "Test Settlement A",
+        "country": "Kazakhstan",
+        "classification": "Archaeological site",
+        "monument_type1": "Settlement",
+        "cultural_period1": "Early Iron Age",
+        "recorder": "CAAL test user",
+        "notes": "Prototype sample point for map and side-panel testing."
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [71.4304, 51.1282]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "caal_id": "Mon_KAZ_0002",
+        "primary_name": "Burial Complex B",
+        "country": "Kazakhstan",
+        "classification": "Archaeological site",
+        "monument_type1": "Burial site",
+        "cultural_period1": "Bronze Age",
+        "recorder": "CAAL test user",
+        "notes": "Second sample point with different values."
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [76.886, 43.2389]
+      }
+    },
+    {
+      "type": "Feature",
+      "properties": {
+        "caal_id": "Mon_KAZ_0003",
+        "primary_name": "Fortified Ridge C",
+        "country": "Kazakhstan",
+        "classification": "Archaeological site",
+        "monument_type1": "Fortification",
+        "cultural_period1": "Medieval",
+        "recorder": "CAAL test user",
+        "notes": "Third sample point for checking click behaviour and panel updates."
+      },
+      "geometry": {
+        "type": "Point",
+        "coordinates": [69.2401, 41.2995]
+      }
+    }
+  ]
+}
