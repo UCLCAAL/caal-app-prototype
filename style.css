@@ -50,6 +50,12 @@ body {
   font-size: 0.95rem;
 }
 
+.map-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
 .lang-switcher {
   display: flex;
   align-items: center;
