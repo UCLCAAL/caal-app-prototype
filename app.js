@@ -1,3 +1,4 @@
+// These are labels for the app UI itself, not the record values stored in data.
 const translations = {
   en: {
     app_title: "CAAL App Prototype",
@@ -52,6 +53,7 @@ const translations = {
   }
 };
 
+// These are for stored lookup keys in the data, such as "burial_site" or "bronze_age".
 const lookupLabels = {
   country: {
     kazakhstan: {
@@ -96,12 +98,20 @@ const lookupLabels = {
   }
 };
 
+
+// App state stuff
+// currentLang = selected interface language
+// selectedProperties = currently selected record
+// isEditMode = whether the side panel is in edit mode
 let currentLang = "en";
 let selectedProperties = null;
+let isEditMode = false;
 
+//  HTML page elements 
 const languageSelect = document.getElementById("languageSelect");
 const recordDetails = document.getElementById("recordDetails");
 
+//  the Leaflet map
 const map = L.map("map").setView([48.0, 67.0], 5);
 
 L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
@@ -109,10 +119,15 @@ L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
   attribution: "&copy; OpenStreetMap contributors"
 }).addTo(map);
 
+
+//  translation helper for UI labels
+// Example: t("country") -> "Country" or "Страна"
 function t(key) {
   return translations[currentLang]?.[key] || translations.en[key] || key;
 }
 
+// generic safe display helper
+// Prevents blank/null values appearing badly
 function safeValue(value) {
   if (value === null || value === undefined || value === "") {
     return "Not recorded";
@@ -120,12 +135,30 @@ function safeValue(value) {
   return value;
 }
 
+//  Lookup display helper
+// Converts stored keys into translated labels
+// Example: "burial_site" -> "Погребальный памятник" in Russian
 function displayLookup(fieldName, rawValue) {
   if (rawValue === null || rawValue === undefined || rawValue === "") {
     return "Not recorded";
   }
 
-  function getLookupOptions(fieldName) {
+  const fieldLookup = lookupLabels[fieldName];
+  if (!fieldLookup) {
+    return rawValue;
+  }
+
+  const entry = fieldLookup[rawValue];
+  if (!entry) {
+    return rawValue;
+  }
+
+  return entry[currentLang] || entry.en || rawValue;
+}
+
+// Build dropdown options for editable lookup fields
+// This turns the lookup dictionary into <option> values
+function getLookupOptions(fieldName) {
   const fieldLookup = lookupLabels[fieldName];
   if (!fieldLookup) {
     return [];
@@ -137,6 +170,7 @@ function displayLookup(fieldName, rawValue) {
   }));
 }
 
+//  read-only display mode in side panel
 function renderDisplayMode(properties) {
   recordDetails.innerHTML = `
     <div class="record-title">
@@ -183,12 +217,15 @@ function renderDisplayMode(properties) {
     </div>
   `;
 
+  // When Edit is clicked, switch mode and re-render
   document.getElementById("editRecordBtn").addEventListener("click", () => {
     isEditMode = true;
     renderRecordDetails(selectedProperties);
   });
 }
 
+// edit mode in side panel
+//  only monument_type1 is editable
 function renderEditMode(properties) {
   const monumentTypeOptions = getLookupOptions("monument_type1")
     .map((option) => {
@@ -247,6 +284,7 @@ function renderEditMode(properties) {
     </div>
   `;
 
+  // Save the changed dropdown value into the selected record in memory
   document.getElementById("saveRecordBtn").addEventListener("click", () => {
     const newMonumentType = document.getElementById("edit_monument_type1").value;
     selectedProperties.monument_type1 = newMonumentType;
@@ -254,25 +292,16 @@ function renderEditMode(properties) {
     renderRecordDetails(selectedProperties);
   });
 
+  // Cancel edit mode without saving changes
   document.getElementById("cancelEditBtn").addEventListener("click", () => {
     isEditMode = false;
     renderRecordDetails(selectedProperties);
   });
 }
 
-  const fieldLookup = lookupLabels[fieldName];
-  if (!fieldLookup) {
-    return rawValue;
-  }
 
-  const entry = fieldLookup[rawValue];
-  if (!entry) {
-    return rawValue;
-  }
-
-  return entry[currentLang] || entry.en || rawValue;
-}
-
+// apply current language to the interface
+// Re-renders current selected record too
 function applyLanguage() {
   document.documentElement.lang = currentLang;
 
@@ -292,6 +321,8 @@ function applyLanguage() {
   }
 }
 
+
+// main side-panel - chooses display mode or edit mode
 function renderRecordDetails(properties) {
   selectedProperties = properties;
 
@@ -302,6 +333,7 @@ function renderRecordDetails(properties) {
   }
 }
 
+//  style for GeoJSON points
 function pointStyle(feature, latlng) {
   return L.circleMarker(latlng, {
     radius: 7,
@@ -311,11 +343,13 @@ function pointStyle(feature, latlng) {
   });
 }
 
+// language dropdown event
 languageSelect.addEventListener("change", (event) => {
   currentLang = event.target.value;
   applyLanguage();
 });
 
+//  load local GeoJSON data, then create map layer and click behaviour
 fetch("./data/monuments_sample.geojson")
   .then((response) => {
     if (!response.ok) {
@@ -337,6 +371,7 @@ fetch("./data/monuments_sample.geojson")
         `);
 
         layer.on("click", () => {
+          isEditMode = false; // always reset to display mode when selecting a new feature
           renderRecordDetails(props);
         });
       }
