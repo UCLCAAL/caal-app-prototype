@@ -1,10 +1,6 @@
-/* =========================================================
-   CAAL APP PROTOTYPE - MAIN STYLESHEET
-   ---------------------------------------------------------
-   ORDER MATTERS IN CSS!
+/* ORDER MATTERS IN CSS!
    More specific rules and overrides should come AFTER the   more general rules they are meant to override.
 
-   General rule:
    1. Variables / reset
    2. Page layout
    3. Shared UI elements
@@ -12,8 +8,7 @@
    5. Field cards and section headers
    6. Form controls
    7. Map / popup styling
-   8. Responsive overrides
-   ========================================================= */
+   8. Responsive overrides  */
 
 
 /* =========================================================
@@ -260,31 +255,52 @@ body {
 
 
 /* =========================================================
-   DETAIL GRID
-   ---------------------------------------------------------
-   Two-column layout for record fields */
-.detail-grid {
+   GROUP STACK -    Outer vertical stack of sections */
+.group-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+/* =========================================================
+   GROUP BLOCK -    This creates the subtle background box around the group (e.g. Basic, Monument etc). */
+.group-block {
+  padding: 0.9rem;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: var(--panel-soft-2);
+}
+
+/* Inner grid for fields within one group */
+.group-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 0.8rem;
 }
 
-/* Full-width items span both columns */
-.detail-item.full-width {
+/* EMPTY SECTION MESSAGE= */
+.section-empty {
   grid-column: 1 / -1;
+  padding: 0.7rem 0.85rem;
+  color: var(--muted);
+  font-size: 0.92rem;
+  border: 1px dashed var(--border);
+  border-radius: 8px;
+  background: #fafcfc;
 }
 
-
 /* =========================================================
-   NORMAL FIELD CARDS
-   ---------------------------------------------------------
-   Standard field containers, group headers are overridden LATER below. */
+   NORMAL FIELD CARDS */
 .detail-item {
   padding: 0.75rem;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: var(--panel-soft);
+  background: var(--panel);
   box-shadow: var(--shadow-soft);
+}
+
+.detail-item.full-width {
+  grid-column: 1 / -1;
 }
 
 .detail-label {
@@ -302,25 +318,17 @@ body {
   word-break: break-word;
 }
 
-
 /* =========================================================
-   SECTION HEADERS
-   ---------------------------------------------------------
-   These come AFTER .detail-item so they can override */
+   SECTION HEADERS - sit INSIDE the group block = */
 .detail-item.section-header {
   grid-column: 1 / -1;
-
-  /* remove card look */
-  background: linear-gradient(to right, var(--panel-soft-2), transparent 75%);
+  background: transparent;
   border: none;
   border-bottom: 1px solid var(--border);
   border-radius: 0;
   box-shadow: none;
-
-  /* spacing */
-  padding: 0.45rem 0 0.5rem;
-  margin-top: 1rem;
-  margin-bottom: 0.1rem;
+  padding: 0 0 0.5rem;
+  margin: 0 0 0.2rem;
 }
 
 .detail-item.section-header .detail-section-title {
@@ -397,7 +405,7 @@ textarea.form-control {
     border-top: 1px solid var(--border);
   }
 
-  .detail-grid {
+  .group-grid {
     grid-template-columns: 1fr;
   }
 }
