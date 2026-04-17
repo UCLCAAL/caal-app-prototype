@@ -446,73 +446,75 @@ function makeNewBlankFeature() {
   };
 }
 
+// display HELPER: render one section/group wrapper, where title = Basic / Monument / etc., innerHtml = all the fields/cards inside that group
+function renderGroupBlock(title, innerHtml, hasValues = true) {
+  const content = hasValues
+    ? innerHtml
+    : `<div class="section-empty">${t("no_data_in_section")}</div>`;
+
+  return `
+    <div class="group-block">
+      <div class="group-grid">
+        <div class="detail-item full-width section-header">
+          <span class="detail-section-title">${title}</span>
+        </div>
+        ${content}
+      </div>
+    </div>
+  `;
+}
+
 // DISPLAY MODE (read-only) in side panel
 // Keeps the same section names as existing form: Basic / Monument / Administration / Measurements / Metadata / Related Resources
 function renderDisplayMode(properties) {
   // Build the HTML for each section - contain the cards that will appear under each section header.
   // BASIC
   let basicHtml = "";
-
   basicHtml += renderDetailItem("Primary Name", properties["Primary Name"], true);
   basicHtml += renderDetailItem(t("primary_name_en"), properties["Primary Name (English)"], true);
   basicHtml += renderDetailItem(t("other_names"), properties["Other Names"], true);
-
   basicHtml += renderDetailItem(t("country"), properties["Country"]);
   basicHtml += renderDetailItem(t("region"), properties["Region"]);
-
   basicHtml += renderDetailItem(t("classification"), properties["Classification"]);
   basicHtml += renderDetailItem(t("caal_id"), properties["CAAL_ID"]);
-
   basicHtml += renderDetailItem(t("internal_reference"), properties["Internal Reference"]);
   basicHtml += renderDetailItem(t("external_reference"), properties["External Reference"]);
-
   basicHtml += renderDetailItem(t("designation"), properties["Designation"]);
   basicHtml += renderDetailItem(t("world_heritage_site_name"), properties["World Heritage Site Name"]);
 
   // MONUMENT
   let monumentHtml = "";
-
   monumentHtml += renderDetailItem(t("monument_passport"), properties["Monument Passport"], true);
-
   monumentHtml += renderDetailItem(t("monument_type1"), properties["Monument Type1"]);
   monumentHtml += renderDetailItem(t("monument_type2"), properties["Monument Type2"]);
   monumentHtml += renderDetailItem(t("monument_type3"), properties["Monument Type3"]);
   monumentHtml += renderDetailItem(t("monument_type4"), properties["Monument Type4"]);
   monumentHtml += renderDetailItem(t("monument_type5"), properties["Monument Type5"]);
   monumentHtml += renderDetailItem(t("monument_type6"), properties["Monument Type6"]);
-
   monumentHtml += renderDetailItem(t("religion1"), properties["Religion1"]);
   monumentHtml += renderDetailItem(t("religion2"), properties["Religion2"]);
   monumentHtml += renderDetailItem(t("religion3"), properties["Religion3"]);
-
   monumentHtml += renderDetailItem(t("descriptive_date"), properties["Descriptive Date"], true);
-
   monumentHtml += renderDetailItem(t("cultural_period1"), properties["Cultural Period1"]);
   monumentHtml += renderDetailItem(t("cultural_period2"), properties["Cultural Period2"]);
   monumentHtml += renderDetailItem(t("cultural_period3"), properties["Cultural Period3"]);
   monumentHtml += renderDetailItem(t("cultural_period4"), properties["Cultural Period4"]);
   monumentHtml += renderDetailItem(t("cultural_period5"), properties["Cultural Period5"]);
   monumentHtml += renderDetailItem(t("cultural_period6"), properties["Cultural Period6"]);
-
   monumentHtml += renderDetailItem(t("start_date"), properties["Start Date"]);
   monumentHtml += renderDetailItem(t("end_date"), properties["End Date"]);
-
   monumentHtml += renderDetailItem(t("primary_description"), properties["Primary Description"], true);
   monumentHtml += renderDetailItem(t("primary_description_en"), properties["Primary Description (English)"], true);
   monumentHtml += renderDetailItem(t("additional_notes"), properties["Additional Notes"], true);
 
   // ADMINISTRATION
   let adminHtml = "";
-
   adminHtml += renderDetailItem(t("primary_address"), properties["Primary Address"], true);
-
   adminHtml += renderDetailItem(t("longitude"), formatValue(properties["Longitude"], 6));
   adminHtml += renderDetailItem(t("latitude"), formatValue(properties["Latitude"], 6));
   adminHtml += renderDetailItem(t("altitude"), formatValue(properties["Altitude"]));
   adminHtml += renderDetailItem(t("location_confidence"), properties["Location Confidence"]);
-
   adminHtml += renderDetailItem(t("location_notes"), properties["Location Notes"], true);
-
   adminHtml += renderDetailItem(t("admin_subdivision_name1"), properties["Administrative Subdivision Name1"]);
   adminHtml += renderDetailItem(t("admin_subdivision_type1"), properties["Administrative Subdivision Type1"]);
   adminHtml += renderDetailItem(t("admin_subdivision_name2"), properties["Administrative Subdivision Name2"]);
@@ -524,35 +526,29 @@ function renderDisplayMode(properties) {
 
   // MEASUREMENTS
   let measurementsHtml = "";
-
   measurementsHtml += renderDetailItem(t("measurement_value1"), properties["Measurement Value1"]);
   measurementsHtml += renderDetailItem(t("measurement_unit1"), properties["Measurement Unit1"]);
   measurementsHtml += renderDetailItem(t("measurement_type1"), properties["Measurement Type1"]);
-
   measurementsHtml += renderDetailItem(t("measurement_value2"), properties["Measurement Value2"]);
   measurementsHtml += renderDetailItem(t("measurement_unit2"), properties["Measurement Unit2"]);
   measurementsHtml += renderDetailItem(t("measurement_type2"), properties["Measurement Type2"]);
-
   measurementsHtml += renderDetailItem(t("measurement_value3"), properties["Measurement Value3"]);
   measurementsHtml += renderDetailItem(t("measurement_unit3"), properties["Measurement Unit3"]);
   measurementsHtml += renderDetailItem(t("measurement_type3"), properties["Measurement Type3"]);
-
   measurementsHtml += renderDetailItem(t("measurement_value4"), properties["Measurement Value4"]);
   measurementsHtml += renderDetailItem(t("measurement_unit4"), properties["Measurement Unit4"]);
   measurementsHtml += renderDetailItem(t("measurement_type4"), properties["Measurement Type4"]);
 
   // METADATA
   let metadataHtml = "";
-
   metadataHtml += renderDetailItem(t("preferred_language"), properties["Preferred Language"]);
   metadataHtml += renderDetailItem(t("recorder"), properties["Recorder"]);
   metadataHtml += renderDetailItem(t("date_of_recording"), properties["Date of Recording"]);
   metadataHtml += renderDetailItem(t("tstamp"), properties["Tstamp"]);
   metadataHtml += renderDetailItem(t("master_id"), properties["MasterID"]);
 
-  // RELATED RESOURCES
+  // RELATED
   let relatedHtml = "";
-
   relatedHtml += renderDetailItem(t("monument_is_part_of"), properties["Monument is part of"], true);
   relatedHtml += renderDetailItem(t("monument_contains"), properties["Monument contains"], true);
   relatedHtml += renderDetailItem(t("monument_is_associated_with"), properties["Monument is associated with"], true);
@@ -665,42 +661,13 @@ function renderDisplayMode(properties) {
       </button>
     </div>
 
-    <div class="detail-grid">
-      <!-- BASIC -->
-      <div class="detail-item full-width section-header">
-        <span class="detail-section-title">${t("basic_group")}</span>
-      </div>
-      ${basicHasValues ? basicHtml : `<div class="section-empty">${t("no_data_in_section")}</div>`}
-
-      <!-- MONUMENT -->
-      <div class="detail-item full-width section-header">
-        <span class="detail-section-title">${t("monument_group")}</span>
-      </div>
-      ${monumentHasValues ? monumentHtml : `<div class="section-empty">${t("no_data_in_section")}</div>`}
-
-      <!-- ADMINISTRATION -->
-      <div class="detail-item full-width section-header">
-        <span class="detail-section-title">${t("administration_group")}</span>
-      </div>
-      ${adminHasValues ? adminHtml : `<div class="section-empty">${t("no_data_in_section")}</div>`}
-
-      <!-- MEASUREMENTS -->
-      <div class="detail-item full-width section-header">
-        <span class="detail-section-title">${t("measurements_group")}</span>
-      </div>
-      ${measurementsHasValues ? measurementsHtml : `<div class="section-empty">${t("no_data_in_section")}</div>`}
-
-      <!-- METADATA -->
-      <div class="detail-item full-width section-header">
-        <span class="detail-section-title">${t("metadata_group")}</span>
-      </div>
-      ${metadataHasValues ? metadataHtml : `<div class="section-empty">${t("no_data_in_section")}</div>`}
-
-      <!-- RELATED RESOURCES -->
-      <div class="detail-item full-width section-header">
-        <span class="detail-section-title">${t("related_resources_group")}</span>
-      </div>
-      ${relatedHasValues ? relatedHtml : `<div class="section-empty">${t("no_data_in_section")}</div>`}
+    <div class="group-stack">
+      ${renderGroupBlock(t("basic_group"), basicHtml, basicHasValues)}
+      ${renderGroupBlock(t("monument_group"), monumentHtml, monumentHasValues)}
+      ${renderGroupBlock(t("administration_group"), adminHtml, adminHasValues)}
+      ${renderGroupBlock(t("measurements_group"), measurementsHtml, measurementsHasValues)}
+      ${renderGroupBlock(t("metadata_group"), metadataHtml, metadataHasValues)}
+      ${renderGroupBlock(t("related_resources_group"), relatedHtml, relatedHasValues)}
     </div>
   `;
 
@@ -899,138 +866,161 @@ function renderEditMode(properties) {
       <button type="button" class="action-btn" id="cancelEditBtn">${t("cancel")}</button>
     </div>
 
-    <div class="detail-grid">
+    <div class="group-stack">
 
       <!-- BASIC -->
-      <div class="detail-item full-width section-header">
-        <span class="detail-section-title">${t("basic_group")}</span>
-      </div>
-
-      ${renderTextInput("Primary Name", "Primary Name", properties["Primary Name"], true)}
-      ${renderTextInput("Primary Name (English)", t("primary_name_en"), properties["Primary Name (English)"], true)}
-      ${renderTextInput("Other Names", t("other_names"), properties["Other Names"], true)}
-
-      ${renderSelectInput("Country", t("country"), "country", properties["Country"])}
-      ${renderTextInput("Region", t("region"), properties["Region"])}
-
-      ${renderTextInput("Classification", t("classification"), properties["Classification"])}
-      ${renderReadOnlyItem(t("caal_id"), properties["CAAL_ID"])}
-
-      ${renderTextInput("Internal Reference", t("internal_reference"), properties["Internal Reference"])}
-      ${renderTextInput("External Reference", t("external_reference"), properties["External Reference"])}
-
-      ${renderTextInput("Designation", t("designation"), properties["Designation"])}
-      ${renderTextInput("World Heritage Site Name", t("world_heritage_site_name"), properties["World Heritage Site Name"])}
-
-      <!-- MONUMENT -->
-      <div class="detail-item full-width section-header">
-        <span class="detail-section-title">${t("monument_group")}</span>
-      </div>
-
-      ${renderTextInput("Monument Passport", t("monument_passport"), properties["Monument Passport"], true)}
-
-      ${renderSelectInput("Monument Type1", t("monument_type1"), "monument_type1", properties["Monument Type1"])}
-      ${renderTextInput("Monument Type2", t("monument_type2"), properties["Monument Type2"])}
-      ${renderTextInput("Monument Type3", t("monument_type3"), properties["Monument Type3"])}
-      ${renderTextInput("Monument Type4", t("monument_type4"), properties["Monument Type4"])}
-      ${renderTextInput("Monument Type5", t("monument_type5"), properties["Monument Type5"])}
-      ${renderTextInput("Monument Type6", t("monument_type6"), properties["Monument Type6"])}
-
-      ${renderTextInput("Religion1", t("religion1"), properties["Religion1"])}
-      ${renderTextInput("Religion2", t("religion2"), properties["Religion2"])}
-      ${renderTextInput("Religion3", t("religion3"), properties["Religion3"])}
-
-      ${renderTextInput("Descriptive Date", t("descriptive_date"), properties["Descriptive Date"], true)}
-
-      ${renderSelectInput("Cultural Period1", t("cultural_period1"), "cultural_period1", properties["Cultural Period1"])}
-      ${renderTextInput("Cultural Period2", t("cultural_period2"), properties["Cultural Period2"])}
-      ${renderTextInput("Cultural Period3", t("cultural_period3"), properties["Cultural Period3"])}
-      ${renderTextInput("Cultural Period4", t("cultural_period4"), properties["Cultural Period4"])}
-      ${renderTextInput("Cultural Period5", t("cultural_period5"), properties["Cultural Period5"])}
-      ${renderTextInput("Cultural Period6", t("cultural_period6"), properties["Cultural Period6"])}
-
-      ${renderReadOnlyItem(t("start_date"), properties["Start Date"])}
-      ${renderReadOnlyItem(t("end_date"), properties["End Date"])}
-
-      ${renderTextarea("Primary Description", t("primary_description"), properties["Primary Description"], true)}
-      ${renderTextarea("Primary Description (English)", t("primary_description_en"), properties["Primary Description (English)"], true)}
-      ${renderTextarea("Additional Notes", t("additional_notes"), properties["Additional Notes"], true)}
-
-      <!-- ADMINISTRATION -->
-      <div class="detail-item full-width section-header">
-        <span class="detail-section-title">${t("administration_group")}</span>
-      </div>
-
-      ${renderTextInput("Primary Address", t("primary_address"), properties["Primary Address"], true)}
-
-      ${renderNumberInput("Longitude", t("longitude"), properties["Longitude"], "0.000001")}
-      ${renderNumberInput("Latitude", t("latitude"), properties["Latitude"], "0.000001")}
-      ${renderNumberInput("Altitude", t("altitude"), properties["Altitude"], "any")}
-      ${renderTextInput("Location Confidence", t("location_confidence"), properties["Location Confidence"])}
+      <div class="group-block">
+        <div class="group-grid">
+          <div class="detail-item full-width section-header">
+            <span class="detail-section-title">${t("basic_group")}</span>
+          </div>
       
-      <div class="detail-item full-width">
-        <div class="panel-actions">
-          <button type="button" class="action-btn" id="setLocationBtn">
-            Set location from coordinates
-          </button>
-          <button type="button" class="action-btn" id="pickLocationBtn">
-            Pick location on map
-          </button>
+          ${renderTextInput("Primary Name", "Primary Name", properties["Primary Name"], true)}
+          ${renderTextInput("Primary Name (English)", t("primary_name_en"), properties["Primary Name (English)"], true)}
+          ${renderTextInput("Other Names", t("other_names"), properties["Other Names"], true)}
+      
+          ${renderSelectInput("Country", t("country"), "country", properties["Country"])}
+          ${renderTextInput("Region", t("region"), properties["Region"])}
+      
+          ${renderTextInput("Classification", t("classification"), properties["Classification"])}
+          ${renderReadOnlyItem(t("caal_id"), properties["CAAL_ID"])}
+      
+          ${renderTextInput("Internal Reference", t("internal_reference"), properties["Internal Reference"])}
+          ${renderTextInput("External Reference", t("external_reference"), properties["External Reference"])}
+      
+          ${renderTextInput("Designation", t("designation"), properties["Designation"])}
+          ${renderTextInput("World Heritage Site Name", t("world_heritage_site_name"), properties["World Heritage Site Name"])}
         </div>
       </div>
 
-      ${renderTextarea("Location Notes", t("location_notes"), properties["Location Notes"], true)}
+      <!-- MONUMENT -->
+      <div class="group-block">
+        <div class="group-grid">
+          <div class="detail-item full-width section-header">
+            <span class="detail-section-title">${t("monument_group")}</span>
+          </div>
+    
+          ${renderTextInput("Monument Passport", t("monument_passport"), properties["Monument Passport"], true)}
+    
+          ${renderSelectInput("Monument Type1", t("monument_type1"), "monument_type1", properties["Monument Type1"])}
+          ${renderTextInput("Monument Type2", t("monument_type2"), properties["Monument Type2"])}
+          ${renderTextInput("Monument Type3", t("monument_type3"), properties["Monument Type3"])}
+          ${renderTextInput("Monument Type4", t("monument_type4"), properties["Monument Type4"])}
+          ${renderTextInput("Monument Type5", t("monument_type5"), properties["Monument Type5"])}
+          ${renderTextInput("Monument Type6", t("monument_type6"), properties["Monument Type6"])}
+    
+          ${renderTextInput("Religion1", t("religion1"), properties["Religion1"])}
+          ${renderTextInput("Religion2", t("religion2"), properties["Religion2"])}
+          ${renderTextInput("Religion3", t("religion3"), properties["Religion3"])}
+    
+          ${renderTextInput("Descriptive Date", t("descriptive_date"), properties["Descriptive Date"], true)}
+    
+          ${renderSelectInput("Cultural Period1", t("cultural_period1"), "cultural_period1", properties["Cultural Period1"])}
+          ${renderTextInput("Cultural Period2", t("cultural_period2"), properties["Cultural Period2"])}
+          ${renderTextInput("Cultural Period3", t("cultural_period3"), properties["Cultural Period3"])}
+          ${renderTextInput("Cultural Period4", t("cultural_period4"), properties["Cultural Period4"])}
+          ${renderTextInput("Cultural Period5", t("cultural_period5"), properties["Cultural Period5"])}
+          ${renderTextInput("Cultural Period6", t("cultural_period6"), properties["Cultural Period6"])}
+    
+          ${renderReadOnlyItem(t("start_date"), properties["Start Date"])}
+          ${renderReadOnlyItem(t("end_date"), properties["End Date"])}
+    
+          ${renderTextarea("Primary Description", t("primary_description"), properties["Primary Description"], true)}
+          ${renderTextarea("Primary Description (English)", t("primary_description_en"), properties["Primary Description (English)"], true)}
+          ${renderTextarea("Additional Notes", t("additional_notes"), properties["Additional Notes"], true)}
+        </div>
+      </div>
 
-      ${renderTextInput("Administrative Subdivision Name1", t("admin_subdivision_name1"), properties["Administrative Subdivision Name1"])}
-      ${renderTextInput("Administrative Subdivision Type1", t("admin_subdivision_type1"), properties["Administrative Subdivision Type1"])}
-      ${renderTextInput("Administrative Subdivision Name2", t("admin_subdivision_name2"), properties["Administrative Subdivision Name2"])}
-      ${renderTextInput("Administrative Subdivision Type2", t("admin_subdivision_type2"), properties["Administrative Subdivision Type2"])}
-      ${renderTextInput("Administrative Subdivision Name3", t("admin_subdivision_name3"), properties["Administrative Subdivision Name3"])}
-      ${renderTextInput("Administrative Subdivision Type3", t("admin_subdivision_type3"), properties["Administrative Subdivision Type3"])}
-      ${renderTextInput("Administrative Subdivision Name4", t("admin_subdivision_name4"), properties["Administrative Subdivision Name4"])}
-      ${renderTextInput("Administrative Subdivision Type4", t("admin_subdivision_type4"), properties["Administrative Subdivision Type4"])}
+      <!-- ADMINISTRATION -->
+      <div class="group-block">
+        <div class="group-grid">
+          <div class="detail-item full-width section-header">
+            <span class="detail-section-title">${t("administration_group")}</span>
+          </div>
+    
+          ${renderTextInput("Primary Address", t("primary_address"), properties["Primary Address"], true)}
+    
+          ${renderNumberInput("Longitude", t("longitude"), properties["Longitude"], "0.000001")}
+          ${renderNumberInput("Latitude", t("latitude"), properties["Latitude"], "0.000001")}
+          ${renderNumberInput("Altitude", t("altitude"), properties["Altitude"], "any")}
+          ${renderTextInput("Location Confidence", t("location_confidence"), properties["Location Confidence"])}
+          
+          <div class="detail-item full-width">
+            <div class="panel-actions">
+              <button type="button" class="action-btn" id="setLocationBtn">
+                Set location from coordinates
+              </button>
+              <button type="button" class="action-btn" id="pickLocationBtn">
+                Pick location on map
+              </button>
+            </div>
+          </div>
+    
+          ${renderTextarea("Location Notes", t("location_notes"), properties["Location Notes"], true)}
+    
+          ${renderTextInput("Administrative Subdivision Name1", t("admin_subdivision_name1"), properties["Administrative Subdivision Name1"])}
+          ${renderTextInput("Administrative Subdivision Type1", t("admin_subdivision_type1"), properties["Administrative Subdivision Type1"])}
+          ${renderTextInput("Administrative Subdivision Name2", t("admin_subdivision_name2"), properties["Administrative Subdivision Name2"])}
+          ${renderTextInput("Administrative Subdivision Type2", t("admin_subdivision_type2"), properties["Administrative Subdivision Type2"])}
+          ${renderTextInput("Administrative Subdivision Name3", t("admin_subdivision_name3"), properties["Administrative Subdivision Name3"])}
+          ${renderTextInput("Administrative Subdivision Type3", t("admin_subdivision_type3"), properties["Administrative Subdivision Type3"])}
+          ${renderTextInput("Administrative Subdivision Name4", t("admin_subdivision_name4"), properties["Administrative Subdivision Name4"])}
+          ${renderTextInput("Administrative Subdivision Type4", t("admin_subdivision_type4"), properties["Administrative Subdivision Type4"])}
+        </div>
+      </div>
 
       <!-- MEASUREMENTS -->
-      <div class="detail-item full-width section-header">
-        <span class="detail-section-title">${t("measurements_group")}</span>
+       <div class="group-block">
+        <div class="group-grid">
+          <div class="detail-item full-width section-header">
+            <span class="detail-section-title">${t("measurements_group")}</span>
+          </div>
+    
+          ${renderNumberInput("Measurement Value1", t("measurement_value1"), properties["Measurement Value1"])}
+          ${renderTextInput("Measurement Unit1", t("measurement_unit1"), properties["Measurement Unit1"])}
+          ${renderTextInput("Measurement Type1", t("measurement_type1"), properties["Measurement Type1"])}
+    
+          ${renderNumberInput("Measurement Value2", t("measurement_value2"), properties["Measurement Value2"])}
+          ${renderTextInput("Measurement Unit2", t("measurement_unit2"), properties["Measurement Unit2"])}
+          ${renderTextInput("Measurement Type2", t("measurement_type2"), properties["Measurement Type2"])}
+    
+          ${renderNumberInput("Measurement Value3", t("measurement_value3"), properties["Measurement Value3"])}
+          ${renderTextInput("Measurement Unit3", t("measurement_unit3"), properties["Measurement Unit3"])}
+          ${renderTextInput("Measurement Type3", t("measurement_type3"), properties["Measurement Type3"])}
+    
+          ${renderNumberInput("Measurement Value4", t("measurement_value4"), properties["Measurement Value4"])}
+          ${renderTextInput("Measurement Unit4", t("measurement_unit4"), properties["Measurement Unit4"])}
+          ${renderTextInput("Measurement Type4", t("measurement_type4"), properties["Measurement Type4"])}
+        </div>
       </div>
-
-      ${renderNumberInput("Measurement Value1", t("measurement_value1"), properties["Measurement Value1"])}
-      ${renderTextInput("Measurement Unit1", t("measurement_unit1"), properties["Measurement Unit1"])}
-      ${renderTextInput("Measurement Type1", t("measurement_type1"), properties["Measurement Type1"])}
-
-      ${renderNumberInput("Measurement Value2", t("measurement_value2"), properties["Measurement Value2"])}
-      ${renderTextInput("Measurement Unit2", t("measurement_unit2"), properties["Measurement Unit2"])}
-      ${renderTextInput("Measurement Type2", t("measurement_type2"), properties["Measurement Type2"])}
-
-      ${renderNumberInput("Measurement Value3", t("measurement_value3"), properties["Measurement Value3"])}
-      ${renderTextInput("Measurement Unit3", t("measurement_unit3"), properties["Measurement Unit3"])}
-      ${renderTextInput("Measurement Type3", t("measurement_type3"), properties["Measurement Type3"])}
-
-      ${renderNumberInput("Measurement Value4", t("measurement_value4"), properties["Measurement Value4"])}
-      ${renderTextInput("Measurement Unit4", t("measurement_unit4"), properties["Measurement Unit4"])}
-      ${renderTextInput("Measurement Type4", t("measurement_type4"), properties["Measurement Type4"])}
 
       <!-- METADATA -->
-      <div class="detail-item full-width section-header">
-        <span class="detail-section-title">${t("metadata_group")}</span>
+      <div class="group-block">
+        <div class="group-grid">
+          <div class="detail-item full-width section-header">
+            <span class="detail-section-title">${t("metadata_group")}</span>
+          </div>
+    
+          ${renderReadOnlyItem(t("preferred_language"), properties["Preferred Language"])}
+          ${renderReadOnlyItem(t("recorder"), properties["Recorder"])}
+          ${renderTextInput("Date of Recording", t("date_of_recording"), properties["Date of Recording"])}
+          ${renderReadOnlyItem(t("tstamp"), properties["Tstamp"])}
+          ${renderTextInput("MasterID", t("master_id"), properties["MasterID"])}
+        </div>
       </div>
-
-      ${renderReadOnlyItem(t("preferred_language"), properties["Preferred Language"])}
-      ${renderReadOnlyItem(t("recorder"), properties["Recorder"])}
-      ${renderTextInput("Date of Recording", t("date_of_recording"), properties["Date of Recording"])}
-      ${renderReadOnlyItem(t("tstamp"), properties["Tstamp"])}
-      ${renderTextInput("MasterID", t("master_id"), properties["MasterID"])}
 
       <!-- RELATED RESOURCES -->
-      <div class="detail-item full-width section-header">
-        <span class="detail-section-title">${t("related_resources_group")}</span>
+      <div class="group-block">
+        <div class="group-grid">
+          <div class="detail-item full-width section-header">
+            <span class="detail-section-title">${t("related_resources_group")}</span>
+          </div>
+    
+          ${renderTextInput("Monument is part of", t("monument_is_part_of"), properties["Monument is part of"], true)}
+          ${renderTextInput("Monument contains", t("monument_contains"), properties["Monument contains"], true)}
+          ${renderTextInput("Monument is associated with", t("monument_is_associated_with"), properties["Monument is associated with"], true)}
+        </div>
       </div>
-
-      ${renderTextInput("Monument is part of", t("monument_is_part_of"), properties["Monument is part of"], true)}
-      ${renderTextInput("Monument contains", t("monument_contains"), properties["Monument contains"], true)}
-      ${renderTextInput("Monument is associated with", t("monument_is_associated_with"), properties["Monument is associated with"], true)}
-
     </div>
   `;
 
