@@ -72,10 +72,11 @@ body {
 /* map relative to panel size */
   /* Left column = map */
   /* Right column = form panel */
+  /* with minmax Map takes remaining space */
 .app-shell {
   flex: 1;
   display: grid;
-  grid-template-columns: 0.9fr 520px;
+  grid-template-columns: 1fr minmax(500px, 42vw);
   min-height: 0;
 }
 
@@ -123,10 +124,19 @@ body {
   padding: 0.75rem 0;
 }
 
+/*  2 column layout for fields inside the side panel */
 .detail-grid {
   display: grid;
-  grid-template-columns: 1fr;
+
+  /* Two equal columns */
+  grid-template-columns: 1fr 1fr;
+
   gap: 0.8rem;
+}
+
+/* Make some bigger fields span both columns */
+.detail-item.full-width {
+  grid-column: 1 / -1;
 }
 
 .detail-item {
@@ -231,4 +241,24 @@ body {
   font-size: 0.95rem;
   background: #ffffff;
   color: var(--text);
+}
+
+/* search box */
+.search-box {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.search-box label {
+  font-size: 0.92rem;
+  color: var(--muted);
+}
+
+.search-box input {
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.92rem;
+  min-width: 240px;
 }
