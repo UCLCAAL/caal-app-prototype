@@ -8,6 +8,7 @@ const translations = {
     click_prompt: "Click a monument on the map",
     no_record_selected: "No record selected yet.",
     basic_group: "Basic",
+    set_location_from_coordinates: "Set location from coordinates",
     /* monument table fields */
     monument_group: "Monument",
     administration_group: "Administration",
@@ -346,11 +347,11 @@ function renderDetailItem(label, value, fullWidth = false) {
 // ADD MODE UI STATE - keeps button visibility in sync with whether the map is waiting for a new point click
 function updateAddModeUI() {
   if (isAddMode) {
-    addPointBtn.textContent = "Click map to place point";
+    addPointBtn.textContent = "Place record on map";
     cancelAddBtn.hidden = false;
     map.getContainer().style.cursor = "crosshair";
   } else {
-    addPointBtn.textContent = "Add point";
+    addPointBtn.textContent = "Add record";
     cancelAddBtn.hidden = true;
     map.getContainer().style.cursor = "";
   }
@@ -368,11 +369,8 @@ function exitAddMode() {
   updateAddModeUI();
 }
 
-// CREATE A NEW TEMPORARY FEATURE - This is only in-memory for now
-function makeNewPointFeature(latlng) {
-  const lng = Number(latlng.lng.toFixed(6));
-  const lat = Number(latlng.lat.toFixed(6));
-
+// CREATE A NEW BLANK TEMPORARY RECORD - No geometry to start
+function makeNewBlankFeature() {
   return {
     type: "Feature",
     properties: {
@@ -405,8 +403,8 @@ function makeNewPointFeature(latlng) {
       "Primary Description": "",
       "Primary Description (English)": "",
       "Additional Notes": "",
-      "Longitude": lng,
-      "Latitude": lat,
+      "Longitude": "",
+      "Latitude": "",
       "Altitude": "",
       "Location Confidence": "",
       "Location Notes": "",
@@ -444,10 +442,7 @@ function makeNewPointFeature(latlng) {
       "Start Date": "",
       "End Date": ""
     },
-    geometry: {
-      type: "Point",
-      coordinates: [lng, lat]
-    }
+    geometry: null
   };
 }
 
@@ -805,6 +800,92 @@ function renderSelectInput(fieldName, label, fieldKey, propertyValue, fullWidth 
     </div>
   `;
 }
+
+// edit HELPER: update selected feature geometry from current lat long values
+// Also refreshes the feature's geometry object
+function updateSelectedFeatureGeometryFromCoordinates() {
+  if (!selectedProperties) {
+    return false;
+  }
+
+  const lng = Number(getInputValue("Longitude"));
+  const lat = Number(getInputValue("Latitude"));
+
+  if (isNaN(lng) || isNaN(lat)) {
+    alert("Please enter valid longitude and latitude values.");
+    return false;
+  }
+
+  // Update the record properties
+  selectedProperties["Longitude"] = lng;
+  selectedProperties["Latitude"] = lat;
+
+  // Pending new feature
+  if (pendingNewFeature && pendingNewFeature.properties === selectedProperties) {
+    pendingNewFeature.geometry = {
+      type: "Point",
+      coordinates: [lng, lat]
+    };
+    return true;
+  }
+
+  // Existing feature
+  const matchingFeature = allFeatures.find(
+    (feature) => feature.properties === selectedProperties
+  );
+
+  if (matchingFeature) {
+    matchingFeature.geometry = {
+      type: "Point",
+      coordinates: [lng, lat]
+    };
+    drawFeatures(allFeatures);
+  }
+
+  return true;
+}
+
+// APPLY MAP CLICK LOCATION TO CURRENT RECORD - updates properties and geometry from Leaflet latlng, either pending or existing in AllFeatures
+// ==============================
+// APPLY MAP CLICK LOCATION TO CURRENT RECORD
+// Updates properties and geometry for either:
+// - a pending new feature
+// - or an existing feature already in allFeatures
+// ==============================
+function applyMapClickToSelectedRecord(latlng) {
+  if (!selectedProperties) {
+    return;
+  }
+
+  const lng = Number(latlng.lng.toFixed(6));
+  const lat = Number(latlng.lat.toFixed(6));
+
+  selectedProperties["Longitude"] = lng;
+  selectedProperties["Latitude"] = lat;
+
+  // First check whether this is the pending new feature
+  if (pendingNewFeature && pendingNewFeature.properties === selectedProperties) {
+    pendingNewFeature.geometry = {
+      type: "Point",
+      coordinates: [lng, lat]
+    };
+    return;
+  }
+
+  // Otherwise update an existing mapped feature
+  const matchingFeature = allFeatures.find(
+    (feature) => feature.properties === selectedProperties
+  );
+
+  if (matchingFeature) {
+    matchingFeature.geometry = {
+      type: "Point",
+      coordinates: [lng, lat]
+    };
+    drawFeatures(allFeatures);
+  }
+}
+
 // edit mode in side panel
 function renderEditMode(properties) {
   recordDetails.innerHTML = `
@@ -886,6 +967,17 @@ function renderEditMode(properties) {
       ${renderNumberInput("Latitude", t("latitude"), properties["Latitude"], "0.000001")}
       ${renderNumberInput("Altitude", t("altitude"), properties["Altitude"], "any")}
       ${renderTextInput("Location Confidence", t("location_confidence"), properties["Location Confidence"])}
+      
+      <div class="detail-item full-width">
+        <div class="panel-actions">
+          <button type="button" class="action-btn" id="setLocationBtn">
+            Set location from coordinates
+          </button>
+          <button type="button" class="action-btn" id="pickLocationBtn">
+            Pick location on map
+          </button>
+        </div>
+      </div>
 
       ${renderTextarea("Location Notes", t("location_notes"), properties["Location Notes"], true)}
 
@@ -1028,16 +1120,46 @@ function renderEditMode(properties) {
     selectedProperties["Monument contains"] = getInputValue("Monument contains");
     selectedProperties["Monument is associated with"] = getInputValue("Monument is associated with");
 
+    // If this is a brand-new unsaved feature, add it now
+    if (pendingNewFeature && pendingNewFeature.properties === selectedProperties) {
+      allFeatures.push(pendingNewFeature);
+      pendingNewFeature = null;
+      drawFeatures(allFeatures);
+    }
+    
     isEditMode = false;
     renderRecordDetails(selectedProperties);
   });
 
   // Cancel edit mode without saving changes
   document.getElementById("cancelEditBtn").addEventListener("click", () => {
+    // If the current record is a brand-new unsaved one, discard it completely
+    if (pendingNewFeature && pendingNewFeature.properties === selectedProperties) {
+      pendingNewFeature = null;
+      selectedProperties = null;
+      isEditMode = false;
+      exitAddMode();
+      applyLanguage(); // restores the empty-state panel
+      return;
+    }
+  
+    // Otherwise just leave edit mode for an existing record
     isEditMode = false;
     renderRecordDetails(selectedProperties);
   });
-}
+
+// Apply the current Longitude / Latitude values to the map point
+document.getElementById("setLocationBtn").addEventListener("click", () => {
+  const ok = updateSelectedFeatureGeometryFromCoordinates();
+  if (ok) {
+    alert("Location updated on map.");
+  }
+});
+
+// Pick location button 
+document.getElementById("pickLocationBtn").addEventListener("click", () => {
+  enterAddMode();
+});
 
 // apply current language to the interface
 // Re-renders current selected record too
@@ -1088,13 +1210,17 @@ languageSelect.addEventListener("change", (event) => {
   applyLanguage();
 });
 
-// ADD POINT BUTTON - Toggle into add mode
+// ADD RECORD BUTTON - creates a blank new record and opens the form, doesn't go to allfeatures until saved
+// ==============================
 addPointBtn.addEventListener("click", () => {
-  if (isAddMode) {
-    exitAddMode();
-  } else {
-    enterAddMode();
-  }
+  const newFeature = makeNewBlankFeature();
+
+  pendingNewFeature = newFeature;
+  selectedProperties = newFeature.properties;
+
+  isEditMode = true;
+  exitAddMode();
+  renderRecordDetails(selectedProperties);
 });
 
 // CANCEL ADD BUTTON - explicit cancel while in add mode
@@ -1109,14 +1235,23 @@ document.addEventListener("keydown", (event) => {
   }
 });
 
-// MAP CLICK FOR NEW POINT CREATION - only active while in add mode
+// MAP CLICK FOR lcoation picking - only active while in add mode
 map.on("click", (event) => {
   if (!isAddMode) {
     return;
   }
 
+  applyMapClickToSelectedRecord(event.latlng);
+
+  exitAddMode();
+
+  // Re-render edit form so Longitude/Latitude fields update
+  isEditMode = true;
+  renderRecordDetails(selectedProperties);
+});
+
   // Create a new temporary feature
-  const newFeature = makeNewPointFeature(event.latlng);
+ const newFeature = makeNewBlankFeature();
 
   // Keep a reference if you want to distinguish it later
   pendingNewFeature = newFeature;
