@@ -1,7 +1,8 @@
 /* =========================================================
    CAAL APP PROTOTYPE - MAIN STYLESHEET
    ---------------------------------------------------------
-   ORDER MATTERS IN CSS.
+   ORDER MATTERS IN CSS!
+   More specific rules and overrides should come AFTER the   more general rules they are meant to override.
 
    General rule:
    1. Variables / reset
@@ -12,15 +13,11 @@
    6. Form controls
    7. Map / popup styling
    8. Responsive overrides
-
-   More specific rules and overrides should come AFTER the
-   more general rules they are meant to override.
    ========================================================= */
 
 
 /* =========================================================
-   1. DESIGN TOKENS / COLOURS
-   ========================================================= */
+   DESIGN TOKENS / COLOURS  */
 :root {
   --bg: #f5f7f8;
   --panel: #ffffff;
@@ -41,8 +38,7 @@
 
 
 /* =========================================================
-   2. RESET / GLOBAL BASE
-   ========================================================= */
+   RESET / GLOBAL BASE */
 * {
   box-sizing: border-box;
 }
@@ -65,8 +61,7 @@ body {
 
 
 /* =========================================================
-   3. TOP BAR / HEADER
-   ========================================================= */
+   TOP BAR / HEADER */
 .topbar {
   border-bottom: 1px solid var(--border);
   background: var(--panel);
@@ -138,11 +133,10 @@ body {
 
 
 /* =========================================================
-   4. MAIN APP LAYOUT
+   MAIN APP LAYOUT
    ---------------------------------------------------------
    Left: map
-   Right: form / record panel
-   ========================================================= */
+   Right: form / record panel  */
 .app-shell {
   flex: 1;
   display: grid;
@@ -192,8 +186,7 @@ body {
 
 
 /* =========================================================
-   5. EMPTY / STATUS STATES
-   ========================================================= */
+   EMPTY / STATUS STATES */
 .empty-state {
   color: var(--muted);
   padding: 0.75rem 0;
@@ -211,8 +204,7 @@ body {
 
 
 /* =========================================================
-   6. RECORD TITLE BLOCK
-   ========================================================= */
+   RECORD TITLE BLOCK */
 .record-title {
   margin: 0 0 1rem;
   padding: 0.8rem;
@@ -234,8 +226,7 @@ body {
 
 
 /* =========================================================
-   7. ACTION BUTTONS
-   ========================================================= */
+    ACTION BUTTONS */
 .panel-actions {
   display: flex;
   gap: 0.6rem;
@@ -269,10 +260,9 @@ body {
 
 
 /* =========================================================
-   8. DETAIL GRID
+   DETAIL GRID
    ---------------------------------------------------------
-   Two-column layout for record fields
-   ========================================================= */
+   Two-column layout for record fields */
 .detail-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -286,11 +276,9 @@ body {
 
 
 /* =========================================================
-   9. NORMAL FIELD CARDS
+   NORMAL FIELD CARDS
    ---------------------------------------------------------
-   These are the standard field containers.
-   Section headers are overridden LATER below.
-   ========================================================= */
+   Standard field containers, group headers are overridden LATER below. */
 .detail-item {
   padding: 0.75rem;
   border: 1px solid var(--border);
@@ -316,16 +304,9 @@ body {
 
 
 /* =========================================================
-   10. SECTION HEADERS
+   SECTION HEADERS
    ---------------------------------------------------------
-   IMPORTANT:
-   These come AFTER .detail-item so they can override its
-   border, radius, background, etc.
-
-   We keep the same HTML structure:
-   <div class="detail-item full-width section-header">
-   ...
-   ========================================================= */
+   These come AFTER .detail-item so they can override */
 .detail-item.section-header {
   grid-column: 1 / -1;
 
@@ -358,8 +339,7 @@ body {
 
 
 /* =========================================================
-   11. FORM CONTROLS
-   ========================================================= */
+   FORM CONTROLS */
 .form-control {
   width: 100%;
   padding: 0.6rem 0.7rem;
@@ -383,8 +363,7 @@ textarea.form-control {
 
 
 /* =========================================================
-   12. LEAFLET POPUPS
-   ========================================================= */
+   LEAFLET POPUPS  */
 .leaflet-popup-content-wrapper {
   border-radius: 8px;
 }
@@ -402,8 +381,7 @@ textarea.form-control {
 
 
 /* =========================================================
-   13. RESPONSIVE LAYOUT
-   ========================================================= */
+    RESPONSIVE LAYOUT */
 @media (max-width: 900px) {
   .app-shell {
     grid-template-columns: 1fr;
