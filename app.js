@@ -91,6 +91,24 @@ function safeValue(value) {
   return value;
 }
 
+function displayLookup(fieldName, rawValue) {
+  if (rawValue === null || rawValue === undefined || rawValue === "") {
+    return "Not recorded";
+  }
+
+  const fieldLookup = lookupLabels[fieldName];
+  if (!fieldLookup) {
+    return rawValue;
+  }
+
+  const entry = fieldLookup[rawValue];
+  if (!entry) {
+    return rawValue;
+  }
+
+  return entry[currentLang] || entry.en || rawValue;
+}
+
 function applyLanguage() {
   document.documentElement.lang = currentLang;
 
@@ -122,7 +140,7 @@ function renderRecordDetails(properties) {
     <div class="detail-grid">
       <div class="detail-item">
         <span class="detail-label">${t("country")}</span>
-        <div class="detail-value">${safeValue(properties.country)}</div>
+        <div class="detail-value">${displayLookup("country", properties.country)}</div>
       </div>
 
       <div class="detail-item">
@@ -132,12 +150,12 @@ function renderRecordDetails(properties) {
 
       <div class="detail-item">
         <span class="detail-label">${t("monument_type1")}</span>
-        <div class="detail-value">${safeValue(properties.monument_type1)}</div>
+        <div class="detail-value">${displayLookup("monument_type1", properties.monument_type1)}</div>
       </div>
 
       <div class="detail-item">
         <span class="detail-label">${t("cultural_period1")}</span>
-        <div class="detail-value">${safeValue(properties.cultural_period1)}</div>
+        <div class="detail-value">${displayLookup("cultural_period1", properties.cultural_period1)}</div>
       </div>
 
       <div class="detail-item">
