@@ -1,13 +1,48 @@
+/* =========================================================
+   CAAL APP PROTOTYPE - MAIN STYLESHEET
+   ---------------------------------------------------------
+   ORDER MATTERS IN CSS.
+
+   General rule:
+   1. Variables / reset
+   2. Page layout
+   3. Shared UI elements
+   4. Panel structure
+   5. Field cards and section headers
+   6. Form controls
+   7. Map / popup styling
+   8. Responsive overrides
+
+   More specific rules and overrides should come AFTER the
+   more general rules they are meant to override.
+   ========================================================= */
+
+
+/* =========================================================
+   1. DESIGN TOKENS / COLOURS
+   ========================================================= */
 :root {
   --bg: #f5f7f8;
   --panel: #ffffff;
+  --panel-soft: #fbfcfc;
+  --panel-soft-2: #f7faf9;
+
   --border: #d9e0e3;
+  --border-soft: #e4eaed;
+
   --text: #1f2a30;
   --muted: #5f727c;
+
   --accent: #2f6f5f;
   --accent-soft: #e7f1ed;
+
+  --shadow-soft: 0 1px 2px rgba(0, 0, 0, 0.03);
 }
 
+
+/* =========================================================
+   2. RESET / GLOBAL BASE
+   ========================================================= */
 * {
   box-sizing: border-box;
 }
@@ -28,6 +63,10 @@ body {
   min-height: 100vh;
 }
 
+
+/* =========================================================
+   3. TOP BAR / HEADER
+   ========================================================= */
 .topbar {
   border-bottom: 1px solid var(--border);
   background: var(--panel);
@@ -56,6 +95,27 @@ body {
   gap: 0.5rem;
 }
 
+.search-box {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.search-box label {
+  font-size: 0.92rem;
+  color: var(--muted);
+}
+
+.search-box input {
+  padding: 0.45rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 0.92rem;
+  min-width: 240px;
+  background: #fff;
+  color: var(--text);
+}
+
 .lang-switcher {
   display: flex;
   align-items: center;
@@ -73,12 +133,16 @@ body {
   border-radius: 6px;
   background: #fff;
   font-size: 0.92rem;
+  color: var(--text);
 }
 
-/* map relative to panel size */
-  /* Left column = map */
-  /* Right column = form panel */
-  /* with minmax Map takes remaining space */
+
+/* =========================================================
+   4. MAIN APP LAYOUT
+   ---------------------------------------------------------
+   Left: map
+   Right: form / record panel
+   ========================================================= */
 .app-shell {
   flex: 1;
   display: grid;
@@ -107,6 +171,7 @@ body {
 .panel-header {
   padding: 1rem 1rem 0.75rem;
   border-bottom: 1px solid var(--border);
+  background: var(--panel);
 }
 
 .panel-header h2 {
@@ -125,6 +190,10 @@ body {
   overflow-y: auto;
 }
 
+
+/* =========================================================
+   5. EMPTY / STATUS STATES
+   ========================================================= */
 .empty-state {
   color: var(--muted);
   padding: 0.75rem 0;
@@ -132,7 +201,7 @@ body {
 
 .section-empty {
   grid-column: 1 / -1;
-  padding: 0.6rem 0.8rem;
+  padding: 0.7rem 0.85rem;
   color: var(--muted);
   font-size: 0.92rem;
   border: 1px dashed var(--border);
@@ -140,62 +209,10 @@ body {
   background: #fafcfc;
 }
 
-/* Group headers inside the form panel */
-.section-header {
-  background: transparent;
-  border: none;
-  border-radius: 0;
-  padding: 0;
-  margin-top: 1rem;
-  margin-bottom: 0.2rem;
-  box-shadow: none;
-}
 
-.detail-section-title {
-  font-size: 0.9rem;
-  font-weight: 700;
-  color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-}
-
-/*  2 column layout for fields inside the side panel */
-.detail-grid {
-  display: grid;
-
-  /* Two equal columns */
-  grid-template-columns: 1fr 1fr;
-
-  gap: 0.8rem;
-}
-
-/* Make some bigger fields span both columns */
-.detail-item.full-width {
-  grid-column: 1 / -1;
-}
-
-.detail-item {
-  padding: 0.75rem;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  background: #fbfcfc;
-}
-
-.detail-label {
-  display: block;
-  font-size: 0.8rem;
-  color: var(--muted);
-  margin-bottom: 0.25rem;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-}
-
-.detail-value {
-  font-size: 0.96rem;
-  line-height: 1.4;
-  word-break: break-word;
-}
-
+/* =========================================================
+   6. RECORD TITLE BLOCK
+   ========================================================= */
 .record-title {
   margin: 0 0 1rem;
   padding: 0.8rem;
@@ -215,6 +232,159 @@ body {
   font-size: 0.92rem;
 }
 
+
+/* =========================================================
+   7. ACTION BUTTONS
+   ========================================================= */
+.panel-actions {
+  display: flex;
+  gap: 0.6rem;
+  margin: 0 0 1rem;
+  flex-wrap: wrap;
+}
+
+.action-btn {
+  border: 1px solid var(--border);
+  background: #ffffff;
+  color: var(--text);
+  border-radius: 8px;
+  padding: 0.55rem 0.85rem;
+  font-size: 0.92rem;
+  cursor: pointer;
+}
+
+.action-btn:hover {
+  background: #f8fafb;
+}
+
+.action-btn.primary {
+  background: var(--accent);
+  color: #ffffff;
+  border-color: var(--accent);
+}
+
+.action-btn.primary:hover {
+  filter: brightness(0.98);
+}
+
+
+/* =========================================================
+   8. DETAIL GRID
+   ---------------------------------------------------------
+   Two-column layout for record fields
+   ========================================================= */
+.detail-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.8rem;
+}
+
+/* Full-width items span both columns */
+.detail-item.full-width {
+  grid-column: 1 / -1;
+}
+
+
+/* =========================================================
+   9. NORMAL FIELD CARDS
+   ---------------------------------------------------------
+   These are the standard field containers.
+   Section headers are overridden LATER below.
+   ========================================================= */
+.detail-item {
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-soft);
+  box-shadow: var(--shadow-soft);
+}
+
+.detail-label {
+  display: block;
+  font-size: 0.8rem;
+  color: var(--muted);
+  margin-bottom: 0.35rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+}
+
+.detail-value {
+  font-size: 0.96rem;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+
+/* =========================================================
+   10. SECTION HEADERS
+   ---------------------------------------------------------
+   IMPORTANT:
+   These come AFTER .detail-item so they can override its
+   border, radius, background, etc.
+
+   We keep the same HTML structure:
+   <div class="detail-item full-width section-header">
+   ...
+   ========================================================= */
+.detail-item.section-header {
+  grid-column: 1 / -1;
+
+  /* remove card look */
+  background: linear-gradient(to right, var(--panel-soft-2), transparent 75%);
+  border: none;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  box-shadow: none;
+
+  /* spacing */
+  padding: 0.45rem 0 0.5rem;
+  margin-top: 1rem;
+  margin-bottom: 0.1rem;
+}
+
+.detail-item.section-header .detail-section-title {
+  display: block;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* first section can sit a little tighter */
+.detail-grid > .detail-item.section-header:first-child {
+  margin-top: 0.2rem;
+}
+
+
+/* =========================================================
+   11. FORM CONTROLS
+   ========================================================= */
+.form-control {
+  width: 100%;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.95rem;
+  background: #ffffff;
+  color: var(--text);
+}
+
+.form-control:focus {
+  outline: none;
+  border-color: #aabdc4;
+  box-shadow: 0 0 0 2px rgba(47, 111, 95, 0.08);
+}
+
+textarea.form-control {
+  resize: vertical;
+  min-height: 96px;
+}
+
+
+/* =========================================================
+   12. LEAFLET POPUPS
+   ========================================================= */
 .leaflet-popup-content-wrapper {
   border-radius: 8px;
 }
@@ -230,6 +400,10 @@ body {
   font-size: 0.9rem;
 }
 
+
+/* =========================================================
+   13. RESPONSIVE LAYOUT
+   ========================================================= */
 @media (max-width: 900px) {
   .app-shell {
     grid-template-columns: 1fr;
@@ -244,56 +418,8 @@ body {
     border-left: none;
     border-top: 1px solid var(--border);
   }
-}
 
-.panel-actions {
-  display: flex;
-  gap: 0.6rem;
-  margin: 0 0 1rem;
-}
-
-.action-btn {
-  border: 1px solid var(--border);
-  background: #ffffff;
-  color: var(--text);
-  border-radius: 8px;
-  padding: 0.55rem 0.85rem;
-  font-size: 0.92rem;
-  cursor: pointer;
-}
-
-.action-btn.primary {
-  background: var(--accent);
-  color: #ffffff;
-  border-color: var(--accent);
-}
-
-.form-control {
-  width: 100%;
-  padding: 0.6rem 0.7rem;
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  font-size: 0.95rem;
-  background: #ffffff;
-  color: var(--text);
-}
-
-/* search box */
-.search-box {
-  display: flex;
-  flex-direction: column;
-  gap: 0.25rem;
-}
-
-.search-box label {
-  font-size: 0.92rem;
-  color: var(--muted);
-}
-
-.search-box input {
-  padding: 0.45rem 0.6rem;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  font-size: 0.92rem;
-  min-width: 240px;
+  .detail-grid {
+    grid-template-columns: 1fr;
+  }
 }
