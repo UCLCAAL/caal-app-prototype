@@ -173,11 +173,16 @@ let isEditMode = false;
 // stores the full loaded feature list and lets you remove and redraw map layer when filtering
 let allFeatures = [];
 let geoJsonLayer = null;
+// for adding records
+let isAddMode = false;
+let pendingNewFeature = null;
 
 //  HTML page elements 
 const languageSelect = document.getElementById("languageSelect");
 const recordDetails = document.getElementById("recordDetails");
 const siteSearch = document.getElementById("siteSearch");
+const addPointBtn = document.getElementById("addPointBtn");
+const cancelAddBtn = document.getElementById("cancelAddBtn");
 
 //  the Leaflet map
 const map = L.map("map").setView([48.0, 67.0], 5);
@@ -336,6 +341,114 @@ function renderDetailItem(label, value, fullWidth = false) {
       <div class="detail-value">${safeValue(value)}</div>
     </div>
   `;
+}
+
+// ADD MODE UI STATE - keeps button visibility in sync with whether the map is waiting for a new point click
+function updateAddModeUI() {
+  if (isAddMode) {
+    addPointBtn.textContent = "Click map to place point";
+    cancelAddBtn.hidden = false;
+    map.getContainer().style.cursor = "crosshair";
+  } else {
+    addPointBtn.textContent = "Add point";
+    cancelAddBtn.hidden = true;
+    map.getContainer().style.cursor = "";
+  }
+}
+
+// ENTER ADD MODE - user is now expected to click the map
+function enterAddMode() {
+  isAddMode = true;
+  updateAddModeUI();
+}
+
+// EXIT ADD MODE - cancels point creation mode
+function exitAddMode() {
+  isAddMode = false;
+  updateAddModeUI();
+}
+
+// CREATE A NEW TEMPORARY FEATURE - This is only in-memory for now
+function makeNewPointFeature(latlng) {
+  const lng = Number(latlng.lng.toFixed(6));
+  const lat = Number(latlng.lat.toFixed(6));
+
+  return {
+    type: "Feature",
+    properties: {
+      "Primary Name": "",
+      "Primary Name (English)": "",
+      "Other Names": "",
+      "Country": "kazakhstan",
+      "Region": "",
+      "Classification": "",
+      "CAAL_ID": "[new record - unsaved]",
+      "Internal Reference": "",
+      "External Reference": "",
+      "Monument Passport": "",
+      "Monument Type1": "",
+      "Monument Type2": "",
+      "Monument Type3": "",
+      "Monument Type4": "",
+      "Monument Type5": "",
+      "Monument Type6": "",
+      "Religion1": "",
+      "Religion2": "",
+      "Religion3": "",
+      "Descriptive Date": "",
+      "Cultural Period1": "",
+      "Cultural Period2": "",
+      "Cultural Period3": "",
+      "Cultural Period4": "",
+      "Cultural Period5": "",
+      "Cultural Period6": "",
+      "Primary Description": "",
+      "Primary Description (English)": "",
+      "Additional Notes": "",
+      "Longitude": lng,
+      "Latitude": lat,
+      "Altitude": "",
+      "Location Confidence": "",
+      "Location Notes": "",
+      "Primary Address": "",
+      "Administrative Subdivision Name1": "",
+      "Administrative Subdivision Type1": "",
+      "Administrative Subdivision Name2": "",
+      "Administrative Subdivision Type2": "",
+      "Administrative Subdivision Name3": "",
+      "Administrative Subdivision Type3": "",
+      "Administrative Subdivision Name4": "",
+      "Administrative Subdivision Type4": "",
+      "Measurement Value1": "",
+      "Measurement Unit1": "",
+      "Measurement Type1": "",
+      "Measurement Value2": "",
+      "Measurement Unit2": "",
+      "Measurement Type2": "",
+      "Measurement Value3": "",
+      "Measurement Unit3": "",
+      "Measurement Type3": "",
+      "Measurement Value4": "",
+      "Measurement Unit4": "",
+      "Measurement Type4": "",
+      "Designation": "",
+      "World Heritage Site Name": "",
+      "Monument is part of": "",
+      "Monument contains": "",
+      "Monument is associated with": "",
+      "Preferred Language": currentLang,
+      "Recorder": "[session user]",
+      "MasterID": "",
+      "Tstamp": "",
+      "Date of Recording": "",
+      "Start Date": "",
+      "End Date": ""
+    },
+    geometry: {
+      type: "Point",
+      coordinates: [lng, lat]
+    }
+  };
 }
 
 // DISPLAY MODE (read-only) in side panel
@@ -974,6 +1087,56 @@ languageSelect.addEventListener("change", (event) => {
   currentLang = event.target.value;
   applyLanguage();
 });
+
+// ADD POINT BUTTON - Toggle into add mode
+addPointBtn.addEventListener("click", () => {
+  if (isAddMode) {
+    exitAddMode();
+  } else {
+    enterAddMode();
+  }
+});
+
+// CANCEL ADD BUTTON - explicit cancel while in add mode
+cancelAddBtn.addEventListener("click", () => {
+  exitAddMode();
+});
+
+// ESC KEY CANCELS ADD MODE
+document.addEventListener("keydown", (event) => {
+  if (event.key === "Escape" && isAddMode) {
+    exitAddMode();
+  }
+});
+
+// MAP CLICK FOR NEW POINT CREATION - only active while in add mode
+map.on("click", (event) => {
+  if (!isAddMode) {
+    return;
+  }
+
+  // Create a new temporary feature
+  const newFeature = makeNewPointFeature(event.latlng);
+
+  // Keep a reference if you want to distinguish it later
+  pendingNewFeature = newFeature;
+
+  // Add it to the in-memory feature list
+  allFeatures.push(newFeature);
+
+  // Redraw map so the new point appears
+  drawFeatures(allFeatures);
+
+  // Exit add mode after placing the point
+  exitAddMode();
+
+  // Open the new record in edit mode immediately
+  isEditMode = true;
+  renderRecordDetails(newFeature.properties);
+});
+
+//
+updateAddModeUI();
 
 //  load local GeoJSON data, then create map layer and click behaviour
 fetch("./data/monuments_kaz_sample.geojson")
