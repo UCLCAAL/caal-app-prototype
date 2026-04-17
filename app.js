@@ -1133,33 +1133,32 @@ function renderEditMode(properties) {
 
   // Cancel edit mode without saving changes
   document.getElementById("cancelEditBtn").addEventListener("click", () => {
-    // If the current record is a brand-new unsaved one, discard it completely
     if (pendingNewFeature && pendingNewFeature.properties === selectedProperties) {
       pendingNewFeature = null;
       selectedProperties = null;
       isEditMode = false;
       exitAddMode();
-      applyLanguage(); // restores the empty-state panel
+      applyLanguage();
       return;
     }
-  
-    // Otherwise just leave edit mode for an existing record
+
     isEditMode = false;
     renderRecordDetails(selectedProperties);
   });
 
-// Apply the current Longitude / Latitude values to the map point
-document.getElementById("setLocationBtn").addEventListener("click", () => {
-  const ok = updateSelectedFeatureGeometryFromCoordinates();
-  if (ok) {
-    alert("Location updated on map.");
-  }
-});
+  // Apply the current Longitude / Latitude values to the map point
+  document.getElementById("setLocationBtn").addEventListener("click", () => {
+    const ok = updateSelectedFeatureGeometryFromCoordinates();
+    if (ok) {
+      alert("Location updated on map.");
+    }
+  });
 
-// Pick location button 
-document.getElementById("pickLocationBtn").addEventListener("click", () => {
-  enterAddMode();
-});
+  // Pick location button
+  document.getElementById("pickLocationBtn").addEventListener("click", () => {
+    enterAddMode();
+  });
+}
 
 // apply current language to the interface
 // Re-renders current selected record too
@@ -1248,26 +1247,6 @@ map.on("click", (event) => {
   // Re-render edit form so Longitude/Latitude fields update
   isEditMode = true;
   renderRecordDetails(selectedProperties);
-});
-
-  // Create a new temporary feature
- const newFeature = makeNewBlankFeature();
-
-  // Keep a reference if you want to distinguish it later
-  pendingNewFeature = newFeature;
-
-  // Add it to the in-memory feature list
-  allFeatures.push(newFeature);
-
-  // Redraw map so the new point appears
-  drawFeatures(allFeatures);
-
-  // Exit add mode after placing the point
-  exitAddMode();
-
-  // Open the new record in edit mode immediately
-  isEditMode = true;
-  renderRecordDetails(newFeature.properties);
 });
 
 //
