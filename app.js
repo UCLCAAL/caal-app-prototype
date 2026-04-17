@@ -310,6 +310,19 @@ function hasValue(value) {
   return value !== null && value !== undefined && value !== "";
 }
 
+// renderdisplay helper: format numbers for display - used for longitude, latitude, altitude
+function formatValue(value, decimals = null) {
+  if (value === null || value === undefined || value === "") {
+    return "Not recorded";
+  }
+
+  if (decimals !== null && !isNaN(value)) {
+    return Number(value).toFixed(decimals);
+  }
+
+  return value;
+}
+
 // renderdisplay helper: create one display card
 // label = visible field label
 // value = field value from properties
