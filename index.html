@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>CAAL Web Prototype</title>
+  <title>CAAL App Prototype</title>
 
   <link
     rel="stylesheet"
@@ -17,8 +17,16 @@
 <body>
   <header class="topbar">
     <div class="brand">
-      <h1>CAAL Prototype</h1>
-      <p>Kazakhstan monuments test interface</p>
+      <h1>UCL CAAL App Prototype 1</h1>
+      <p>Kazakhstan Monuments workspace</p>
+    </div>
+    <div class="lang-switcher">
+      <label for="languageSelect" data-i18n="language_label">Language</label>
+      <select id="languageSelect">
+        <option value="en">English</option>
+        <option value="ru">Русский</option>
+        <option value="zh">中文</option>
+      </select>
     </div>
   </header>
 
@@ -27,15 +35,15 @@
       <div id="map"></div>
     </section>
 
-    <aside class="side-panel" id="sidePanel">
+        <aside class="side-panel" id="sidePanel">
       <div class="panel-header">
-        <h2>Record Details</h2>
-        <p>Click a monument on the map</p>
+        <h2 data-i18n="record_details">Record Details</h2>
+        <p data-i18n="click_prompt">Click a monument on the map</p>
       </div>
 
       <div class="panel-body" id="recordDetails">
         <div class="empty-state">
-          <p>No record selected yet.</p>
+          <p data-i18n="no_record_selected">No record selected yet.</p>
         </div>
       </div>
     </aside>
