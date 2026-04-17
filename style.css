@@ -69,10 +69,13 @@ body {
   font-size: 0.92rem;
 }
 
+/* map relative to panel size */
+  /* Left column = map */
+  /* Right column = form panel */
 .app-shell {
   flex: 1;
   display: grid;
-  grid-template-columns: 1fr 360px;
+  grid-template-columns: 0.9fr 520px;
   min-height: 0;
 }
 
