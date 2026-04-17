@@ -23,10 +23,10 @@
       "properties": {
         "caal_id": "Mon_KAZ_0002",
         "primary_name": "Burial Complex B",
-        "country": "Kazakhstan",
+        "country": "kazakhstan",
         "classification": "Archaeological site",
-        "monument_type1": "Burial site",
-        "cultural_period1": "Bronze Age",
+        "monument_type1": "burial_site",
+        "cultural_period1": "bronze_age",
         "recorder": "CAAL test user",
         "notes": "Second sample point with different values."
       },
