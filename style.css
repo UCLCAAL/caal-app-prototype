@@ -197,3 +197,35 @@ body {
     border-top: 1px solid var(--border);
   }
 }
+
+.panel-actions {
+  display: flex;
+  gap: 0.6rem;
+  margin: 0 0 1rem;
+}
+
+.action-btn {
+  border: 1px solid var(--border);
+  background: #ffffff;
+  color: var(--text);
+  border-radius: 8px;
+  padding: 0.55rem 0.85rem;
+  font-size: 0.92rem;
+  cursor: pointer;
+}
+
+.action-btn.primary {
+  background: var(--accent);
+  color: #ffffff;
+  border-color: var(--accent);
+}
+
+.form-control {
+  width: 100%;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  font-size: 0.95rem;
+  background: #ffffff;
+  color: var(--text);
+}
