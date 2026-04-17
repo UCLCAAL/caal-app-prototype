@@ -603,65 +603,328 @@ function renderDisplayMode(properties) {
   });
 }
 
-// edit mode in side panel
-//  only monument_type1 is editable
-function renderEditMode(properties) {
-  const monumentTypeOptions = getLookupOptions("monument_type1")
+// edit HELPER: make a safe DOM id from a field name
+// Example: "Primary Name" -> "fld_primary_name" OR "Primary Name (English)" -> "fld_primary_name_english"
+function makeFieldId(fieldName) {
+  return "fld_" + fieldName
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+}
+
+// HELPER: read current value from an input/select/textarea, using the real field name
+function getInputValue(fieldName) {
+  const inputId = makeFieldId(fieldName);
+  const el = document.getElementById(inputId);
+  return el ? el.value : "";
+}
+
+// EDIT HELPER: text input
+function renderTextInput(fieldName, label, value, fullWidth = false) {
+  const inputId = makeFieldId(fieldName);
+  const fullWidthClass = fullWidth ? " full-width" : "";
+
+  return `
+    <div class="detail-item${fullWidthClass}">
+      <label class="detail-label" for="${inputId}">${label}</label>
+      <input type="text" id="${inputId}" class="form-control" value="${value ?? ""}">
+    </div>
+  `;
+}
+
+// EDIT HELPER: textarea
+function renderTextarea(fieldName, label, value, fullWidth = true) {
+  const inputId = makeFieldId(fieldName);
+  const fullWidthClass = fullWidth ? " full-width" : "";
+
+  return `
+    <div class="detail-item${fullWidthClass}">
+      <label class="detail-label" for="${inputId}">${label}</label>
+      <textarea id="${inputId}" class="form-control" rows="4">${value ?? ""}</textarea>
+    </div>
+  `;
+}
+
+// EDIT HELPER: number input
+function renderNumberInput(fieldName, label, value, step = "any", fullWidth = false) {
+  const inputId = makeFieldId(fieldName);
+  const fullWidthClass = fullWidth ? " full-width" : "";
+
+  return `
+    <div class="detail-item${fullWidthClass}">
+      <label class="detail-label" for="${inputId}">${label}</label>
+      <input type="number" id="${inputId}" class="form-control" step="${step}" value="${value ?? ""}">
+    </div>
+  `;
+}
+
+// EDIT HELPER: read-only display, Used for system or derived fields
+function renderReadOnlyItem(label, value, fullWidth = false) {
+  const fullWidthClass = fullWidth ? " full-width" : "";
+
+  return `
+    <div class="detail-item${fullWidthClass}">
+      <span class="detail-label">${label}</span>
+      <div class="detail-value">${safeValue(value)}</div>
+    </div>
+  `;
+}
+
+// EDIT HELPER: dropdown, fieldKey = lookupLabels key, propertyValue = currently stored value
+function renderSelectInput(fieldName, label, fieldKey, propertyValue, fullWidth = false) {
+  const inputId = makeFieldId(fieldName);
+  const fullWidthClass = fullWidth ? " full-width" : "";
+
+  const options = getLookupOptions(fieldKey)
     .map((option) => {
-      const selected = option.value === properties.monument_type1 ? "selected" : "";
+      const selected = option.value === propertyValue ? "selected" : "";
       return `<option value="${option.value}" ${selected}>${option.label}</option>`;
     })
     .join("");
 
+  return `
+    <div class="detail-item${fullWidthClass}">
+      <label class="detail-label" for="${inputId}">${label}</label>
+      <select id="${inputId}" class="form-control">
+        <option value="">--</option>
+        ${options}
+      </select>
+    </div>
+  `;
+}
+// edit mode in side panel
+function renderEditMode(properties) {
   recordDetails.innerHTML = `
     <div class="record-title">
-      <h3>${safeValue(properties.primary_name)}</h3>
-      <p>${safeValue(properties.caal_id)}</p>
+      <h3>${safeValue(properties["Primary Name"])}</h3>
+      <p>${safeValue(properties["CAAL_ID"])}</p>
     </div>
 
     <div class="panel-actions">
-      <button type="button" class="action-btn primary" id="saveRecordBtn">
-        ${t("save")}
-      </button>
-      <button type="button" class="action-btn" id="cancelEditBtn">
-        ${t("cancel")}
-      </button>
+      <button type="button" class="action-btn primary" id="saveRecordBtn">${t("save")}</button>
+      <button type="button" class="action-btn" id="cancelEditBtn">${t("cancel")}</button>
     </div>
 
     <div class="detail-grid">
-      <div class="detail-item">
-        <span class="detail-label">${t("country")}</span>
-        <div class="detail-value">${displayLookup("country", properties.country)}</div>
+
+      <!-- BASIC -->
+      <div class="detail-item full-width section-header">
+        <span class="detail-section-title">${t("basic_group")}</span>
       </div>
 
-      <div class="detail-item">
-        <span class="detail-label">${t("classification")}</span>
-        <div class="detail-value">${safeValue(properties.classification)}</div>
+      ${renderTextInput("Primary Name", "Primary Name", properties["Primary Name"], true)}
+      ${renderTextInput("Primary Name (English)", t("primary_name_en"), properties["Primary Name (English)"], true)}
+      ${renderTextInput("Other Names", t("other_names"), properties["Other Names"], true)}
+
+      ${renderSelectInput("Country", t("country"), "country", properties["Country"])}
+      ${renderTextInput("Region", t("region"), properties["Region"])}
+
+      ${renderTextInput("Classification", t("classification"), properties["Classification"])}
+      ${renderReadOnlyItem(t("caal_id"), properties["CAAL_ID"])}
+
+      ${renderTextInput("Internal Reference", t("internal_reference"), properties["Internal Reference"])}
+      ${renderTextInput("External Reference", t("external_reference"), properties["External Reference"])}
+
+      ${renderTextInput("Designation", t("designation"), properties["Designation"])}
+      ${renderTextInput("World Heritage Site Name", t("world_heritage_site_name"), properties["World Heritage Site Name"])}
+
+      <!-- MONUMENT -->
+      <div class="detail-item full-width section-header">
+        <span class="detail-section-title">${t("monument_group")}</span>
       </div>
 
-      <div class="detail-item">
-        <label class="detail-label" for="edit_monument_type1">${t("monument_type1")}</label>
-        <select id="edit_monument_type1" class="form-control">
-          ${monumentTypeOptions}
-        </select>
+      ${renderTextInput("Monument Passport", t("monument_passport"), properties["Monument Passport"], true)}
+
+      ${renderSelectInput("Monument Type1", t("monument_type1"), "monument_type1", properties["Monument Type1"])}
+      ${renderTextInput("Monument Type2", t("monument_type2"), properties["Monument Type2"])}
+      ${renderTextInput("Monument Type3", t("monument_type3"), properties["Monument Type3"])}
+      ${renderTextInput("Monument Type4", t("monument_type4"), properties["Monument Type4"])}
+      ${renderTextInput("Monument Type5", t("monument_type5"), properties["Monument Type5"])}
+      ${renderTextInput("Monument Type6", t("monument_type6"), properties["Monument Type6"])}
+
+      ${renderTextInput("Religion1", t("religion1"), properties["Religion1"])}
+      ${renderTextInput("Religion2", t("religion2"), properties["Religion2"])}
+      ${renderTextInput("Religion3", t("religion3"), properties["Religion3"])}
+
+      ${renderTextInput("Descriptive Date", t("descriptive_date"), properties["Descriptive Date"], true)}
+
+      ${renderSelectInput("Cultural Period1", t("cultural_period1"), "cultural_period1", properties["Cultural Period1"])}
+      ${renderTextInput("Cultural Period2", t("cultural_period2"), properties["Cultural Period2"])}
+      ${renderTextInput("Cultural Period3", t("cultural_period3"), properties["Cultural Period3"])}
+      ${renderTextInput("Cultural Period4", t("cultural_period4"), properties["Cultural Period4"])}
+      ${renderTextInput("Cultural Period5", t("cultural_period5"), properties["Cultural Period5"])}
+      ${renderTextInput("Cultural Period6", t("cultural_period6"), properties["Cultural Period6"])}
+
+      ${renderReadOnlyItem(t("start_date"), properties["Start Date"])}
+      ${renderReadOnlyItem(t("end_date"), properties["End Date"])}
+
+      ${renderTextarea("Primary Description", t("primary_description"), properties["Primary Description"], true)}
+      ${renderTextarea("Primary Description (English)", t("primary_description_en"), properties["Primary Description (English)"], true)}
+      ${renderTextarea("Additional Notes", t("additional_notes"), properties["Additional Notes"], true)}
+
+      <!-- ADMINISTRATION -->
+      <div class="detail-item full-width section-header">
+        <span class="detail-section-title">${t("administration_group")}</span>
       </div>
 
-      <div class="detail-item">
-        <span class="detail-label">${t("cultural_period1")}</span>
-        <div class="detail-value">${displayLookup("cultural_period1", properties.cultural_period1)}</div>
+      ${renderTextInput("Primary Address", t("primary_address"), properties["Primary Address"], true)}
+
+      ${renderNumberInput("Longitude", t("longitude"), properties["Longitude"], "0.000001")}
+      ${renderNumberInput("Latitude", t("latitude"), properties["Latitude"], "0.000001")}
+      ${renderNumberInput("Altitude", t("altitude"), properties["Altitude"], "any")}
+      ${renderTextInput("Location Confidence", t("location_confidence"), properties["Location Confidence"])}
+
+      ${renderTextarea("Location Notes", t("location_notes"), properties["Location Notes"], true)}
+
+      ${renderTextInput("Administrative Subdivision Name1", t("admin_subdivision_name1"), properties["Administrative Subdivision Name1"])}
+      ${renderTextInput("Administrative Subdivision Type1", t("admin_subdivision_type1"), properties["Administrative Subdivision Type1"])}
+      ${renderTextInput("Administrative Subdivision Name2", t("admin_subdivision_name2"), properties["Administrative Subdivision Name2"])}
+      ${renderTextInput("Administrative Subdivision Type2", t("admin_subdivision_type2"), properties["Administrative Subdivision Type2"])}
+      ${renderTextInput("Administrative Subdivision Name3", t("admin_subdivision_name3"), properties["Administrative Subdivision Name3"])}
+      ${renderTextInput("Administrative Subdivision Type3", t("admin_subdivision_type3"), properties["Administrative Subdivision Type3"])}
+      ${renderTextInput("Administrative Subdivision Name4", t("admin_subdivision_name4"), properties["Administrative Subdivision Name4"])}
+      ${renderTextInput("Administrative Subdivision Type4", t("admin_subdivision_type4"), properties["Administrative Subdivision Type4"])}
+
+      <!-- MEASUREMENTS -->
+      <div class="detail-item full-width section-header">
+        <span class="detail-section-title">${t("measurements_group")}</span>
       </div>
 
-      <div class="detail-item">
-        <span class="detail-label">${t("recorder")}</span>
-        <div class="detail-value">${safeValue(properties.recorder)}</div>
+      ${renderNumberInput("Measurement Value1", t("measurement_value1"), properties["Measurement Value1"])}
+      ${renderTextInput("Measurement Unit1", t("measurement_unit1"), properties["Measurement Unit1"])}
+      ${renderTextInput("Measurement Type1", t("measurement_type1"), properties["Measurement Type1"])}
+
+      ${renderNumberInput("Measurement Value2", t("measurement_value2"), properties["Measurement Value2"])}
+      ${renderTextInput("Measurement Unit2", t("measurement_unit2"), properties["Measurement Unit2"])}
+      ${renderTextInput("Measurement Type2", t("measurement_type2"), properties["Measurement Type2"])}
+
+      ${renderNumberInput("Measurement Value3", t("measurement_value3"), properties["Measurement Value3"])}
+      ${renderTextInput("Measurement Unit3", t("measurement_unit3"), properties["Measurement Unit3"])}
+      ${renderTextInput("Measurement Type3", t("measurement_type3"), properties["Measurement Type3"])}
+
+      ${renderNumberInput("Measurement Value4", t("measurement_value4"), properties["Measurement Value4"])}
+      ${renderTextInput("Measurement Unit4", t("measurement_unit4"), properties["Measurement Unit4"])}
+      ${renderTextInput("Measurement Type4", t("measurement_type4"), properties["Measurement Type4"])}
+
+      <!-- METADATA -->
+      <div class="detail-item full-width section-header">
+        <span class="detail-section-title">${t("metadata_group")}</span>
       </div>
 
-      <div class="detail-item">
-        <span class="detail-label">${t("notes")}</span>
-        <div class="detail-value">${safeValue(properties.notes)}</div>
+      ${renderReadOnlyItem(t("preferred_language"), properties["Preferred Language"])}
+      ${renderReadOnlyItem(t("recorder"), properties["Recorder"])}
+      ${renderTextInput("Date of Recording", t("date_of_recording"), properties["Date of Recording"])}
+      ${renderReadOnlyItem(t("tstamp"), properties["Tstamp"])}
+      ${renderTextInput("MasterID", t("master_id"), properties["MasterID"])}
+
+      <!-- RELATED RESOURCES -->
+      <div class="detail-item full-width section-header">
+        <span class="detail-section-title">${t("related_resources_group")}</span>
       </div>
+
+      ${renderTextInput("Monument is part of", t("monument_is_part_of"), properties["Monument is part of"], true)}
+      ${renderTextInput("Monument contains", t("monument_contains"), properties["Monument contains"], true)}
+      ${renderTextInput("Monument is associated with", t("monument_is_associated_with"), properties["Monument is associated with"], true)}
+
     </div>
   `;
+
+  // Save current editable values back into the selected record
+  document.getElementById("saveRecordBtn").addEventListener("click", () => {
+    // BASIC
+    selectedProperties["Primary Name"] = getInputValue("Primary Name");
+    selectedProperties["Primary Name (English)"] = getInputValue("Primary Name (English)");
+    selectedProperties["Other Names"] = getInputValue("Other Names");
+    selectedProperties["Country"] = getInputValue("Country");
+    selectedProperties["Region"] = getInputValue("Region");
+    selectedProperties["Classification"] = getInputValue("Classification");
+    selectedProperties["Internal Reference"] = getInputValue("Internal Reference");
+    selectedProperties["External Reference"] = getInputValue("External Reference");
+    selectedProperties["Designation"] = getInputValue("Designation");
+    selectedProperties["World Heritage Site Name"] = getInputValue("World Heritage Site Name");
+
+    // MONUMENT
+    selectedProperties["Monument Passport"] = getInputValue("Monument Passport");
+    selectedProperties["Monument Type1"] = getInputValue("Monument Type1");
+    selectedProperties["Monument Type2"] = getInputValue("Monument Type2");
+    selectedProperties["Monument Type3"] = getInputValue("Monument Type3");
+    selectedProperties["Monument Type4"] = getInputValue("Monument Type4");
+    selectedProperties["Monument Type5"] = getInputValue("Monument Type5");
+    selectedProperties["Monument Type6"] = getInputValue("Monument Type6");
+
+    selectedProperties["Religion1"] = getInputValue("Religion1");
+    selectedProperties["Religion2"] = getInputValue("Religion2");
+    selectedProperties["Religion3"] = getInputValue("Religion3");
+
+    selectedProperties["Descriptive Date"] = getInputValue("Descriptive Date");
+
+    selectedProperties["Cultural Period1"] = getInputValue("Cultural Period1");
+    selectedProperties["Cultural Period2"] = getInputValue("Cultural Period2");
+    selectedProperties["Cultural Period3"] = getInputValue("Cultural Period3");
+    selectedProperties["Cultural Period4"] = getInputValue("Cultural Period4");
+    selectedProperties["Cultural Period5"] = getInputValue("Cultural Period5");
+    selectedProperties["Cultural Period6"] = getInputValue("Cultural Period6");
+
+    // Start Date / End Date intentionally not editable here
+
+    selectedProperties["Primary Description"] = getInputValue("Primary Description");
+    selectedProperties["Primary Description (English)"] = getInputValue("Primary Description (English)");
+    selectedProperties["Additional Notes"] = getInputValue("Additional Notes");
+
+    // ADMINISTRATION
+    selectedProperties["Primary Address"] = getInputValue("Primary Address");
+    selectedProperties["Longitude"] = getInputValue("Longitude");
+    selectedProperties["Latitude"] = getInputValue("Latitude");
+    selectedProperties["Altitude"] = getInputValue("Altitude");
+    selectedProperties["Location Confidence"] = getInputValue("Location Confidence");
+    selectedProperties["Location Notes"] = getInputValue("Location Notes");
+
+    selectedProperties["Administrative Subdivision Name1"] = getInputValue("Administrative Subdivision Name1");
+    selectedProperties["Administrative Subdivision Type1"] = getInputValue("Administrative Subdivision Type1");
+    selectedProperties["Administrative Subdivision Name2"] = getInputValue("Administrative Subdivision Name2");
+    selectedProperties["Administrative Subdivision Type2"] = getInputValue("Administrative Subdivision Type2");
+    selectedProperties["Administrative Subdivision Name3"] = getInputValue("Administrative Subdivision Name3");
+    selectedProperties["Administrative Subdivision Type3"] = getInputValue("Administrative Subdivision Type3");
+    selectedProperties["Administrative Subdivision Name4"] = getInputValue("Administrative Subdivision Name4");
+    selectedProperties["Administrative Subdivision Type4"] = getInputValue("Administrative Subdivision Type4");
+
+    // MEASUREMENTS
+    selectedProperties["Measurement Value1"] = getInputValue("Measurement Value1");
+    selectedProperties["Measurement Unit1"] = getInputValue("Measurement Unit1");
+    selectedProperties["Measurement Type1"] = getInputValue("Measurement Type1");
+
+    selectedProperties["Measurement Value2"] = getInputValue("Measurement Value2");
+    selectedProperties["Measurement Unit2"] = getInputValue("Measurement Unit2");
+    selectedProperties["Measurement Type2"] = getInputValue("Measurement Type2");
+
+    selectedProperties["Measurement Value3"] = getInputValue("Measurement Value3");
+    selectedProperties["Measurement Unit3"] = getInputValue("Measurement Unit3");
+    selectedProperties["Measurement Type3"] = getInputValue("Measurement Type3");
+
+    selectedProperties["Measurement Value4"] = getInputValue("Measurement Value4");
+    selectedProperties["Measurement Unit4"] = getInputValue("Measurement Unit4");
+    selectedProperties["Measurement Type4"] = getInputValue("Measurement Type4");
+
+    // METADATA
+    // Preferred Language and Recorder intentionally read-only
+    selectedProperties["Date of Recording"] = getInputValue("Date of Recording");
+    selectedProperties["MasterID"] = getInputValue("MasterID");
+
+    // RELATED RESOURCES
+    selectedProperties["Monument is part of"] = getInputValue("Monument is part of");
+    selectedProperties["Monument contains"] = getInputValue("Monument contains");
+    selectedProperties["Monument is associated with"] = getInputValue("Monument is associated with");
+
+    isEditMode = false;
+    renderRecordDetails(selectedProperties);
+  });
+
+  // Cancel edit mode without saving changes
+  document.getElementById("cancelEditBtn").addEventListener("click", () => {
+    isEditMode = false;
+    renderRecordDetails(selectedProperties);
+  });
+}
 
   // Save the changed dropdown value into the selected record in memory
   document.getElementById("saveRecordBtn").addEventListener("click", () => {
