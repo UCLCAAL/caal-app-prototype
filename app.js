@@ -11,7 +11,10 @@ const translations = {
     monument_type1: "Monument Type 1",
     cultural_period1: "Cultural Period 1",
     recorder: "Recorder",
-    notes: "Notes"
+    notes: "Notes",
+    edit_record: "Edit record",
+    save: "Save",
+    cancel: "Cancel"
   },
   ru: {
     app_title: "Прототип приложения CAAL",
@@ -25,7 +28,10 @@ const translations = {
     monument_type1: "Тип памятника 1",
     cultural_period1: "Культурный период 1",
     recorder: "Составитель",
-    notes: "Примечания"
+    notes: "Примечания",
+    edit_record: "Редактировать запись",
+    save: "Сохранить",
+    cancel: "Отмена"
   },
   zh: {
     app_title: "CAAL 应用原型",
@@ -39,7 +45,10 @@ const translations = {
     monument_type1: "遗址类型 1",
     cultural_period1: "文化时期 1",
     recorder: "记录者",
-    notes: "备注"
+    notes: "备注",
+    edit_record: "编辑记录",
+    save: "保存",
+    cancel: "取消"
   }
 };
 
@@ -116,6 +125,141 @@ function displayLookup(fieldName, rawValue) {
     return "Not recorded";
   }
 
+  function getLookupOptions(fieldName) {
+  const fieldLookup = lookupLabels[fieldName];
+  if (!fieldLookup) {
+    return [];
+  }
+
+  return Object.entries(fieldLookup).map(([value, labels]) => ({
+    value,
+    label: labels[currentLang] || labels.en || value
+  }));
+}
+
+function renderDisplayMode(properties) {
+  recordDetails.innerHTML = `
+    <div class="record-title">
+      <h3>${safeValue(properties.primary_name)}</h3>
+      <p>${safeValue(properties.caal_id)}</p>
+    </div>
+
+    <div class="panel-actions">
+      <button type="button" class="action-btn" id="editRecordBtn">
+        ${t("edit_record")}
+      </button>
+    </div>
+
+    <div class="detail-grid">
+      <div class="detail-item">
+        <span class="detail-label">${t("country")}</span>
+        <div class="detail-value">${displayLookup("country", properties.country)}</div>
+      </div>
+
+      <div class="detail-item">
+        <span class="detail-label">${t("classification")}</span>
+        <div class="detail-value">${safeValue(properties.classification)}</div>
+      </div>
+
+      <div class="detail-item">
+        <span class="detail-label">${t("monument_type1")}</span>
+        <div class="detail-value">${displayLookup("monument_type1", properties.monument_type1)}</div>
+      </div>
+
+      <div class="detail-item">
+        <span class="detail-label">${t("cultural_period1")}</span>
+        <div class="detail-value">${displayLookup("cultural_period1", properties.cultural_period1)}</div>
+      </div>
+
+      <div class="detail-item">
+        <span class="detail-label">${t("recorder")}</span>
+        <div class="detail-value">${safeValue(properties.recorder)}</div>
+      </div>
+
+      <div class="detail-item">
+        <span class="detail-label">${t("notes")}</span>
+        <div class="detail-value">${safeValue(properties.notes)}</div>
+      </div>
+    </div>
+  `;
+
+  document.getElementById("editRecordBtn").addEventListener("click", () => {
+    isEditMode = true;
+    renderRecordDetails(selectedProperties);
+  });
+}
+
+function renderEditMode(properties) {
+  const monumentTypeOptions = getLookupOptions("monument_type1")
+    .map((option) => {
+      const selected = option.value === properties.monument_type1 ? "selected" : "";
+      return `<option value="${option.value}" ${selected}>${option.label}</option>`;
+    })
+    .join("");
+
+  recordDetails.innerHTML = `
+    <div class="record-title">
+      <h3>${safeValue(properties.primary_name)}</h3>
+      <p>${safeValue(properties.caal_id)}</p>
+    </div>
+
+    <div class="panel-actions">
+      <button type="button" class="action-btn primary" id="saveRecordBtn">
+        ${t("save")}
+      </button>
+      <button type="button" class="action-btn" id="cancelEditBtn">
+        ${t("cancel")}
+      </button>
+    </div>
+
+    <div class="detail-grid">
+      <div class="detail-item">
+        <span class="detail-label">${t("country")}</span>
+        <div class="detail-value">${displayLookup("country", properties.country)}</div>
+      </div>
+
+      <div class="detail-item">
+        <span class="detail-label">${t("classification")}</span>
+        <div class="detail-value">${safeValue(properties.classification)}</div>
+      </div>
+
+      <div class="detail-item">
+        <label class="detail-label" for="edit_monument_type1">${t("monument_type1")}</label>
+        <select id="edit_monument_type1" class="form-control">
+          ${monumentTypeOptions}
+        </select>
+      </div>
+
+      <div class="detail-item">
+        <span class="detail-label">${t("cultural_period1")}</span>
+        <div class="detail-value">${displayLookup("cultural_period1", properties.cultural_period1)}</div>
+      </div>
+
+      <div class="detail-item">
+        <span class="detail-label">${t("recorder")}</span>
+        <div class="detail-value">${safeValue(properties.recorder)}</div>
+      </div>
+
+      <div class="detail-item">
+        <span class="detail-label">${t("notes")}</span>
+        <div class="detail-value">${safeValue(properties.notes)}</div>
+      </div>
+    </div>
+  `;
+
+  document.getElementById("saveRecordBtn").addEventListener("click", () => {
+    const newMonumentType = document.getElementById("edit_monument_type1").value;
+    selectedProperties.monument_type1 = newMonumentType;
+    isEditMode = false;
+    renderRecordDetails(selectedProperties);
+  });
+
+  document.getElementById("cancelEditBtn").addEventListener("click", () => {
+    isEditMode = false;
+    renderRecordDetails(selectedProperties);
+  });
+}
+
   const fieldLookup = lookupLabels[fieldName];
   if (!fieldLookup) {
     return rawValue;
@@ -151,44 +295,11 @@ function applyLanguage() {
 function renderRecordDetails(properties) {
   selectedProperties = properties;
 
-  recordDetails.innerHTML = `
-    <div class="record-title">
-      <h3>${safeValue(properties.primary_name)}</h3>
-      <p>${safeValue(properties.caal_id)}</p>
-    </div>
-
-    <div class="detail-grid">
-      <div class="detail-item">
-        <span class="detail-label">${t("country")}</span>
-        <div class="detail-value">${displayLookup("country", properties.country)}</div>
-      </div>
-
-      <div class="detail-item">
-        <span class="detail-label">${t("classification")}</span>
-        <div class="detail-value">${safeValue(properties.classification)}</div>
-      </div>
-
-      <div class="detail-item">
-        <span class="detail-label">${t("monument_type1")}</span>
-        <div class="detail-value">${displayLookup("monument_type1", properties.monument_type1)}</div>
-      </div>
-
-      <div class="detail-item">
-        <span class="detail-label">${t("cultural_period1")}</span>
-        <div class="detail-value">${displayLookup("cultural_period1", properties.cultural_period1)}</div>
-      </div>
-
-      <div class="detail-item">
-        <span class="detail-label">${t("recorder")}</span>
-        <div class="detail-value">${safeValue(properties.recorder)}</div>
-      </div>
-
-      <div class="detail-item">
-        <span class="detail-label">${t("notes")}</span>
-        <div class="detail-value">${safeValue(properties.notes)}</div>
-      </div>
-    </div>
-  `;
+  if (isEditMode) {
+    renderEditMode(properties);
+  } else {
+    renderDisplayMode(properties);
+  }
 }
 
 function pointStyle(feature, latlng) {
