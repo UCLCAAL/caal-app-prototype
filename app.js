@@ -926,22 +926,6 @@ function renderEditMode(properties) {
   });
 }
 
-  // Save the changed dropdown value into the selected record in memory
-  document.getElementById("saveRecordBtn").addEventListener("click", () => {
-    const newMonumentType = document.getElementById("edit_monument_type1").value;
-    selectedProperties.monument_type1 = newMonumentType;
-    isEditMode = false;
-    renderRecordDetails(selectedProperties);
-  });
-
-  // Cancel edit mode without saving changes
-  document.getElementById("cancelEditBtn").addEventListener("click", () => {
-    isEditMode = false;
-    renderRecordDetails(selectedProperties);
-  });
-}
-
-
 // apply current language to the interface
 // Re-renders current selected record too
 function applyLanguage() {
