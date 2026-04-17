@@ -1,3 +1,27 @@
+const lookupLabels = {
+  country: {
+    kazakhstan: {
+      en: "Kazakhstan",
+      ru: "Казахстан",
+      zh: "哈萨克斯坦"
+    }
+  },
+  monument_type1: {
+    burial_site: {
+      en: "Burial site",
+      ru: "Погребальный памятник",
+      zh: "墓葬遗址"
+    }
+  },
+  cultural_period1: {
+    bronze_age: {
+      en: "Bronze Age",
+      ru: "Бронзовый век",
+      zh: "青铜时代"
+    }
+  }
+};
+
 const translations = {
   en: {
     app_title: "CAAL App Prototype",
