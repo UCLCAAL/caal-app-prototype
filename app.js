@@ -106,10 +106,14 @@ const lookupLabels = {
 let currentLang = "en";
 let selectedProperties = null;
 let isEditMode = false;
+// stores the full loaded feature list and lets you remove and redraw map layer when filtering
+let allFeatures = [];
+let geoJsonLayer = null;
 
 //  HTML page elements 
 const languageSelect = document.getElementById("languageSelect");
 const recordDetails = document.getElementById("recordDetails");
+const siteSearch = document.getElementById("siteSearch");
 
 //  the Leaflet map
 const map = L.map("map").setView([48.0, 67.0], 5);
@@ -119,6 +123,72 @@ L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
   attribution: "&copy; OpenStreetMap contributors"
 }).addTo(map);
 
+// SEARCH NORMALISER - lowercases text safely for searching
+function searchableText(value) {
+  if (value === null || value === undefined) {
+    return "";
+  }
+  return String(value).toLowerCase();
+}
+
+// FEATURE SEARCH MATCH - sets which fields will be searchable
+function featureMatchesSearch(feature, query) {
+  const props = feature.properties;
+  const q = query.trim().toLowerCase();
+
+  if (!q) {
+    return true;
+  }
+
+  const haystack = [
+    props["Primary Name"],
+    props["Primary Name (English)"],
+    props["CAAL_ID"],
+    props["Classification"],
+    props["Monument Type1"],
+    props["Region"],
+    props["Country"],
+    props["Cultural Period1"]
+  ]
+    .map(searchableText)
+    .join(" ");
+
+  return haystack.includes(q);
+}
+
+// DRAW FEATURES ON MAP - clears old layer and redraws current set
+function drawFeatures(features) {
+  if (geoJsonLayer) {
+    map.removeLayer(geoJsonLayer);
+  }
+
+  geoJsonLayer = L.geoJSON(
+    { type: "FeatureCollection", features },
+    {
+      pointToLayer: pointStyle,
+      onEachFeature: (feature, layer) => {
+        const props = feature.properties;
+
+        layer.bindPopup(`
+          <div>
+            <p class="popup-title">${safeValue(props["Primary Name"])}</p>
+            <p class="popup-meta">${safeValue(props["CAAL_ID"])}</p>
+          </div>
+        `);
+
+        layer.on("click", () => {
+          isEditMode = false;
+          renderRecordDetails(props);
+        });
+      }
+    }
+  ).addTo(map);
+
+  const bounds = geoJsonLayer.getBounds();
+  if (bounds.isValid()) {
+    map.fitBounds(bounds, { padding: [30, 30] });
+  }
+}
 
 //  translation helper for UI labels
 // Example: t("country") -> "Country" or "Страна"
@@ -350,7 +420,7 @@ languageSelect.addEventListener("change", (event) => {
 });
 
 //  load local GeoJSON data, then create map layer and click behaviour
-fetch("./data/monuments_sample.geojson")
+fetch("./data/monuments_kaz_sample.geojson")
   .then((response) => {
     if (!response.ok) {
       throw new Error(`Failed to load GeoJSON: ${response.status}`);
@@ -358,30 +428,13 @@ fetch("./data/monuments_sample.geojson")
     return response.json();
   })
   .then((geojson) => {
-    const layer = L.geoJSON(geojson, {
-      pointToLayer: pointStyle,
-      onEachFeature: (feature, layer) => {
-        const props = feature.properties;
+    // Store all features in memory for later searching/filtering
+    allFeatures = geojson.features;
 
-        layer.bindPopup(`
-          <div>
-            <p class="popup-title">${safeValue(props.primary_name)}</p>
-            <p class="popup-meta">${safeValue(props.caal_id)}</p>
-          </div>
-        `);
+    // Draw them on the map using the reusable draw function
+    drawFeatures(allFeatures);
 
-        layer.on("click", () => {
-          isEditMode = false; // always reset to display mode when selecting a new feature
-          renderRecordDetails(props);
-        });
-      }
-    }).addTo(map);
-
-    const bounds = layer.getBounds();
-    if (bounds.isValid()) {
-      map.fitBounds(bounds, { padding: [30, 30] });
-    }
-
+    // Apply interface language after the page data is ready
     applyLanguage();
   })
   .catch((error) => {
