@@ -1,27 +1,3 @@
-const lookupLabels = {
-  country: {
-    kazakhstan: {
-      en: "Kazakhstan",
-      ru: "Казахстан",
-      zh: "哈萨克斯坦"
-    }
-  },
-  monument_type1: {
-    burial_site: {
-      en: "Burial site",
-      ru: "Погребальный памятник",
-      zh: "墓葬遗址"
-    }
-  },
-  cultural_period1: {
-    bronze_age: {
-      en: "Bronze Age",
-      ru: "Бронзовый век",
-      zh: "青铜时代"
-    }
-  }
-};
-
 const translations = {
   en: {
     app_title: "CAAL App Prototype",
@@ -64,6 +40,50 @@ const translations = {
     cultural_period1: "文化时期 1",
     recorder: "记录者",
     notes: "备注"
+  }
+};
+
+const lookupLabels = {
+  country: {
+    kazakhstan: {
+      en: "Kazakhstan",
+      ru: "Казахстан",
+      zh: "哈萨克斯坦"
+    }
+  },
+  monument_type1: {
+    burial_site: {
+      en: "Burial site",
+      ru: "Погребальный памятник",
+      zh: "墓葬遗址"
+    },
+    settlement: {
+      en: "Settlement",
+      ru: "Поселение",
+      zh: "聚落"
+    },
+    fortification: {
+      en: "Fortification",
+      ru: "Укрепление",
+      zh: "堡垒"
+    }
+  },
+  cultural_period1: {
+    bronze_age: {
+      en: "Bronze Age",
+      ru: "Бронзовый век",
+      zh: "青铜时代"
+    },
+    early_iron_age: {
+      en: "Early Iron Age",
+      ru: "Ранний железный век",
+      zh: "早期铁器时代"
+    },
+    medieval: {
+      en: "Medieval",
+      ru: "Средневековье",
+      zh: "中世纪"
+    }
   }
 };
 
