@@ -174,7 +174,7 @@ const lookupLabels = {
 // currentLang = selected interface language
 // selectedProperties = currently selected record
 // isEditMode = whether the side panel is in edit mode
-let currentLang = "en";
+let currentLang = loadLanguagePreference();
 let selectedProperties = null;
 let isEditMode = false;
 // stores the full loaded feature list and lets you remove and redraw map layer when filtering
@@ -192,12 +192,36 @@ const addPointBtn = document.getElementById("addPointBtn");
 const cancelAddBtn = document.getElementById("cancelAddBtn");
 
 //  the Leaflet map
-const map = L.map("map").setView([48.0, 67.0], 5);
+const mapElement = document.getElementById("map");
 
-L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-  maxZoom: 19,
-  attribution: "&copy; OpenStreetMap contributors"
-}).addTo(map);
+let map = null;
+
+if (mapElement) {
+  map = L.map("map").setView([48.0, 67.0], 5);
+
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: "&copy; OpenStreetMap contributors"
+  }).addTo(map);
+}
+
+// LANGUAGE STORAGE
+// Save and restore selected interface language across reloads and across pages
+const LANGUAGE_STORAGE_KEY = "caal_workspace_language";
+
+function saveLanguagePreference(lang) {
+  localStorage.setItem(LANGUAGE_STORAGE_KEY, lang);
+}
+
+function loadLanguagePreference() {
+  const saved = localStorage.getItem(LANGUAGE_STORAGE_KEY);
+
+  if (saved && translations[saved]) {
+    return saved;
+  }
+
+  return "en";
+}
 
 // SEARCH NORMALISER - lowercases text safely for searching
 function searchableText(value) {
@@ -352,6 +376,10 @@ function renderDetailItem(label, value, fullWidth = false) {
 
 // ADD MODE UI STATE - keeps button visibility in sync with whether the map is waiting for a new point click
 function updateAddModeUI() {
+  if (!addPointBtn || !cancelAddBtn || !map) {
+    return;
+  }
+
   if (isAddMode) {
     addPointBtn.textContent = "Place record on map";
     cancelAddBtn.hidden = false;
@@ -1156,24 +1184,32 @@ function renderEditMode(properties) {
   });
 }
 
-// apply current language to the interface
+// apply current language to the interface to page
 // Re-renders current selected record too
+// Safe for all pages, including Home
 function applyLanguage() {
   document.documentElement.lang = currentLang;
+
+  if (languageSelect) {
+    languageSelect.value = currentLang;
+  }
 
   document.querySelectorAll("[data-i18n]").forEach((el) => {
     const key = el.dataset.i18n;
     el.textContent = t(key);
   });
 
-  if (selectedProperties) {
-    renderRecordDetails(selectedProperties);
-  } else {
-    recordDetails.innerHTML = `
-      <div class="empty-state">
-        <p>${t("no_record_selected")}</p>
-      </div>
-    `;
+  // Only update the record panel on pages that actually have one
+  if (recordDetails) {
+    if (selectedProperties) {
+      renderRecordDetails(selectedProperties);
+    } else {
+      recordDetails.innerHTML = `
+        <div class="empty-state">
+          <p>${t("no_record_selected")}</p>
+        </div>
+      `;
+    }
   }
 }
 
@@ -1200,13 +1236,26 @@ function pointStyle(feature, latlng) {
 }
 
 // language dropdown event
-languageSelect.addEventListener("change", (event) => {
-  currentLang = event.target.value;
-  applyLanguage();
-});
+if (languageSelect) {
+  languageSelect.addEventListener("change", (event) => {
+    currentLang = event.target.value;
+    saveLanguagePreference(currentLang);
+    applyLanguage();
+  });
+}
+
+// Site search
+if (siteSearch) {
+  siteSearch.addEventListener("input", (event) => {
+    const query = event.target.value;
+    const filtered = allFeatures.filter((feature) =>
+      featureMatchesSearch(feature, query)
+    );
+    drawFeatures(filtered);
+  });
+}
 
 // ADD RECORD BUTTON - creates a blank new record and opens the form, doesn't go to allfeatures until saved
-// ==============================
 addPointBtn.addEventListener("click", () => {
   const newFeature = makeNewBlankFeature();
 
@@ -1219,9 +1268,18 @@ addPointBtn.addEventListener("click", () => {
 });
 
 // CANCEL ADD BUTTON - explicit cancel while in add mode
-cancelAddBtn.addEventListener("click", () => {
-  exitAddMode();
-});
+if (addPointBtn) {
+  addPointBtn.addEventListener("click", () => {
+    const newFeature = makeNewBlankFeature();
+
+    pendingNewFeature = newFeature;
+    selectedProperties = newFeature.properties;
+
+    isEditMode = true;
+    exitAddMode();
+    renderRecordDetails(selectedProperties);
+  });
+}
 
 // ESC KEY CANCELS ADD MODE
 document.addEventListener("keydown", (event) => {
@@ -1231,47 +1289,56 @@ document.addEventListener("keydown", (event) => {
 });
 
 // MAP CLICK FOR lcoation picking - only active while in add mode
-map.on("click", (event) => {
-  if (!isAddMode) {
-    return;
-  }
+if (map) {
+  map.on("click", (event) => {
+    if (!isAddMode) {
+      return;
+    }
 
-  applyMapClickToSelectedRecord(event.latlng);
+    applyMapClickToSelectedRecord(event.latlng);
 
-  exitAddMode();
-
-  // Re-render edit form so Longitude/Latitude fields update
-  isEditMode = true;
-  renderRecordDetails(selectedProperties);
-});
+    exitAddMode();
+      // Re-render edit form so Longitude/Latitude fields update
+    isEditMode = true;
+    renderRecordDetails(selectedProperties);
+  });
+}
 
 //
 updateAddModeUI();
 
 //  load local GeoJSON data, then create map layer and click behaviour
-fetch("./data/monuments_kaz_sample.geojson")
-  .then((response) => {
-    if (!response.ok) {
-      throw new Error(`Failed to load GeoJSON: ${response.status}`);
-    }
-    return response.json();
-  })
-  .then((geojson) => {
-    // Store all features in memory for later searching/filtering
-    allFeatures = geojson.features;
+if (map) {
+  fetch("./data/monuments_kaz_sample.geojson")
+    .then((response) => {
+      if (!response.ok) {
+        throw new Error(`Failed to load GeoJSON: ${response.status}`);
+      }
+      return response.json();
+    })
+    .then((geojson) => {
+      // Store all features in memory for later searching/filtering
+      allFeatures = geojson.features;
+      // Draw them on the map using the reusable draw function
+      drawFeatures(allFeatures);
+      // Apply interface language after the page data is ready
+      applyLanguage();
+    })
+    .catch((error) => {
+      console.error(error);
+      if (recordDetails) {
+        recordDetails.innerHTML = `
+          <div class="empty-state">
+            <p>Could not load sample data.</p>
+            <p>${error.message}</p>
+          </div>
+        `;
+      }
+    });
+}
 
-    // Draw them on the map using the reusable draw function
-    drawFeatures(allFeatures);
-
-    // Apply interface language after the page data is ready
-    applyLanguage();
-  })
-  .catch((error) => {
-    console.error(error);
-    recordDetails.innerHTML = `
-      <div class="empty-state">
-        <p>Could not load sample data.</p>
-        <p>${error.message}</p>
-      </div>
-    `;
-  });
+// Ensure language is applied on every page, even pages with no map
+document.addEventListener("DOMContentLoaded", () => {
+  applyLanguage();
+  updateAddModeUI();
+});
