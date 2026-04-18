@@ -1,6 +1,8 @@
 // These are labels for the app UI itself, not the record values stored in data.
 const translations = {
   en: {
+    home_workspace_title: "CAAL Kazakhstan",
+    home_workspace_intro: "Browse, consult, and maintain monument and archive records within a shared CAAL environment.",
     app_title: "CAAL App Prototype",
     app_subtitle: "Kazakhstan workspace prototype",
     language_label: "Language",
@@ -83,6 +85,8 @@ const translations = {
     cancel: "Cancel"
   },
   ru: {
+    home_workspace_title: "CAAL Казахстан",
+    home_workspace_intro: "Просматривайте, сверяйте и ведите памятники и архивные записи в общей среде CAAL.",
     app_title: "Прототип приложения CAAL",
     app_subtitle: "Прототип рабочего пространства Казахстана",
     language_label: "Язык",
@@ -100,6 +104,8 @@ const translations = {
     cancel: "Отмена"
   },
   zh: {
+    home_workspace_title: "CAAL 哈萨克斯坦",
+    home_workspace_intro: "在共享的 CAAL 环境中浏览、查阅并维护遗址和档案记录。",
     app_title: "CAAL 应用原型",
     app_subtitle: "哈萨克斯坦工作区原型",
     language_label: "语言",
