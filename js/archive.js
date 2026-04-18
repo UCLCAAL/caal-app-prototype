@@ -26,6 +26,7 @@ const archiveRecordDetails = document.getElementById("archiveRecordDetails");
 let archiveAllRecords = [];
 let archiveVisibleRecords = [];
 let archiveSelectedRecord = null;
+let archiveIsEditMode = false;
 
 // Temporary local sample records
 // Replace with API response later
@@ -455,6 +456,19 @@ function archiveRenderGroupBlock(title, innerHtml, hasValues = true) {
   `;
 }
 
+function splitArchiveMultiValue(value) {
+  if (!archiveHasRealValue(value)) return [];
+
+  return Array.from(
+    new Set(
+      String(value)
+        .split(",")
+        .map((item) => item.trim())
+        .filter((item) => item !== "")
+    )
+  );
+}
+
 // Search text blob
 // --------------------------------------------------------
 function archiveBuildSearchText(record) {
@@ -617,6 +631,16 @@ function archiveRenderResultsList(records) {
 function archiveRenderRecordDetails(record) {
   archiveSelectedRecord = record;
 
+  if (archiveIsEditMode) {
+    archiveRenderEditMode(record);
+  } else {
+    archiveRenderDisplayMode(record);
+  }
+}
+
+function archiveRenderDisplayMode(record) {
+  archiveSelectedRecord = record;
+
   let materialHtml = "";
   materialHtml += archiveRenderDetailItem("Level", record["Level"]);
   materialHtml += archiveRenderDetailItem("Original Reference", record["Original Reference"]);
@@ -727,7 +751,12 @@ function archiveRenderRecordDetails(record) {
     </div>
 
     <div class="panel-actions">
-      <button type="button" class="action-btn" ${record.is_editable ? "" : "disabled"}>
+      <button
+        type="button"
+        class="action-btn"
+        id="archiveEditBtn"
+        ${record.is_editable ? "" : "disabled"}
+      >
         ${record.is_editable ? "Edit record" : "Read only"}
       </button>
     </div>
@@ -740,6 +769,14 @@ function archiveRenderRecordDetails(record) {
       ${archiveRenderGroupBlock("Metadata", metadataHtml, metadataHasValues)}
     </div>
   `;
+  const archiveEditBtn = document.getElementById("archiveEditBtn");
+
+  if (archiveEditBtn && record.is_editable) {
+    archiveEditBtn.addEventListener("click", () => {
+      archiveIsEditMode = true;
+      archiveRenderRecordDetails(record);
+    });
+  }
 }
 
 // Filter application
@@ -834,3 +871,129 @@ document.addEventListener("DOMContentLoaded", () => {
 
   archiveRenderResultsList(archiveVisibleRecords);
 });
+
+// Edit mode
+function archiveRenderEditMode(record) {
+  archiveSelectedRecord = record;
+
+  archiveRecordDetails.innerHTML = `
+    <div class="record-title">
+      <h3>${safeValue(record["Original Title"])}</h3>
+      <p>${safeValue(record["Original Reference"] || record["CAAL_ID"])}</p>
+    </div>
+
+    <div class="panel-actions">
+      <button type="button" class="action-btn primary" id="archiveSaveBtn">Save</button>
+      <button type="button" class="action-btn" id="archiveCancelEditBtn">Cancel</button>
+    </div>
+
+    <div class="group-stack">
+
+      ${archiveRenderGroupBlock("Material Details", `
+        ${renderTextInput("archive_Level", "Level", record["Level"])}
+        ${renderTextInput("archive_Original_Reference", "Original Reference", record["Original Reference"])}
+        ${renderTextInput("archive_Associated_CAAL_ID", "Associated CAAL_ID", record["Associated CAAL_ID"])}
+        ${renderTextInput("archive_Original_Title", "Original Title", record["Original Title"], true)}
+        ${renderTextInput("archive_English_Title", "English Title", record["English Title"], true)}
+        ${renderTextInput("archive_Content_Type", "Content Type", record["Content Type"])}
+        ${renderTextInput("archive_Number_and_Type", "Number and Type of Original Material", record["Number and Type of Original Material"], true)}
+        ${renderTextInput("archive_Size_and_Dimensions", "Size and Dimensions of Original Material", record["Size and Dimensions of Original Material"])}
+        ${renderTextInput("archive_Condition", "Condition of Original Material", record["Condition of Original Material"])}
+      `, true)}
+
+      ${archiveRenderGroupBlock("Publication Details", `
+        ${renderTextInput("archive_Dates_Original", "Dates of Original Material", record["Dates of Original Material"])}
+        ${renderTextInput("archive_Author", "Author of the Original Material", record["Author of the Original Material"], true)}
+        ${renderTextInput("archive_Publisher", "Publisher of the Original Material", record["Publisher of the Original Material"], true)}
+        ${renderTextInput("archive_Editor", "Editor of the Original Material", record["Editor of the Original Material"], true)}
+        ${renderTextInput("archive_Volume_Issue", "Volume and Issue Number", record["Volume and Issue Number"])}
+      `, true)}
+
+      ${archiveRenderGroupBlock("Content", `
+        ${renderTextarea("archive_Description", "Description", record["Description"], true)}
+        ${renderTextarea("archive_Description_Alt", "Description - alternative language", record["Description - alternative language"], true)}
+        ${renderTextInput("archive_Related_Countries", "Related Countries", archiveArrayValue(record["Related Countries"]).join(", "), true)}
+        ${renderTextInput("archive_Related_Towns", "Related Towns and Cities", record["Related Towns and Cities"], true)}
+        ${renderTextInput("archive_Related_Religions", "Related Religions", archiveArrayValue(record["Related Religions"]).join(", "), true)}
+        ${renderTextInput("archive_Related_Subjects", "Related Subjects", archiveArrayValue(record["Related Subjects"]).join(", "), true)}
+        ${renderTextInput("archive_Other_Subjects", "Other Subjects", record["Other Subjects"], true)}
+        ${renderTextInput("archive_Languages", "Languages of Material", archiveArrayValue(record["Languages of Material"]).join(", "), true)}
+        ${renderTextInput("archive_Script", "Script of Material", record["Script of Material"])}
+        ${renderTextInput("archive_Writing_System", "Writing System", record["Writing System"])}
+      `, true)}
+
+      ${archiveRenderGroupBlock("Digital Files", `
+        ${renderTextInput("archive_Copyright_YN", "Still under Copyright", record["still_under_copyright"] || record["Still under CopyrightYN"])}
+        ${renderTextInput("archive_Copyright_Holder", "Copyright Holder Name", record["Copyright Holder Name"], true)}
+        ${renderTextInput("archive_Copyright_Attribution", "Copyright Attribution", record["Copyright Attribution"], true)}
+        ${renderTextInput("archive_Digital_Folder", "Digital Folder Name", record["Digital Folder Name"], true)}
+        ${renderTextInput("archive_Digital_Files", "Digital Files Name", record["Digital Files Name"], true)}
+        ${renderTextInput("archive_Creation_Date_Files", "Creation Date of Digital Files", record["Creation Date of Digital Files"])}
+        ${renderTextInput("archive_Format_Files", "Format of Digital Files", record["Format of Digital Files"])}
+        ${renderTextInput("archive_Number_Files", "Number of Digital Files", record["Number of Digital Files"])}
+        ${renderTextInput("archive_Colour", "Colour", record["Colour"])}
+        ${renderTextInput("archive_Resolution", "Resolution", record["Resolution"])}
+      `, true)}
+
+      ${archiveRenderGroupBlock("Metadata", `
+        ${renderTextInput("archive_Recorder", "Archive Recorder", record["Archive Recorder"])}
+        ${renderTextInput("archive_Date_Recording", "Date of Recording", record["Date of Recording"])}
+        ${renderTextInput("archive_Resource", "Resource", record["Resource"], true)}
+      `, true)}
+
+    </div>
+  `;
+
+  document.getElementById("archiveSaveBtn").addEventListener("click", () => {
+    record["Level"] = getInputValue("archive_Level");
+    record["Original Reference"] = getInputValue("archive_Original_Reference");
+    record["Associated CAAL_ID"] = getInputValue("archive_Associated_CAAL_ID");
+    record["Original Title"] = getInputValue("archive_Original_Title");
+    record["English Title"] = getInputValue("archive_English_Title");
+    record["Content Type"] = getInputValue("archive_Content_Type");
+    record["Number and Type of Original Material"] = getInputValue("archive_Number_and_Type");
+    record["Size and Dimensions of Original Material"] = getInputValue("archive_Size_and_Dimensions");
+    record["Condition of Original Material"] = getInputValue("archive_Condition");
+
+    record["Dates of Original Material"] = getInputValue("archive_Dates_Original");
+    record["Author of the Original Material"] = getInputValue("archive_Author");
+    record["Publisher of the Original Material"] = getInputValue("archive_Publisher");
+    record["Editor of the Original Material"] = getInputValue("archive_Editor");
+    record["Volume and Issue Number"] = getInputValue("archive_Volume_Issue");
+
+    record["Description"] = getInputValue("archive_Description");
+    record["Description - alternative language"] = getInputValue("archive_Description_Alt");
+    record["Related Countries"] = splitArchiveMultiValue(getInputValue("archive_Related_Countries"));
+    record["Related Towns and Cities"] = getInputValue("archive_Related_Towns");
+    record["Related Religions"] = splitArchiveMultiValue(getInputValue("archive_Related_Religions"));
+    record["Related Subjects"] = splitArchiveMultiValue(getInputValue("archive_Related_Subjects"));
+    record["Other Subjects"] = getInputValue("archive_Other_Subjects");
+    record["Languages of Material"] = splitArchiveMultiValue(getInputValue("archive_Languages"));
+    record["Script of Material"] = getInputValue("archive_Script");
+    record["Writing System"] = getInputValue("archive_Writing_System");
+
+    record["still_under_copyright"] = getInputValue("archive_Copyright_YN");
+    record["Copyright Holder Name"] = getInputValue("archive_Copyright_Holder");
+    record["Copyright Attribution"] = getInputValue("archive_Copyright_Attribution");
+    record["Digital Folder Name"] = getInputValue("archive_Digital_Folder");
+    record["Digital Files Name"] = getInputValue("archive_Digital_Files");
+    record["Creation Date of Digital Files"] = getInputValue("archive_Creation_Date_Files");
+    record["Format of Digital Files"] = getInputValue("archive_Format_Files");
+    record["Number of Digital Files"] = getInputValue("archive_Number_Files");
+    record["Colour"] = getInputValue("archive_Colour");
+    record["Resolution"] = getInputValue("archive_Resolution");
+
+    record["Archive Recorder"] = getInputValue("archive_Recorder");
+    record["Date of Recording"] = getInputValue("archive_Date_Recording");
+    record["Resource"] = getInputValue("archive_Resource");
+
+    archiveIsEditMode = false;
+    archiveRenderRecordDetails(record);
+    archiveRenderResultsList(archiveVisibleRecords);
+  });
+
+  document.getElementById("archiveCancelEditBtn").addEventListener("click", () => {
+    archiveIsEditMode = false;
+    archiveRenderRecordDetails(record);
+  });
+}
