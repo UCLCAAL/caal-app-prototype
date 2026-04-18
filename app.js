@@ -1255,18 +1255,6 @@ if (siteSearch) {
 }
 
 // ADD RECORD BUTTON - creates a blank new record and opens the form, doesn't go to allfeatures until saved
-addPointBtn.addEventListener("click", () => {
-  const newFeature = makeNewBlankFeature();
-
-  pendingNewFeature = newFeature;
-  selectedProperties = newFeature.properties;
-
-  isEditMode = true;
-  exitAddMode();
-  renderRecordDetails(selectedProperties);
-});
-
-// CANCEL ADD BUTTON - explicit cancel while in add mode
 if (addPointBtn) {
   addPointBtn.addEventListener("click", () => {
     const newFeature = makeNewBlankFeature();
@@ -1277,6 +1265,13 @@ if (addPointBtn) {
     isEditMode = true;
     exitAddMode();
     renderRecordDetails(selectedProperties);
+  });
+}
+
+// CANCEL ADD BUTTON - explicit cancel while in add mode
+if (cancelAddBtn) {
+  cancelAddBtn.addEventListener("click", () => {
+    exitAddMode();
   });
 }
 
