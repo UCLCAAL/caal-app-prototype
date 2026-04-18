@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>CAAL App Prototype</title>
+  <title>CAAL Workspace - Monuments</title>
 
   <link
     rel="stylesheet"
@@ -15,50 +15,133 @@
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">
-      <h1>UCL CAAL App Prototype 1</h1>
-      <p>Kazakhstan Monuments workspace</p>
-    </div>
-    <div class="search-box">
-      <label for="siteSearch">Search</label>
-      <input
-        type="text"
-        id="siteSearch"
-        placeholder="Search name, CAAL_ID, type..."
+  <!-- =========================================
+       GLOBAL APP HEADER
+       Same shell pattern as Home
+       ========================================= -->
+  <header class="app-header">
+    <div class="app-brand">
+      <img
+        src="assets/logo_plain.png"
+        alt="CAAL project logo"
+        class="app-brand-logo"
       />
-    </div>
-    <div class="map-actions">
-      <button type="button" id="addPointBtn" class="action-btn primary">Add record</button>
-      <button type="button" id="cancelAddBtn" class="action-btn" hidden>Cancel add</button>
-    </div>
-    <div class="lang-switcher">
-      <label for="languageSelect" data-i18n="language_label">Language</label>
-      <select id="languageSelect">
-        <option value="en">English</option>
-        <option value="ru">Русский</option>
-        <option value="zh">中文</option>
-      </select>
-    </div>
-  </header>
-
-  <main class="app-shell">
-    <section class="map-section">
-      <div id="map"></div>
-    </section>
-
-        <aside class="side-panel" id="sidePanel">
-      <div class="panel-header">
-        <h2 data-i18n="record_details">Record Details</h2>
-        <p data-i18n="click_prompt">Click a monument on the map</p>
+      <div class="app-brand-text">
+        <h1>CAAL Workspace</h1>
+        <p>Kazakhstan monuments workspace</p>
       </div>
 
-      <div class="panel-body" id="recordDetails">
+          <nav class="main-nav" aria-label="Main navigation">
+        <a href="index.html" class="nav-link">Home</a>
+        <a href="monuments.html" class="nav-link nav-link-active">Monuments</a>
+        <a href="archive.html" class="nav-link">Archive</a>
+      </nav>
+  
+      <div class="lang-switcher">
+        <label for="languageSelect" data-i18n="language_label">Language</label>
+        <select id="languageSelect">
+          <option value="en">English</option>
+          <option value="ru">Русский</option>
+          <option value="zh">中文</option>
+        </select>
+      </div>
+    </header>
+<!-- =========================================
+       MONUMENTS WORKSPACE
+       Three main areas:
+       1. Browse/search pane
+       2. Map pane
+       3. Active record pane
+       ========================================= -->
+  <main class="workspace-shell monuments-workspace">
+
+    <!-- =====================================
+         LEFT PANE: SEARCH / RESULTS
+         Placeholder, but wired with the existing siteSearch input id
+         ===================================== -->
+    <aside class="workspace-pane browse-pane">
+      <div class="pane-header">
+        <h2>Browse</h2>
+        <p>Search and consult records</p>
+      </div>
+
+      <div class="pane-body">
+        <div class="search-box search-box-stacked">
+          <label for="siteSearch">Search</label>
+          <input
+            type="text"
+            id="siteSearch"
+            placeholder="Search name, CAAL_ID, type..."
+          />
+        </div>
+
+        <div class="browse-controls">
+          <label class="browse-checkbox">
+            <input type="checkbox" id="showWorkspaceRecords" checked />
+            <span>Workspace records</span>
+          </label>
+
+          <label class="browse-checkbox">
+            <input type="checkbox" id="showCaalRecords" checked />
+            <span>CAAL records</span>
+          </label>
+        </div>
+
+        <div class="results-panel">
+          <div class="results-panel-header">
+            <h3>Results</h3>
+            <p>Placeholder for record list / preview actions</p>
+          </div>
+
+          <div class="results-empty">
+            <p>Search results will appear here.</p>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- ============         CENTRE PANE: MAP         
+    Keeps map id so existing Leaflet logic can still run
+         ========================================================== -->
+    <section class="workspace-pane map-pane">
+      <div class="pane-header pane-header-inline">
+        <div>
+          <h2>Map</h2>
+          <p data-i18n="click_prompt">Click a monument on the map</p>
+        </div>
+
+        <div class="map-actions">
+          <button type="button" id="addPointBtn" class="action-btn primary">
+            Add record
+          </button>
+          <button type="button" id="cancelAddBtn" class="action-btn" hidden>
+            Cancel add
+          </button>
+        </div>
+      </div>
+
+      <div class="map-pane-body">
+        <div id="map"></div>
+      </div>
+    </section>
+
+    <!-- =====================================
+         RIGHT PANE: ACTIVE RECORD
+         Keeps current recordDetails so the existing JS can keep working
+         ===================================== -->
+    <aside class="workspace-pane detail-pane" id="sidePanel">
+      <div class="pane-header">
+        <h2 data-i18n="record_details">Record Details</h2>
+        <p>Selected monument record</p>
+      </div>
+
+      <div class="pane-body" id="recordDetails">
         <div class="empty-state">
           <p data-i18n="no_record_selected">No record selected yet.</p>
         </div>
       </div>
     </aside>
+
   </main>
 
   <script
