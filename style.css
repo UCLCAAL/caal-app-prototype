@@ -10,6 +10,167 @@
    7. Map / popup styling
    8. Responsive overrides  */
 
+/* =========================================================
+   GLOBAL APP HEADER
+   Shared across Home / Monuments / Archive
+   ========================================================= */
+.app-header {
+  border-bottom: 1px solid var(--border);
+  background: var(--panel);
+  padding: 0.9rem 1.25rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.app-brand {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+}
+
+.app-brand-logo {
+  width: 48px;
+  height: auto;
+  display: block;
+}
+
+.app-brand-text h1 {
+  margin: 0;
+  font-size: 1.15rem;
+}
+
+.app-brand-text p {
+  margin: 0.15rem 0 0;
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.main-nav {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.nav-link {
+  text-decoration: none;
+  color: var(--text);
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
+  font-size: 0.94rem;
+}
+
+.nav-link:hover {
+  background: var(--panel-soft);
+}
+
+.nav-link-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+  font-weight: 700;
+}
+
+/* =========================================================
+   HOME PAGE
+   ========================================================= */
+.home-page {
+  background: var(--bg);
+}
+
+.home-main {
+  max-width: 1100px;
+  margin: 0 auto;
+  padding: 2rem 1.25rem 2.5rem;
+}
+
+.home-hero {
+  display: flex;
+  align-items: center;
+  gap: 2rem;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.home-hero-logo {
+  width: 180px;
+  max-width: 35%;
+  height: auto;
+  display: block;
+  flex-shrink: 0;
+}
+
+.home-hero-text h2 {
+  margin: 0 0 0.5rem;
+  font-size: 1.5rem;
+}
+
+.home-hero-text p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 1rem;
+  line-height: 1.5;
+}
+
+.home-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.home-card {
+  display: block;
+  text-decoration: none;
+  color: inherit;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  padding: 1.2rem;
+  box-shadow: var(--shadow-soft);
+}
+
+.home-card:hover {
+  background: var(--panel-soft);
+}
+
+.home-card h3 {
+  margin: 0 0 0.45rem;
+  font-size: 1.1rem;
+}
+
+.home-card p {
+  margin: 0;
+  color: var(--muted);
+  line-height: 1.5;
+}
+
+/* =========================================================
+   RESPONSIVE HOME HEADER
+   ========================================================= */
+@media (max-width: 900px) {
+  .app-header {
+    align-items: flex-start;
+  }
+
+  .home-hero {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .home-hero-logo {
+    max-width: 220px;
+    width: 100%;
+  }
+
+  .home-actions {
+    grid-template-columns: 1fr;
+  }
+}
 
 /* =========================================================
    DESIGN TOKENS / COLOURS  */
