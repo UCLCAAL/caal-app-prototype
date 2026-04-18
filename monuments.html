@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>CAAL App Prototype</title>
+
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
+    crossorigin=""
+  />
+
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <h1>UCL CAAL App Prototype 1</h1>
+      <p>Kazakhstan Monuments workspace</p>
+    </div>
+    <div class="search-box">
+      <label for="siteSearch">Search</label>
+      <input
+        type="text"
+        id="siteSearch"
+        placeholder="Search name, CAAL_ID, type..."
+      />
+    </div>
+    <div class="map-actions">
+      <button type="button" id="addPointBtn" class="action-btn primary">Add record</button>
+      <button type="button" id="cancelAddBtn" class="action-btn" hidden>Cancel add</button>
+    </div>
+    <div class="lang-switcher">
+      <label for="languageSelect" data-i18n="language_label">Language</label>
+      <select id="languageSelect">
+        <option value="en">English</option>
+        <option value="ru">Русский</option>
+        <option value="zh">中文</option>
+      </select>
+    </div>
+  </header>
+
+  <main class="app-shell">
+    <section class="map-section">
+      <div id="map"></div>
+    </section>
+
+        <aside class="side-panel" id="sidePanel">
+      <div class="panel-header">
+        <h2 data-i18n="record_details">Record Details</h2>
+        <p data-i18n="click_prompt">Click a monument on the map</p>
+      </div>
+
+      <div class="panel-body" id="recordDetails">
+        <div class="empty-state">
+          <p data-i18n="no_record_selected">No record selected yet.</p>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <script
+    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
+    crossorigin=""
+  ></script>
+  <script src="app.js"></script>
+</body>
+</html>
