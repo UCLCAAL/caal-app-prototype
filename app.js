@@ -169,6 +169,23 @@ const lookupLabels = {
   }
 };
 
+// LANGUAGE STORAGE
+// Save and restore selected interface language across reloads and across pages
+const LANGUAGE_STORAGE_KEY = "caal_workspace_language";
+
+function saveLanguagePreference(lang) {
+  localStorage.setItem(LANGUAGE_STORAGE_KEY, lang);
+}
+
+function loadLanguagePreference() {
+  const saved = localStorage.getItem(LANGUAGE_STORAGE_KEY);
+
+  if (saved && translations[saved]) {
+    return saved;
+  }
+
+  return "en";
+}
 
 // App state stuff
 // currentLang = selected interface language
@@ -202,24 +219,6 @@ if (mapElement && typeof L !== "undefined") {
     maxZoom: 19,
     attribution: "&copy; OpenStreetMap contributors"
   }).addTo(map);
-}
-
-// LANGUAGE STORAGE
-// Save and restore selected interface language across reloads and across pages
-const LANGUAGE_STORAGE_KEY = "caal_workspace_language";
-
-function saveLanguagePreference(lang) {
-  localStorage.setItem(LANGUAGE_STORAGE_KEY, lang);
-}
-
-function loadLanguagePreference() {
-  const saved = localStorage.getItem(LANGUAGE_STORAGE_KEY);
-
-  if (saved && translations[saved]) {
-    return saved;
-  }
-
-  return "en";
 }
 
 // SEARCH NORMALISER - lowercases text safely for searching
