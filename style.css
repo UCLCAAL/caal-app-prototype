@@ -550,6 +550,19 @@ body {
   }
 }
 
+/* =========================================================
+   ARCHIVE WORKSPACE
+   ========================================================= */
+.archive-workspace {
+  grid-template-columns: minmax(300px, 28vw) minmax(520px, 1fr);
+}
+
+@media (max-width: 980px) {
+  .archive-workspace {
+    grid-template-columns: 1fr;
+  }
+}
+
 
 /* =========================================================
    EMPTY / STATUS STATES */
