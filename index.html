@@ -3,69 +3,72 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>CAAL App Prototype</title>
-
-  <link
-    rel="stylesheet"
-    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
-    crossorigin=""
-  />
-
+  <title>CAAL Workspace</title>
   <link rel="stylesheet" href="style.css" />
 </head>
-<body>
-  <header class="topbar">
-    <div class="brand">
-      <h1>UCL CAAL App Prototype 1</h1>
-      <p>Kazakhstan Monuments workspace</p>
-    </div>
-    <div class="search-box">
-      <label for="siteSearch">Search</label>
-      <input
-        type="text"
-        id="siteSearch"
-        placeholder="Search name, CAAL_ID, type..."
+<body class="home-page">
+  <!-- =====================================
+       GLOBAL HEADER
+       Smaller lggo for shell
+       ========================================= -->
+  <header class="app-header">
+    <div class="app-brand">
+      <img
+        src="assets/logo_plain.png"
+        alt="CAAL project logo"
+        class="app-brand-logo"
       />
+      <div class="app-brand-text">
+        <h1>CAAL Workspace</h1>
+        <p>National data entry and browsing environment</p>
+      </div>
     </div>
-    <div class="map-actions">
-      <button type="button" id="addPointBtn" class="action-btn primary">Add record</button>
-      <button type="button" id="cancelAddBtn" class="action-btn" hidden>Cancel add</button>
-    </div>
-    <div class="lang-switcher">
-      <label for="languageSelect" data-i18n="language_label">Language</label>
-      <select id="languageSelect">
-        <option value="en">English</option>
-        <option value="ru">Русский</option>
-        <option value="zh">中文</option>
-      </select>
-    </div>
+
+    <nav class="main-nav" aria-label="Main navigation">
+      <a href="index.html" class="nav-link nav-link-active">Home</a>
+      <a href="monuments.html" class="nav-link">Monuments</a>
+      <a href="archive.html" class="nav-link">Archive</a>
+    </nav>
   </header>
 
-  <main class="app-shell">
-    <section class="map-section">
-      <div id="map"></div>
+  <!-- ===================================
+       HOME PAGE MAIN CONTENT
+       Uses the larger logo 
+       ========================================= -->
+  <main class="home-main">
+    <section class="home-hero">
+      <img
+        src="assets/logo.png"
+        alt="Central Asian Archaeological Landscapes project logo"
+        class="home-hero-logo"
+      />
+
+      <div class="home-hero-text">
+        <h2 data-i18n="home_workspace_title">CAAL Kazakhstan</h2>
+        <p data-i18n="home_workspace_intro">
+          Browse, consult, and maintain monument and archive records within a
+          shared CAAL environment.
+        </p>
+      </div>
     </section>
 
-        <aside class="side-panel" id="sidePanel">
-      <div class="panel-header">
-        <h2 data-i18n="record_details">Record Details</h2>
-        <p data-i18n="click_prompt">Click a monument on the map</p>
-      </div>
+    <section class="home-actions" aria-label="Workspace sections">
+      <a href="monuments.html" class="home-card">
+        <h3>Monuments</h3>
+        <p>
+          Search and browse Monument records, view them on a map, and work on
+          editable national workspace records.
+        </p>
+      </a>
 
-      <div class="panel-body" id="recordDetails">
-        <div class="empty-state">
-          <p data-i18n="no_record_selected">No record selected yet.</p>
-        </div>
-      </div>
-    </aside>
+      <a href="archive.html" class="home-card">
+        <h3>Archive</h3>
+        <p>
+          Search and browse Archive records, consult CAAL entries, and
+          work on editable national workspace records.
+        </p>
+      </a>
+    </section>
   </main>
-
-  <script
-    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
-    crossorigin=""
-  ></script>
-  <script src="app.js"></script>
 </body>
 </html>
