@@ -1,1 +1,126 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>CAAL Workspace - Archive</title>
 
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header class="app-header">
+    <div class="app-brand">
+      <img
+        src="assets/logo_plain.png"
+        alt="CAAL project logo"
+        class="app-brand-logo"
+      />
+      <div class="app-brand-text">
+        <h1>CAAL Workspace</h1>
+        <p>Kazakhstan archive workspace</p>
+      </div>
+    </div>
+
+    <nav class="main-nav" aria-label="Main navigation">
+      <a href="index.html" class="nav-link">Home</a>
+      <a href="monuments.html" class="nav-link">Monuments</a>
+      <a href="archive.html" class="nav-link nav-link-active">Archive</a>
+    </nav>
+
+    <div class="lang-switcher">
+      <label for="languageSelect" data-i18n="language_label">Language</label>
+      <select id="languageSelect">
+        <option value="en">English</option>
+        <option value="ru">Русский</option>
+        <option value="zh">中文</option>
+      </select>
+    </div>
+  </header>
+
+  <main class="workspace-shell archive-workspace">
+    <aside class="workspace-pane browse-pane">
+      <div class="pane-header">
+        <h2>Browse</h2>
+        <p>Search and consult archive records</p>
+      </div>
+
+      <div class="pane-body">
+        <div class="search-box search-box-stacked">
+          <label for="archiveSearch">Search</label>
+          <input
+            type="text"
+            id="archiveSearch"
+            placeholder="Search titles, references, descriptions, authors..."
+          />
+        </div>
+
+        <button type="button" class="action-btn filters-toggle" id="toggleArchiveFiltersBtn">
+          Advanced filters
+        </button>
+
+        <div class="filters-panel" id="archiveFiltersPanel" hidden>
+          <div class="filters-grid">
+            <div class="filter-group">
+              <label for="filterArchiveRelatedCountries">Related Countries</label>
+              <select id="filterArchiveRelatedCountries" class="form-control" multiple></select>
+            </div>
+
+            <div class="filter-group">
+              <label for="filterArchiveRelatedReligions">Related Religions</label>
+              <select id="filterArchiveRelatedReligions" class="form-control" multiple></select>
+            </div>
+
+            <div class="filter-group">
+              <label for="filterArchiveRelatedSubjects">Related Subjects</label>
+              <select id="filterArchiveRelatedSubjects" class="form-control" multiple></select>
+            </div>
+
+            <div class="filter-group">
+              <label for="filterArchiveContentType">Content Type</label>
+              <select id="filterArchiveContentType" class="form-control" multiple></select>
+            </div>
+
+            <div class="filter-group">
+              <label for="filterArchiveLanguages">Languages of Material</label>
+              <select id="filterArchiveLanguages" class="form-control" multiple></select>
+            </div>
+          </div>
+
+          <div class="filters-actions">
+            <button type="button" class="action-btn" id="clearArchiveFiltersBtn">Clear filters</button>
+          </div>
+        </div>
+
+        <div class="results-panel">
+          <div class="results-panel-header">
+            <h3>Results</h3>
+            <p id="archiveResultsCount">0 records</p>
+          </div>
+
+          <div id="archiveResultsList" class="results-list">
+            <div class="results-empty">
+              <p>Results will appear here.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <aside class="workspace-pane detail-pane">
+      <div class="pane-header">
+        <h2>Record Details</h2>
+        <p>Selected archive record</p>
+      </div>
+
+      <div class="pane-body" id="archiveRecordDetails">
+        <div class="empty-state">
+          <p>No record selected yet.</p>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <script src="js/shared.js"></script>
+  <script src="js/archive.js"></script>
+</body>
+</html>
