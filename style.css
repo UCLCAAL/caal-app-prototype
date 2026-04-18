@@ -11,9 +11,7 @@
    8. Responsive overrides  */
 
 /* =========================================================
-   GLOBAL APP HEADER
-   Shared across Home / Monuments / Archive
-   ========================================================= */
+   GLOBAL APP HEADER -    Shared across Home / Monuments / Archive*/
 .app-header {
   border-bottom: 1px solid var(--border);
   background: var(--panel);
@@ -73,9 +71,7 @@
   font-weight: 700;
 }
 
-/* =========================================================
-   HOME PAGE
-   ========================================================= */
+/* ====================   HOME PAGE== */
 .home-page {
   background: var(--bg);
 }
@@ -149,9 +145,7 @@
   line-height: 1.5;
 }
 
-/* =========================================================
-   RESPONSIVE HOME HEADER
-   ========================================================= */
+/* ==========   RESPONSIVE HOME HEADER */
 @media (max-width: 900px) {
   .app-header {
     align-items: flex-start;
@@ -172,8 +166,7 @@
   }
 }
 
-/* =========================================================
-   DESIGN TOKENS / COLOURS  */
+/* ==================   DESIGN TOKENS / COLOURS  */
 :root {
   --bg: #f5f7f8;
   --panel: #ffffff;
