@@ -64,37 +64,81 @@
         <h2>Browse</h2>
         <p>Search and consult records</p>
       </div>
-
+    
       <div class="pane-body">
         <div class="search-box search-box-stacked">
           <label for="siteSearch">Search</label>
           <input
             type="text"
             id="siteSearch"
-            placeholder="Search name, CAAL_ID, type..."
+            placeholder="Search names, IDs, types, descriptions..."
           />
         </div>
-
+    
         <div class="browse-controls">
           <label class="browse-checkbox">
             <input type="checkbox" id="showWorkspaceRecords" checked />
             <span>Workspace records</span>
           </label>
-
+    
           <label class="browse-checkbox">
             <input type="checkbox" id="showCaalRecords" checked />
             <span>CAAL records</span>
           </label>
         </div>
-
+    
+        <button type="button" class="action-btn filters-toggle" id="toggleFiltersBtn">
+          Advanced filters
+        </button>
+    
+        <div class="filters-panel" id="filtersPanel" hidden>
+          <div class="filters-grid">
+            <div class="filter-group">
+              <label for="filterMonumentType">Monument Type</label>
+              <select id="filterMonumentType" class="form-control" multiple></select>
+            </div>
+    
+            <div class="filter-group">
+              <label for="filterClassification">Classification</label>
+              <select id="filterClassification" class="form-control" multiple></select>
+            </div>
+    
+            <div class="filter-group">
+              <label for="filterDesignation">Designation</label>
+              <select id="filterDesignation" class="form-control" multiple></select>
+            </div>
+    
+            <div class="filter-group">
+              <label for="filterReligion">Religion</label>
+              <select id="filterReligion" class="form-control" multiple></select>
+            </div>
+    
+            <div class="filter-group">
+              <label for="filterCulturalPeriod">Cultural Period</label>
+              <select id="filterCulturalPeriod" class="form-control" multiple></select>
+            </div>
+    
+            <div class="filter-group">
+              <label for="filterCountry">Country</label>
+              <select id="filterCountry" class="form-control" multiple></select>
+            </div>
+          </div>
+    
+          <div class="filters-actions">
+            <button type="button" class="action-btn" id="clearFiltersBtn">Clear filters</button>
+          </div>
+        </div>
+    
         <div class="results-panel">
           <div class="results-panel-header">
             <h3>Results</h3>
-            <p>Placeholder for record list / preview actions</p>
+            <p id="resultsCount">0 records</p>
           </div>
-
-          <div class="results-empty">
-            <p>Search results will appear here.</p>
+    
+          <div id="resultsList" class="results-list">
+            <div class="results-empty">
+              <p>Results will appear here.</p>
+            </div>
           </div>
         </div>
       </div>
