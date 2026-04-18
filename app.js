@@ -193,10 +193,9 @@ const cancelAddBtn = document.getElementById("cancelAddBtn");
 
 //  the Leaflet map
 const mapElement = document.getElementById("map");
-
 let map = null;
 
-if (mapElement) {
+if (mapElement && typeof L !== "undefined") {
   map = L.map("map").setView([48.0, 67.0], 5);
 
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
