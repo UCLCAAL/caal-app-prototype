@@ -1,0 +1,18 @@
+name: caal-app-prototype
+region: lon
+
+services:
+  - name: caal-web
+    environment_slug: node-js
+    github:
+      branch: main
+      deploy_on_push: true
+      repo: UCLCAAL/caal-app-prototype
+
+    source_dir: /
+    build_command: cd backend && npm install
+    run_command: cd backend && node server.js
+
+    http_port: 8080
+    instance_count: 1
+    instance_size_slug: basic-xxs
