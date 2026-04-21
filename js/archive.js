@@ -1,7 +1,9 @@
 // ========================================================
 // ARCHIVE PAGE LOGIC
-// Starter version using local sample data in JS
-// Need to replace ARCHIVE_SAMPLE_RECORDS with API later
+// Backend-driven version using:
+// - session guard
+// - DB label translations from ui.v_label_archive
+// - archive API records
 // ========================================================
 
 // DOM
@@ -21,376 +23,106 @@ const archiveResultsList = document.getElementById("archiveResultsList");
 const archiveResultsCount = document.getElementById("archiveResultsCount");
 const archiveRecordDetails = document.getElementById("archiveRecordDetails");
 
+const showArchiveWorkspace = document.getElementById("showArchiveWorkspace");
+const showArchiveNationalRef = document.getElementById("showArchiveNationalRef");
+const showArchiveAllCaal = document.getElementById("showArchiveAllCaal");
+const allCaalArchiveToggleWrapper = document.getElementById("allCaalArchiveToggleWrapper");
+
+const archivePrevBtn = document.getElementById("archivePrevBtn");
+const archiveNextBtn = document.getElementById("archiveNextBtn");
+const archivePageInfo = document.getElementById("archivePageInfo");
+
+const archivePreviewModal = document.getElementById("archivePreviewModal");
+const archivePreviewTitle = document.getElementById("archivePreviewTitle");
+const archivePreviewBody = document.getElementById("archivePreviewBody");
+const archivePreviewCloseBtn = document.getElementById("archivePreviewCloseBtn");
+
+const addArchiveBtn = document.getElementById("addArchiveBtn");
+
+// API base
+// --------------------------------------------------------
+//const API_BASE = "http://localhost:3000";
+
+console.log("archive.js loaded");
+
+
 // State
 // --------------------------------------------------------
 let archiveAllRecords = [];
 let archiveVisibleRecords = [];
 let archiveSelectedRecord = null;
 let archiveIsEditMode = false;
+let archiveLabels = {};
+let archiveLookups = {};
 
-// Temporary local sample records
-// Replace with API response later
+let archiveTotalCount = 0;
+let archiveLimit = 10;
+let archiveOffset = 0;
+
+let archivePendingNewRecord = null;    //
+let archiveIsDirty = false;      // when entering edit mode and makign a change, save resets it to false
+let archivePreviewRecord = null;
+let archiveJustSavedRecordId = null;
+
+
+// Label helpers
 // --------------------------------------------------------
-const ARCHIVE_SAMPLE_RECORDS = [
-  {
-    id: 1,
-    record_source: "workspace",
-    is_editable: true,
+function archiveLabel(name, fallback = null) {
+  return archiveLabels[name] || fallback || name;
+}
 
-    "Level": "Item",
-    "Original Reference": "KZ-ARCH-001",
-    "Associated CAAL_ID": "Mon_KZ_IICAS1-002757",
-    "Original Title": "Field notebook extract",
-    "English Title": "Field notebook extract",
-    "Content Type": "Text",
-    "Description": "Short field note concerning a late prehistoric site.",
-    "Description - alternative language": "Краткая полевая заметка о позднеисторическом памятнике.",
-    "Number and Type of Original Material": "1 notebook page",
-    "Size and Dimensions of Original Material": "A4",
-    "Condition of Original Material": "Good",
-    "Related Countries": ["Kazakhstan"],
-    "Related Towns and Cities": "Aktau",
-    "Related Religions": [],
-    "Related Subjects": ["Archaeology", "Survey"],
-    "Other Subjects": "Surface finds",
-    "Dates of Original Material": "1987",
-    "Author of the Original Material": "A. Example",
-    "Publisher of the Original Material": "",
-    "Editor of the Original Material": "",
-    "Volume and Issue Number": "",
-    "Languages of Material": ["Russian"],
-    "Script of Material": "Cyrillic",
-    "Writing System": "Alphabetic",
-    "still_under_copyright": "unknown",
-    "Copyright Holder Name": "",
-    "Copyright Attribution": "",
-    "Digital Folder Name": "KZ_ARCH_001",
-    "Digital Files Name": "scan_001.jpg",
-    "Creation Date of Digital Files": "2024-03-10",
-    "Format of Digital Files": "JPEG",
-    "Number of Digital Files": "1",
-    "Colour": "Colour",
-    "Resolution": "300 dpi",
-    "Archive Recorder": "Christine Spencer",
-    "Date of Recording": "2026-04-18",
-    "Resource": "Local archive"
-  },
-  {
-    id: 2,
-    record_source: "caal",
-    is_editable: false,
+function archiveBoolLabel(value) {
+  if (value === true) return archiveLabel("Yes", "Yes");
+  if (value === false) return archiveLabel("No", "No");
+  return archiveLabel("Unknown", "Unknown");
+}
 
-    "Level": "Publication",
-    "Original Reference": "CAAL-PUB-002",
-    "Associated CAAL_ID": "",
-    "Original Title": "Regional archaeological inventory",
-    "English Title": "Regional archaeological inventory",
-    "Content Type": "Publication",
-    "Description": "Published inventory of archaeological materials.",
-    "Description - alternative language": "",
-    "Number and Type of Original Material": "1 volume",
-    "Size and Dimensions of Original Material": "Book",
-    "Condition of Original Material": "Fair",
-    "Related Countries": ["Kazakhstan"],
-    "Related Towns and Cities": "Atyrau",
-    "Related Religions": ["Islam"],
-    "Related Subjects": ["Archaeology"],
-    "Other Subjects": "",
-    "Dates of Original Material": "1999",
-    "Author of the Original Material": "B. Example",
-    "Publisher of the Original Material": "Example Press",
-    "Editor of the Original Material": "C. Example",
-    "Volume and Issue Number": "Vol. 2",
-    "Languages of Material": ["English", "Russian"],
-    "Script of Material": "Latin",
-    "Writing System": "Alphabetic",
-    "still_under_copyright": "yes",
-    "Copyright Holder Name": "Example Press",
-    "Copyright Attribution": "Courtesy of Example Press",
-    "Digital Folder Name": "CAAL_PUB_002",
-    "Digital Files Name": "pub_002.pdf",
-    "Creation Date of Digital Files": "2021-07-11",
-    "Format of Digital Files": "PDF",
-    "Number of Digital Files": "1",
-    "Colour": "Monochrome",
-    "Resolution": "400 dpi",
-    "Archive Recorder": "CAAL import",
-    "Date of Recording": "2026-04-01",
-    "Resource": "CAAL core"
-  },
-  
-  {
-    id: 4,
-    record_source: "caal",
-    is_editable: false,
-
-    "Level": "Папка",
-    "Original Reference": "",
-    "CAAL_ID": "Ar_TJ_ARCH1-000005",
-    "Associated CAAL_ID": "",
-    "Original Title": "Керамика из Северного Таджикистана",
-    "English Title": "",
-    "Content Type": "Фотография",
-    "Description": "Типы керамики с указанием технических данных и номером коллекции порядковым номером в ней",
-    "Description - alternative language": "",
-    "Number and Type of Original Material": "1 папка содержит 76 фотографий",
-    "Size and Dimensions of Original Material": "Формат А4",
-    "Condition of Original Material": "фотографии нечеткие сохранность средняя",
-    "Related Countries": ["Tajikistan"],
-    "Related Towns and Cities": "керамики Ферганской долины",
-    "Related Religions": ["Зороастризм"],
-    "Related Subjects": ["Archaeology"],
-    "Other Subjects": "",
-    "Dates of Original Material": "1962-1969 гг",
-    "Author of the Original Material": "Е.Д.Салтовская",
-    "Publisher of the Original Material": "не лпубликовано",
-    "Editor of the Original Material": "",
-    "Volume and Issue Number": "",
-    "Languages of Material": ["Russian"],
-    "Script of Material": "Кириллица",
-    "Writing System": "Слева направо",
-    "Still under CopyrightYN": "",
-    "still_under_copyright": "",
-    "Copyright Holder Name": "Институт истории, археологии и этнографии АН РТ",
-    "Copyright Attribution": "Фонды отдела археологии",
-    "Digital Folder Name": "TJ/TJ_ARCH1/TJ_ARCH1_Fer/TJ_ARCH1_Fer_000001",
-    "Digital Files Name": "TJ_ARCH1_Fer_000001_1.tif-TJ_ARCH1_Fer_000001_76.tif",
-    "Creation Date of Digital Files": "2019",
-    "Format of Digital Files": "TIFF",
-    "Number of Digital Files": "76",
-    "Colour": "24-bit RGB",
-    "Resolution": "600 ppi",
-    "Archive Recorder": "Филимонова Т.Г.",
-    "Date of Recording": "",
-    "Resource": "",
-    "Preferred Language": "Russian",
-    "Date of recording_backup": "",
-    "Tstamp": "",
-    "Resolution_backup": "600 dpi",
-    "Country": "",
-    "Related Subjects_backup": "Археология",
-    "Related Countries_backup": "Таджикистан",
-    "Languages of Material_backup": "Русский"
-  },
-
-  {
-    id: 29,
-    record_source: "caal",
-    is_editable: false,
-
-    "Level": "Файл",
-    "Original Reference": "",
-    "CAAL_ID": "Ar_TJ_ARCH1-000030",
-    "Associated CAAL_ID": "",
-    "Original Title": "1.Отчет о раскопках в Гиссарской крепости в 2004 г",
-    "English Title": "",
-    "Content Type": "Отчет",
-    "Description": "Описываются работы проведенные по исследованию оборонительных стен и пристенных строений, где можно было получить материалы для решения вопроса по стратиграфии Гиссарской крепости, в частности Аскархоны – третья составляющая крепости.",
-    "Description - alternative language": "",
-    "Number and Type of Original Material": "текст 11 страниц",
-    "Size and Dimensions of Original Material": "Формат А4",
-    "Condition of Original Material": "хорошее",
-    "Related Countries": ["Tajikistan"],
-    "Related Towns and Cities": "г.Гиссар",
-    "Related Religions": ["зороастризм"],
-    "Related Subjects": ["Archaeology"],
-    "Other Subjects": "",
-    "Dates of Original Material": "2004 или 2005 гг",
-    "Author of the Original Material": "А.Абдуллаев",
-    "Publisher of the Original Material": "не опубликовано",
-    "Editor of the Original Material": "",
-    "Volume and Issue Number": "",
-    "Languages of Material": ["Russian"],
-    "Script of Material": "Кириллица",
-    "Writing System": "Слева направо",
-    "Still under CopyrightYN": "Да",
-    "still_under_copyright": "TRUE",
-    "Copyright Holder Name": "Архив А.Абдуллаева. Фонды отдела археологии Института истории, археологии и этнографии",
-    "Copyright Attribution": "Передача родственниками авторских прав отделу археологии",
-    "Digital Folder Name": "TJ/TJ_ARCH1/TJ_ARCH1_Gissar/TJ_ARCH1_Gissar_000003",
-    "Digital Files Name": "TJ_ARCH1_Gissar_000003_1.tif-TJ_ARCH1_Gissar_000003_11.tif",
-    "Creation Date of Digital Files": "2019",
-    "Format of Digital Files": "TIFF",
-    "Number of Digital Files": "11",
-    "Colour": "Not stated",
-    "Resolution": "600 ppi",
-    "Archive Recorder": "Филимонова Т.Г.",
-    "Date of Recording": "",
-    "Resource": "",
-    "Preferred Language": "Russian",
-    "Date of recording_backup": "",
-    "Tstamp": "",
-    "Resolution_backup": "600 dpi",
-    "Country": "",
-    "Related Subjects_backup": "археология",
-    "Related Countries_backup": "Таджикистан",
-    "Languages of Material_backup": "Русский"
-  },
-  {
-    id: 46,
-    record_source: "caal",
-    is_editable: false,
-
-    "Level": "Файл",
-    "Original Reference": "",
-    "CAAL_ID": "Ar_TJ_ARCH1-000045",
-    "Associated CAAL_ID": "",
-    "Original Title": "Реестр памятников Таджикистана",
-    "English Title": "",
-    "Content Type": "Архивный файл",
-    "Description": "Сводка памятников с кратким их описаниям по районам: Файзабадский, Рудаки, Гиссарский, Турсунзаде, Шаартузский, Носир Хисроу, Кабадианский, Колхозабадский,, Вахшский, Джиликульский, Комсомолобадский,",
-    "Description - alternative language": "",
-    "Number and Type of Original Material": "34 страницы машинописного текста",
-    "Size and Dimensions of Original Material": "Формат А4",
-    "Condition of Original Material": "хорошее",
-    "Related Countries": ["Tajikistan"],
-    "Related Towns and Cities": "южные районы Таджикистана",
-    "Related Religions": ["Ислам"],
-    "Related Subjects": ["History"],
-    "Other Subjects": "",
-    "Dates of Original Material": "начало 2000-х годов",
-    "Author of the Original Material": "А.Абдуллаев",
-    "Publisher of the Original Material": "не опубликовано",
-    "Editor of the Original Material": "",
-    "Volume and Issue Number": "",
-    "Languages of Material": ["Russian"],
-    "Script of Material": "Кириллица",
-    "Writing System": "Слева направо",
-    "Still under CopyrightYN": "Да",
-    "still_under_copyright": "TRUE",
-    "Copyright Holder Name": "Архив А.Абдуллаева. Фонды отдела археологии Института истории, археологии и этнографии АН РТ",
-    "Copyright Attribution": "Авторские права переданы отделу родственниками автора",
-    "Digital Folder Name": "TJ/TJ_ARCH1/TJ_ARCH1_Ug-Taj/TJ_ARCH1_Ug-Taj_000001",
-    "Digital Files Name": "TJ_ARCH1_Ug-Taj_000001_1.tif-TJ_ARCH1_Ug-Taj_000001_34.tif",
-    "Creation Date of Digital Files": "2019",
-    "Format of Digital Files": "TIFF",
-    "Number of Digital Files": "34",
-    "Colour": "24-bit RGB",
-    "Resolution": "600 ppi",
-    "Archive Recorder": "Филимонова Т.Г.",
-    "Date of Recording": "",
-    "Resource": "",
-    "Preferred Language": "Russian",
-    "Date of recording_backup": "",
-    "Tstamp": "",
-    "Resolution_backup": "600dpi",
-    "Country": "",
-    "Related Subjects_backup": "История",
-    "Related Countries_backup": "Таджикистан",
-    "Languages of Material_backup": "Русский"
-  },
-
-  {
-    id: 72,
-    record_source: "caal",
-    is_editable: false,
-
-    "Level": "Папка",
-    "Original Reference": "10",
-    "CAAL_ID": "Ar_UZ_KRKL_000033",
-    "Associated CAAL_ID": "Mon_UZ_KRKL_000004",
-    "Original Title": "",
-    "English Title": "",
-    "Content Type": "Паспорт",
-    "Description": "Паспорта массовых археологических находок",
-    "Description - alternative language": "",
-    "Number and Type of Original Material": "Одна папка 192 файлов",
-    "Size and Dimensions of Original Material": "",
-    "Condition of Original Material": "",
-    "Related Countries": ["Uzbekistan"],
-    "Related Towns and Cities": "",
-    "Related Religions": [],
-    "Related Subjects": ["Archaeology"],
-    "Other Subjects": "",
-    "Dates of Original Material": "1965",
-    "Author of the Original Material": "",
-    "Publisher of the Original Material": "",
-    "Editor of the Original Material": "",
-    "Volume and Issue Number": "",
-    "Languages of Material": ["Russian"],
-    "Script of Material": "Кириллица",
-    "Writing System": "Слева направо",
-    "Still under CopyrightYN": "",
-    "still_under_copyright": "",
-    "Copyright Holder Name": "",
-    "Copyright Attribution": "",
-    "Digital Folder Name": "UZ/UZ_KRKL/UZ_KRKL_KURGANCHA/_UZ_KRKL_KURGANCHA_000003",
-    "Digital Files Name": "UZ_KRKL_KURGANCHA_000003_1.jpeg- UZ_KRKL_KURGANCHA_000003_192.jpeg",
-    "Creation Date of Digital Files": "2020",
-    "Format of Digital Files": "JPEG",
-    "Number of Digital Files": "192",
-    "Colour": "24-bit RGB",
-    "Resolution": "600 ppi",
-    "Archive Recorder": "Ходжалепесов. И",
-    "Date of Recording": "30/09/2020",
-    "Resource": "",
-    "Preferred Language": "Russian",
-    "Date of recording_backup": "30/09/2020",
-    "Tstamp": "",
-    "Resolution_backup": "600dpi",
-    "Country": "",
-    "Related Subjects_backup": "Археология",
-    "Related Countries_backup": "Узбекистан",
-    "Languages of Material_backup": "Русский"
-  },
-
-  {
-    id: 91,
-    record_source: "caal",
-    is_editable: false,
-
-    "Level": "Папка",
-    "Original Reference": "11",
-    "CAAL_ID": "Ar_UZ_KRKL_000034",
-    "Associated CAAL_ID": "Mon_UZ_KRKL_000004",
-    "Original Title": "",
-    "English Title": "",
-    "Content Type": "Паспорт",
-    "Description": "Паспорта массовых археологических находок",
-    "Description - alternative language": "",
-    "Number and Type of Original Material": "Одна папка 130 файлов",
-    "Size and Dimensions of Original Material": "",
-    "Condition of Original Material": "",
-    "Related Countries": ["Uzbekistan"],
-    "Related Towns and Cities": "",
-    "Related Religions": [],
-    "Related Subjects": ["Archaeology"],
-    "Other Subjects": "",
-    "Dates of Original Material": "1965",
-    "Author of the Original Material": "",
-    "Publisher of the Original Material": "",
-    "Editor of the Original Material": "",
-    "Volume and Issue Number": "",
-    "Languages of Material": ["Russian"],
-    "Script of Material": "Кириллица",
-    "Writing System": "Слева направо",
-    "Still under CopyrightYN": "",
-    "still_under_copyright": "",
-    "Copyright Holder Name": "",
-    "Copyright Attribution": "",
-    "Digital Folder Name": "UZ/UZ_KRKL/UZ_KRKL_KURGANCHA/_UZ_KRKL_KURGANCHA_000004",
-    "Digital Files Name": "UZ_KRKL_KURGANCHA_000004_1.jpeg- UZ_KRKL_KURGANCHA_000004_130.jpeg",
-    "Creation Date of Digital Files": "2020",
-    "Format of Digital Files": "JPEG",
-    "Number of Digital Files": "130",
-    "Colour": "24-bit RGB",
-    "Resolution": "600 ppi",
-    "Archive Recorder": "Ходжалепесов. И",
-    "Date of Recording": "30/09/2020",
-    "Resource": "",
-    "Preferred Language": "Russian",
-    "Date of recording_backup": "30/09/2020",
-    "Tstamp": "",
-    "Resolution_backup": "600dpi",
-    "Country": "",
-    "Related Subjects_backup": "Археология",
-    "Related Countries_backup": "Узбекистан",
-    "Languages of Material_backup": "Русский"
+function archiveScopeLabel(scope) {
+  switch (scope) {
+    case "workspace":
+      return archiveLabel("Workspace", "Workspace");
+    case "national_ref":
+      return archiveLabel("National CAAL", "National CAAL");
+    case "all_caal":
+      return archiveLabel("All CAAL", "All CAAL");
+    default:
+      return scope || archiveLabel("Unknown", "Unknown");
   }
-];
+}
 
-// Helpers
+// lookup helper
+async function loadArchiveLookups() {
+  const lang =
+    (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
+    window.appSession?.profile?.preferred_language ||
+    "en";
+
+  const response = await fetch(
+    `/api/lookups/archive?lang=${encodeURIComponent(lang)}`,
+    {
+      method: "GET",
+      credentials: "include"
+    }
+  );
+
+  const data = await response.json();
+
+  if (!response.ok || !data.ok) {
+    throw new Error(data.error || "Failed to load archive lookups");
+  }
+
+  archiveLookups = data.lookups || {};
+}
+
+// Generic helpers
 // --------------------------------------------------------
+function safeArchiveValue(value) {
+  if (value === null || value === undefined || value === "") {
+    return archiveLabel("Not recorded", "Not recorded");
+  }
+  return value;
+}
+
 function archiveHasRealValue(value) {
   return value !== null && value !== undefined && value !== "";
 }
@@ -408,8 +140,18 @@ function archiveUniqueSorted(values) {
 
 function archiveArrayValue(value) {
   if (Array.isArray(value)) return value.filter(archiveHasRealValue);
+
   if (!archiveHasRealValue(value)) return [];
-  return [value];
+
+  return String(value)
+    .split(",")
+    .map((item) => item.trim())
+    .filter((item) => item !== "");
+}
+
+function archiveSelectedValues(selectEl) {
+  if (!selectEl) return [];
+  return Array.from(selectEl.selectedOptions).map((option) => option.value);
 }
 
 function archivePopulateMultiSelect(selectEl, values) {
@@ -424,17 +166,241 @@ function archivePopulateMultiSelect(selectEl, values) {
   });
 }
 
-function archiveSelectedValues(selectEl) {
-  if (!selectEl) return [];
-  return Array.from(selectEl.selectedOptions).map((option) => option.value);
+function archiveSectionHasValues(values) {
+  return values.some((value) => archiveHasRealValue(value));
 }
 
+function updatePaginationUI() {
+  if (!archivePageInfo) return;
+
+  const start = archiveOffset + 1;
+  const end = archiveOffset + archiveAllRecords.length;
+
+  archivePageInfo.textContent = `${start}-${end} shown`;
+  //archivePageInfo.textContent = `${start}-${end} of ${archiveTotalCount}`;
+
+  if (archivePrevBtn) {
+    archivePrevBtn.disabled = archiveOffset === 0;
+  }
+
+  if (archiveNextBtn) {
+    archiveNextBtn.disabled = archiveAllRecords.length < archiveLimit;
+    //archiveNextBtn.disabled = archiveOffset + archiveLimit >= archiveTotalCount;
+  }
+}
+
+function archiveRecordTitleClass(record) {
+  if (archiveJustSavedRecordId && archiveJustSavedRecordId === record?.identity?.id) {
+    return "record-title record-title-saved";
+  }
+
+  return "record-title record-title-selected";
+}
+
+// edit/add helpers
+function archiveInputId(fieldName) {
+  return "archive_fld_" + fieldName.replace(/[^a-zA-Z0-9]+/g, "_");
+}
+
+function archiveRenderTextInput(fieldName, label, value, fullWidth = false) {
+  const inputId = archiveInputId(fieldName);
+  const fullWidthClass = fullWidth ? " full-width" : "";
+  return `
+    <div class="detail-item${fullWidthClass}">
+      <label class="detail-label" for="${inputId}">${label}</label>
+      <input type="text" id="${inputId}" class="form-control" value="${value ?? ""}">
+    </div>
+  `;
+}
+
+function archiveRenderTextarea(fieldName, label, value, fullWidth = true) {
+  const inputId = archiveInputId(fieldName);
+  const fullWidthClass = fullWidth ? " full-width" : "";
+  return `
+    <div class="detail-item${fullWidthClass}">
+      <label class="detail-label" for="${inputId}">${label}</label>
+      <textarea id="${inputId}" class="form-control" rows="4">${value ?? ""}</textarea>
+    </div>
+  `;
+}
+
+function archiveLookupOptions(lookupName) {
+  return Array.isArray(archiveLookups?.[lookupName]) ? archiveLookups[lookupName] : [];
+}
+
+function archiveRenderSelect(fieldName, label, lookupName, currentValue, fullWidth = false) {
+  const inputId = archiveInputId(fieldName);
+  const fullWidthClass = fullWidth ? " full-width" : "";
+
+  const optionsHtml = archiveLookupOptions(lookupName)
+    .map((item) => {
+      const value = item.value ?? "";
+      const selected = String(value) === String(currentValue ?? "") ? "selected" : "";
+      return `<option value="${value}" ${selected}>${item.label ?? value}</option>`;
+    })
+    .join("");
+
+  return `
+    <div class="detail-item${fullWidthClass}">
+      <label class="detail-label" for="${inputId}">${label}</label>
+      <select id="${inputId}" class="form-control">
+        <option value=""></option>
+        ${optionsHtml}
+      </select>
+    </div>
+  `;
+}
+
+function archiveRenderReadOnlyItem(label, value, fullWidth = false) {
+  return archiveRenderDetailItem(label, value, fullWidth);
+}
+
+function archiveGetInputValue(fieldName) {
+  const el = document.getElementById(archiveInputId(fieldName));
+  return el ? el.value : "";
+}
+
+function archiveBuildSavePayload() {
+  return {
+    "Level": archiveGetInputValue("Level"),
+    "Original Reference": archiveGetInputValue("Original Reference"),
+    "Associated CAAL_ID": archiveGetInputValue("Associated CAAL_ID"),
+    "Original Title": archiveGetInputValue("Original Title"),
+    "English Title": archiveGetInputValue("English Title"),
+    "Content Type": archiveGetInputValue("Content Type"),
+    "Description": archiveGetInputValue("Description"),
+    "Description - alternative language": archiveGetInputValue("Description - alternative language"),
+    "Number and Type of Original Material": archiveGetInputValue("Number and Type of Original Material"),
+    "Size and Dimensions of Original Material": archiveGetInputValue("Size and Dimensions of Original Material"),
+    "Condition of Original Material": archiveGetInputValue("Condition of Original Material"),
+    "Related Countries": archiveGetInputValue("Related Countries"),
+    "Related Towns and Cities": archiveGetInputValue("Related Towns and Cities"),
+    "Related Religions": archiveGetInputValue("Related Religions"),
+    "Related Subjects": archiveGetInputValue("Related Subjects"),
+    "Other Subjects": archiveGetInputValue("Other Subjects"),
+    "Dates of Original Material": archiveGetInputValue("Dates of Original Material"),
+    "Author of the Original Material": archiveGetInputValue("Author of the Original Material"),
+    "Publisher of the Original Material": archiveGetInputValue("Publisher of the Original Material"),
+    "Editor of the Original Material": archiveGetInputValue("Editor of the Original Material"),
+    "Volume and Issue Number": archiveGetInputValue("Volume and Issue Number"),
+    "Languages of Material": archiveGetInputValue("Languages of Material"),
+    "Script of Material": archiveGetInputValue("Script of Material"),
+    "Writing System": archiveGetInputValue("Writing System"),
+    "Copyright Holder Name": archiveGetInputValue("Copyright Holder Name"),
+    "Copyright Attribution": archiveGetInputValue("Copyright Attribution"),
+    "Digital Folder Name": archiveGetInputValue("Digital Folder Name"),
+    "Digital Files Name": archiveGetInputValue("Digital Files Name"),
+    "Creation Date of Digital Files": archiveGetInputValue("Creation Date of Digital Files"),
+    "Format of Digital Files": archiveGetInputValue("Format of Digital Files"),
+    "Number of Digital Files": archiveGetInputValue("Number of Digital Files"),
+    "Colour": archiveGetInputValue("Colour"),
+    "Resolution": archiveGetInputValue("Resolution"),
+    "Archive Recorder": archiveGetInputValue("Archive Recorder"),
+    "Date of Recording": archiveGetInputValue("Date of Recording"),
+    "Resource": archiveGetInputValue("Resource"),
+    "Preferred Language": archiveGetInputValue("Preferred Language"),
+    "Country": archiveGetInputValue("Country")
+  };
+}
+
+// add helper
+
+function makeNewBlankArchiveRecord() {
+  const lang =
+    (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
+    window.appSession?.profile?.preferred_language ||
+    "en";
+
+  return {
+    identity: {
+      id: null,
+      caal_id: "[new record - unsaved]",
+      associated_caal_id: ""
+    },
+    summary: {
+      original_title: "",
+      english_title: "",
+      original_reference: "",
+      content_type: "",
+      country: "",
+      level: "",
+      archive_recorder: window.appSession?.profile?.username || "",
+      date_of_recording: ""
+    },
+    raw: {
+      "Level": "",
+      "Original Reference": "",
+      "CAAL_ID": "",
+      "Associated CAAL_ID": "",
+      "Original Title": "",
+      "English Title": "",
+      "Content Type": "",
+      "Description": "",
+      "Description - alternative language": "",
+      "Number and Type of Original Material": "",
+      "Size and Dimensions of Original Material": "",
+      "Condition of Original Material": "",
+      "Related Countries": "",
+      "Related Towns and Cities": "",
+      "Related Religions": "",
+      "Related Subjects": "",
+      "Other Subjects": "",
+      "Dates of Original Material": "",
+      "Author of the Original Material": "",
+      "Publisher of the Original Material": "",
+      "Editor of the Original Material": "",
+      "Volume and Issue Number": "",
+      "Languages of Material": "",
+      "Script of Material": "",
+      "Writing System": "",
+      "Still under CopyrightYN": "",
+      "Copyright Holder Name": "",
+      "Copyright Attribution": "",
+      "Digital Folder Name": "",
+      "Digital Files Name": "",
+      "Creation Date of Digital Files": "",
+      "Format of Digital Files": "",
+      "Number of Digital Files": "",
+      "Colour": "",
+      "Resolution": "",
+      "Archive Recorder": window.appSession?.profile?.username || "",
+      "Date of Recording": "",
+      "Resource": "",
+      "Preferred Language": lang,
+      "still_under_copyright": null,
+      "Tstamp": "",
+      "Country": ""
+    },
+    source: {
+      scope: "workspace",
+      is_editable: true,
+      is_new: true
+    }
+  };
+}
+
+// Record field helpers
+// --------------------------------------------------------
+function archiveRaw(record, fieldName) {
+  return record?.raw?.[fieldName] ?? null;
+}
+
+function archiveSummary(record, fieldName) {
+  return record?.summary?.[fieldName] ?? null;
+}
+
+function archiveIdentity(record, fieldName) {
+  return record?.identity?.[fieldName] ?? null;
+}
+
+// Render helpers
+// --------------------------------------------------------
 function archiveRenderDetailItem(label, value, fullWidth = false) {
   const fullWidthClass = fullWidth ? " full-width" : "";
   return `
     <div class="detail-item${fullWidthClass}">
       <span class="detail-label">${label}</span>
-      <div class="detail-value">${safeValue(value)}</div>
+      <div class="detail-value">${safeArchiveValue(value)}</div>
     </div>
   `;
 }
@@ -442,7 +408,7 @@ function archiveRenderDetailItem(label, value, fullWidth = false) {
 function archiveRenderGroupBlock(title, innerHtml, hasValues = true) {
   const content = hasValues
     ? innerHtml
-    : `<div class="section-empty">No populated fields in this section.</div>`;
+    : `<div class="section-empty">${archiveLabel("No populated fields in this section.", "No populated fields in this section.")}</div>`;
 
   return `
     <div class="group-block">
@@ -456,65 +422,256 @@ function archiveRenderGroupBlock(title, innerHtml, hasValues = true) {
   `;
 }
 
-function splitArchiveMultiValue(value) {
-  if (!archiveHasRealValue(value)) return [];
+// popup
+function archiveOpenPreview(record) {
+  archivePreviewRecord = record;
 
-  return Array.from(
-    new Set(
-      String(value)
-        .split(",")
-        .map((item) => item.trim())
-        .filter((item) => item !== "")
+  if (!archivePreviewModal || !archivePreviewBody || !archivePreviewTitle) return;
+
+  const s = record.summary || {};
+
+  archivePreviewTitle.textContent = safeArchiveValue(s.original_title || s.english_title || "Record preview");
+
+  archivePreviewBody.innerHTML = `
+    <div class="group-stack">
+      <div class="group-block">
+        <div class="group-grid">
+          <div class="detail-item full-width section-header">
+            <span class="detail-section-title">${archiveLabel("Material Details", "Material Details")}</span>
+          </div>
+
+          ${archiveRenderDetailItem(archiveLabel("CAAL_ID", "CAAL_ID"), archiveIdentity(record, "caal_id"))}
+          ${archiveRenderDetailItem(archiveLabel("Associated CAAL_ID", "Associated CAAL_ID"), archiveIdentity(record, "associated_caal_id"))}
+          ${archiveRenderDetailItem(archiveLabel("Original Reference", "Original Reference"), s.original_reference)}
+          ${archiveRenderDetailItem(archiveLabel("Content Type", "Content Type"), s.content_type)}
+          ${archiveRenderDetailItem(archiveLabel("Country", "Country"), s.country)}
+          ${archiveRenderDetailItem(archiveLabel("Level", "Level"), s.level)}
+          ${archiveRenderDetailItem(archiveLabel("Original Title", "Original Title"), s.original_title, true)}
+          ${archiveRenderDetailItem(archiveLabel("English Title", "English Title"), s.english_title, true)}
+          ${archiveRenderDetailItem(archiveLabel("Description", "Description"), archiveRaw(record, "Description"), true)}
+          ${archiveRenderDetailItem(
+            archiveLabel("Languages of Material", "Languages of Material"),
+            archiveArrayValue(archiveRaw(record, "Languages of Material")).join(", "),
+            true
+          )}
+        </div>
+      </div>
+
+      <div class="group-block">
+        <div class="group-grid">
+          <div class="detail-item full-width section-header">
+            <span class="detail-section-title">${archiveLabel("Publication Details", "Publication Details")}</span>
+          </div>
+
+          ${archiveRenderDetailItem(archiveLabel("Dates of Original Material", "Dates of Original Material"), archiveRaw(record, "Dates of Original Material"))}
+          ${archiveRenderDetailItem(archiveLabel("Author of the Original Material", "Author of the Original Material"), archiveRaw(record, "Author of the Original Material"), true)}
+          ${archiveRenderDetailItem(archiveLabel("Publisher of the Original Material", "Publisher of the Original Material"), archiveRaw(record, "Publisher of the Original Material"), true)}
+          ${archiveRenderDetailItem(archiveLabel("Editor of the Original Material", "Editor of the Original Material"), archiveRaw(record, "Editor of the Original Material"), true)}
+          ${archiveRenderDetailItem(archiveLabel("Volume and Issue Number", "Volume and Issue Number"), archiveRaw(record, "Volume and Issue Number"))}
+        </div>
+      </div>
+    </div>
+  `;
+
+  archivePreviewModal.hidden = false;
+}
+
+function archiveClosePreview() {
+  if (!archivePreviewModal) return;
+  archivePreviewModal.hidden = true;
+  archivePreviewRecord = null;
+}
+
+function archiveConfirmLoseChanges() {
+  if (!archiveIsEditMode || !archiveIsDirty) {
+    return true;
+  }
+
+  return window.confirm(
+    archiveLabel(
+      "Unsaved changes prompt",
+      "You have unsaved changes. Do you want to discard them?"
+        //return window.confirm(getResponseText("unsaved_changes_message", "You have unsaved changes. Do you want to discard them?"));
     )
   );
 }
 
-// Search text blob
+window.archiveCanChangeLanguage = function () {
+  if (!archiveIsEditMode || !archiveIsDirty) {
+    return true;
+  }
+
+  const confirmed = window.confirm(
+    archiveLabel(
+      "Language change cancels editing",
+      "Changing language will cancel the current edit. Continue?"
+    )
+  );
+
+  if (!confirmed) {
+    return false;
+  }
+
+  archiveIsEditMode = false;
+  archiveIsDirty = false;
+  archivePendingNewRecord = null;
+  archiveClosePreview();
+
+  if (archiveSelectedRecord) {
+    archiveRenderRecordDetails(archiveSelectedRecord);
+  } else {
+    renderArchiveEmptyState();
+  }
+
+  return true;
+};
+
+
+
+// Labels API
+// --------------------------------------------------------
+async function loadArchiveLabels() {
+  const lang =
+    (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
+    window.appSession?.profile?.preferred_language ||
+    "en";
+
+  const response = await fetch(
+    `/api/ui/labels?page=archive&lang=${encodeURIComponent(lang)}`,
+    {
+      method: "GET",
+      credentials: "include"
+    }
+  );
+
+  const data = await response.json();
+
+  if (!response.ok || !data.ok) {
+    throw new Error(data.error || "Failed to load archive labels");
+  }
+
+  archiveLabels = data.labels || {};
+
+  console.log("Archive labels loaded for:", lang, archiveLabels);
+}
+
+
+// Records API
+// --------------------------------------------------------
+function getArchiveEnabledScopes() {
+  const scopes = [];
+
+  if (showArchiveWorkspace?.checked) scopes.push("workspace");
+  if (showArchiveNationalRef?.checked) scopes.push("national_ref");
+  if (showArchiveAllCaal?.checked) scopes.push("all_caal");
+
+  return scopes;
+}
+
+async function loadArchiveRecords(limit = 100, offset = 0) {
+  const scopes = getArchiveEnabledScopes();
+
+  archiveAllRecords = [];
+  archiveVisibleRecords = [];
+  archiveSelectedRecord = null;
+  archiveIsEditMode = false;
+
+  if (scopes.length === 0) {
+    renderArchiveResultsList([]);
+    renderArchiveEmptyState();
+    return;
+  }
+
+  const lang =
+    (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
+    window.appSession?.profile?.preferred_language ||
+    "en";
+
+  const response = await fetch(
+    `/api/archive?scopes=${encodeURIComponent(scopes.join(","))}&lang=${encodeURIComponent(lang)}&limit=${limit}&offset=${offset}`,
+    {
+      method: "GET",
+      credentials: "include"
+    }
+  );
+
+  const data = await response.json();
+  console.log("Archive response:", data);
+
+  if (!response.ok || !data.ok) {
+    throw new Error(data.error || "Failed to load archive records");
+  }
+
+  archiveAllRecords = data.records || [];
+  archiveTotalCount = data.total || 0;
+  archiveLimit = data.limit || limit;
+  archiveOffset = data.offset || offset;
+
+  const options = archiveCollectFilterOptions(archiveAllRecords);
+
+  archivePopulateMultiSelect(filterArchiveRelatedCountries, options.relatedCountries);
+  archivePopulateMultiSelect(filterArchiveRelatedReligions, options.relatedReligions);
+  archivePopulateMultiSelect(filterArchiveRelatedSubjects, options.relatedSubjects);
+  archivePopulateMultiSelect(filterArchiveContentType, options.contentTypes);
+  archivePopulateMultiSelect(filterArchiveLanguages, options.languages);
+
+  archiveVisibleRecords = archiveAllRecords;
+  renderArchiveResultsList(archiveVisibleRecords);
+}
+
+// Search text
 // --------------------------------------------------------
 function archiveBuildSearchText(record) {
+  const s = record.summary || {};
+
   const fields = [
-    record["Level"],
-    record["Original Reference"],
-    record["Associated CAAL_ID"],
-    record["Original Title"],
-    record["English Title"],
-    record["Content Type"],
-    record["Description"],
-    record["Description - alternative language"],
-    record["Number and Type of Original Material"],
-    record["Size and Dimensions of Original Material"],
-    record["Condition of Original Material"],
-    record["Related Towns and Cities"],
-    record["Other Subjects"],
-    record["Dates of Original Material"],
-    record["Author of the Original Material"],
-    record["Publisher of the Original Material"],
-    record["Editor of the Original Material"],
-    record["Volume and Issue Number"],
-    record["Script of Material"],
-    record["Writing System"],
-    record["Copyright Holder Name"],
-    record["Copyright Attribution"],
-    record["Digital Folder Name"],
-    record["Digital Files Name"],
-    record["Creation Date of Digital Files"],
-    record["Format of Digital Files"],
-    record["Number of Digital Files"],
-    record["Colour"],
-    record["Resolution"],
-    record["Archive Recorder"],
-    record["Date of Recording"],
-    record["Resource"],
-    ...archiveArrayValue(record["Related Countries"]),
-    ...archiveArrayValue(record["Related Religions"]),
-    ...archiveArrayValue(record["Related Subjects"]),
-    ...archiveArrayValue(record["Languages of Material"])
+    archiveIdentity(record, "caal_id"),
+    archiveIdentity(record, "associated_caal_id"),
+
+    s.original_title,
+    s.english_title,
+    s.original_reference,
+    s.content_type,
+    s.country,
+    s.level,
+    s.archive_recorder,
+    s.date_of_recording,
+
+    archiveRaw(record, "Description"),
+    archiveRaw(record, "Description - alternative language"),
+    archiveRaw(record, "Number and Type of Original Material"),
+    archiveRaw(record, "Size and Dimensions of Original Material"),
+    archiveRaw(record, "Condition of Original Material"),
+    archiveRaw(record, "Related Towns and Cities"),
+    archiveRaw(record, "Other Subjects"),
+    archiveRaw(record, "Dates of Original Material"),
+    archiveRaw(record, "Author of the Original Material"),
+    archiveRaw(record, "Publisher of the Original Material"),
+    archiveRaw(record, "Editor of the Original Material"),
+    archiveRaw(record, "Volume and Issue Number"),
+    archiveRaw(record, "Script of Material"),
+    archiveRaw(record, "Writing System"),
+    archiveRaw(record, "Copyright Holder Name"),
+    archiveRaw(record, "Copyright Attribution"),
+    archiveRaw(record, "Digital Folder Name"),
+    archiveRaw(record, "Digital Files Name"),
+    archiveRaw(record, "Creation Date of Digital Files"),
+    archiveRaw(record, "Format of Digital Files"),
+    archiveRaw(record, "Number of Digital Files"),
+    archiveRaw(record, "Colour"),
+    archiveRaw(record, "Resolution"),
+    archiveRaw(record, "Resource"),
+
+    ...archiveArrayValue(archiveRaw(record, "Related Countries")),
+    ...archiveArrayValue(archiveRaw(record, "Related Religions")),
+    ...archiveArrayValue(archiveRaw(record, "Related Subjects")),
+    ...archiveArrayValue(archiveRaw(record, "Languages of Material"))
   ];
 
   return fields.map(archiveNormalizeSearchText).join(" ");
 }
 
-// Filter options
+// Filter option collection
 // --------------------------------------------------------
 function archiveCollectFilterOptions(records) {
   const relatedCountries = [];
@@ -524,11 +681,11 @@ function archiveCollectFilterOptions(records) {
   const languages = [];
 
   records.forEach((record) => {
-    relatedCountries.push(...archiveArrayValue(record["Related Countries"]));
-    relatedReligions.push(...archiveArrayValue(record["Related Religions"]));
-    relatedSubjects.push(...archiveArrayValue(record["Related Subjects"]));
-    contentTypes.push(record["Content Type"]);
-    languages.push(...archiveArrayValue(record["Languages of Material"]));
+    relatedCountries.push(...archiveArrayValue(archiveRaw(record, "Related Countries")));
+    relatedReligions.push(...archiveArrayValue(archiveRaw(record, "Related Religions")));
+    relatedSubjects.push(...archiveArrayValue(archiveRaw(record, "Related Subjects")));
+    contentTypes.push(record?.summary?.content_type);
+    languages.push(...archiveArrayValue(archiveRaw(record, "Languages of Material")));
   });
 
   return {
@@ -543,10 +700,10 @@ function archiveCollectFilterOptions(records) {
 // Filter logic
 // --------------------------------------------------------
 function archiveMatchesFilters(record, filters) {
-  const relatedCountries = archiveArrayValue(record["Related Countries"]);
-  const relatedReligions = archiveArrayValue(record["Related Religions"]);
-  const relatedSubjects = archiveArrayValue(record["Related Subjects"]);
-  const languages = archiveArrayValue(record["Languages of Material"]);
+  const relatedCountries = archiveArrayValue(archiveRaw(record, "Related Countries"));
+  const relatedReligions = archiveArrayValue(archiveRaw(record, "Related Religions"));
+  const relatedSubjects = archiveArrayValue(archiveRaw(record, "Related Subjects"));
+  const languages = archiveArrayValue(archiveRaw(record, "Languages of Material"));
 
   const matchesText =
     !filters.text ||
@@ -566,7 +723,7 @@ function archiveMatchesFilters(record, filters) {
 
   const matchesContentType =
     filters.contentTypes.length === 0 ||
-    filters.contentTypes.includes(record["Content Type"]);
+    filters.contentTypes.includes(record?.summary?.content_type);
 
   const matchesLanguages =
     filters.languages.length === 0 ||
@@ -582,205 +739,6 @@ function archiveMatchesFilters(record, filters) {
   );
 }
 
-// Results rendering
-// --------------------------------------------------------
-function archiveRenderResultsList(records) {
-  if (!archiveResultsList) return;
-
-  if (archiveResultsCount) {
-    archiveResultsCount.textContent = `${records.length} record${records.length === 1 ? "" : "s"}`;
-  }
-
-  if (records.length === 0) {
-    archiveResultsList.innerHTML = `
-      <div class="results-empty">
-        <p>No matching records.</p>
-      </div>
-    `;
-    return;
-  }
-
-  archiveResultsList.innerHTML = records
-    .map((record, index) => {
-      const sourceLabel = record.is_editable ? "Workspace" : "CAAL";
-      return `
-        <div class="result-card" data-archive-result-index="${index}">
-          <div class="result-card-header">
-            <strong>${safeValue(record["Original Title"])}</strong>
-          </div>
-          <div class="result-card-meta">${safeValue(record["Original Reference"] || record["CAAL_ID"])}</div>
-          <div class="result-card-meta">${safeValue(record["Content Type"])}</div>
-          <div class="result-card-meta">${sourceLabel}</div>
-        </div>
-      `;
-    })
-    .join("");
-
-  Array.from(archiveResultsList.querySelectorAll(".result-card")).forEach((card) => {
-    card.addEventListener("click", () => {
-      const idx = Number(card.dataset.archiveResultIndex);
-      const record = records[idx];
-      if (!record) return;
-      archiveRenderRecordDetails(record);
-    });
-  });
-}
-
-// Detail rendering
-// --------------------------------------------------------
-function archiveRenderRecordDetails(record) {
-  archiveSelectedRecord = record;
-
-  if (archiveIsEditMode) {
-    archiveRenderEditMode(record);
-  } else {
-    archiveRenderDisplayMode(record);
-  }
-}
-
-function archiveRenderDisplayMode(record) {
-  archiveSelectedRecord = record;
-
-  let materialHtml = "";
-  materialHtml += archiveRenderDetailItem("Level", record["Level"]);
-  materialHtml += archiveRenderDetailItem("Original Reference", record["Original Reference"]);
-  materialHtml += archiveRenderDetailItem("Associated CAAL_ID", record["Associated CAAL_ID"]);
-  materialHtml += archiveRenderDetailItem("Original Title", record["Original Title"], true);
-  materialHtml += archiveRenderDetailItem("English Title", record["English Title"], true);
-  materialHtml += archiveRenderDetailItem("Content Type", record["Content Type"]);
-  materialHtml += archiveRenderDetailItem("Number and Type of Original Material", record["Number and Type of Original Material"], true);
-  materialHtml += archiveRenderDetailItem("Size and Dimensions of Original Material", record["Size and Dimensions of Original Material"]);
-  materialHtml += archiveRenderDetailItem("Condition of Original Material", record["Condition of Original Material"]);
-
-  let publicationHtml = "";
-  publicationHtml += archiveRenderDetailItem("Dates of Original Material", record["Dates of Original Material"]);
-  publicationHtml += archiveRenderDetailItem("Author of the Original Material", record["Author of the Original Material"], true);
-  publicationHtml += archiveRenderDetailItem("Publisher of the Original Material", record["Publisher of the Original Material"], true);
-  publicationHtml += archiveRenderDetailItem("Editor of the Original Material", record["Editor of the Original Material"], true);
-  publicationHtml += archiveRenderDetailItem("Volume and Issue Number", record["Volume and Issue Number"]);
-
-  let contentHtml = "";
-  contentHtml += archiveRenderDetailItem("Description", record["Description"], true);
-  contentHtml += archiveRenderDetailItem("Description - alternative language", record["Description - alternative language"], true);
-  contentHtml += archiveRenderDetailItem("Related Countries", archiveArrayValue(record["Related Countries"]).join(", "), true);
-  contentHtml += archiveRenderDetailItem("Related Towns and Cities", record["Related Towns and Cities"], true);
-  contentHtml += archiveRenderDetailItem("Related Religions", archiveArrayValue(record["Related Religions"]).join(", "), true);
-  contentHtml += archiveRenderDetailItem("Related Subjects", archiveArrayValue(record["Related Subjects"]).join(", "), true);
-  contentHtml += archiveRenderDetailItem("Other Subjects", record["Other Subjects"], true);
-  contentHtml += archiveRenderDetailItem("Languages of Material", archiveArrayValue(record["Languages of Material"]).join(", "), true);
-  contentHtml += archiveRenderDetailItem("Script of Material", record["Script of Material"]);
-  contentHtml += archiveRenderDetailItem("Writing System", record["Writing System"]);
-
-  let digitalHtml = "";
-  digitalHtml += archiveRenderDetailItem("Still under Copyright", record["still_under_copyright"]);
-  digitalHtml += archiveRenderDetailItem("Copyright Holder Name", record["Copyright Holder Name"], true);
-  digitalHtml += archiveRenderDetailItem("Copyright Attribution", record["Copyright Attribution"], true);
-  digitalHtml += archiveRenderDetailItem("Digital Folder Name", record["Digital Folder Name"], true);
-  digitalHtml += archiveRenderDetailItem("Digital Files Name", record["Digital Files Name"], true);
-  digitalHtml += archiveRenderDetailItem("Creation Date of Digital Files", record["Creation Date of Digital Files"]);
-  digitalHtml += archiveRenderDetailItem("Format of Digital Files", record["Format of Digital Files"]);
-  digitalHtml += archiveRenderDetailItem("Number of Digital Files", record["Number of Digital Files"]);
-  digitalHtml += archiveRenderDetailItem("Colour", record["Colour"]);
-  digitalHtml += archiveRenderDetailItem("Resolution", record["Resolution"]);
-
-  let metadataHtml = "";
-  metadataHtml += archiveRenderDetailItem("Archive Recorder", record["Archive Recorder"]);
-  metadataHtml += archiveRenderDetailItem("Date of Recording", record["Date of Recording"]);
-  metadataHtml += archiveRenderDetailItem("Resource", record["Resource"], true);
-
-  function archiveSectionHasValues(values) {
-    return values.some((value) => archiveHasRealValue(value));
-  }
-
-  const materialHasValues = archiveSectionHasValues([
-    record["Level"],
-    record["Original Reference"],
-    record["Associated CAAL_ID"],
-    record["Original Title"],
-    record["English Title"],
-    record["Content Type"],
-    record["Number and Type of Original Material"],
-    record["Size and Dimensions of Original Material"],
-    record["Condition of Original Material"]
-  ]);
-
-  const publicationHasValues = archiveSectionHasValues([
-    record["Dates of Original Material"],
-    record["Author of the Original Material"],
-    record["Publisher of the Original Material"],
-    record["Editor of the Original Material"],
-    record["Volume and Issue Number"]
-  ]);
-
-  const contentHasValues = archiveSectionHasValues([
-    record["Description"],
-    record["Description - alternative language"],
-    record["Related Towns and Cities"],
-    record["Other Subjects"],
-    record["Script of Material"],
-    record["Writing System"],
-    ...archiveArrayValue(record["Related Countries"]),
-    ...archiveArrayValue(record["Related Religions"]),
-    ...archiveArrayValue(record["Related Subjects"]),
-    ...archiveArrayValue(record["Languages of Material"])
-  ]);
-
-  const digitalHasValues = archiveSectionHasValues([
-    record["still_under_copyright"],
-    record["Copyright Holder Name"],
-    record["Copyright Attribution"],
-    record["Digital Folder Name"],
-    record["Digital Files Name"],
-    record["Creation Date of Digital Files"],
-    record["Format of Digital Files"],
-    record["Number of Digital Files"],
-    record["Colour"],
-    record["Resolution"]
-  ]);
-
-  const metadataHasValues = archiveSectionHasValues([
-    record["Archive Recorder"],
-    record["Date of Recording"],
-    record["Resource"]
-  ]);
-
-  archiveRecordDetails.innerHTML = `
-    <div class="record-title">
-      <h3>${safeValue(record["Original Title"])}</h3>
-      <p>${safeValue(record["Original Reference"] || record["CAAL_ID"])}</p>
-    </div>
-
-    <div class="panel-actions">
-      <button
-        type="button"
-        class="action-btn"
-        id="archiveEditBtn"
-        ${record.is_editable ? "" : "disabled"}
-      >
-        ${record.is_editable ? "Edit record" : "Read only"}
-      </button>
-    </div>
-
-    <div class="group-stack">
-      ${archiveRenderGroupBlock("Material Details", materialHtml, materialHasValues)}
-      ${archiveRenderGroupBlock("Publication Details", publicationHtml, publicationHasValues)}
-      ${archiveRenderGroupBlock("Content", contentHtml, contentHasValues)}
-      ${archiveRenderGroupBlock("Digital Files", digitalHtml, digitalHasValues)}
-      ${archiveRenderGroupBlock("Metadata", metadataHtml, metadataHasValues)}
-    </div>
-  `;
-  const archiveEditBtn = document.getElementById("archiveEditBtn");
-
-  if (archiveEditBtn && record.is_editable) {
-    archiveEditBtn.addEventListener("click", () => {
-      archiveIsEditMode = true;
-      archiveRenderRecordDetails(record);
-    });
-  }
-}
-
-// Filter application
-// --------------------------------------------------------
 function archiveApplyFilters() {
   const filters = {
     text: archiveSearch ? archiveSearch.value.trim() : "",
@@ -795,7 +753,7 @@ function archiveApplyFilters() {
     archiveMatchesFilters(record, filters)
   );
 
-  archiveRenderResultsList(archiveVisibleRecords);
+  renderArchiveResultsList(archiveVisibleRecords);
 }
 
 function archiveClearFilters() {
@@ -817,13 +775,518 @@ function archiveClearFilters() {
   archiveApplyFilters();
 }
 
+// Results rendering
+// --------------------------------------------------------
+function handleArchiveResultOpen(record) {
+  if (archiveIsEditMode) {
+    archiveOpenPreview(record);
+    return;
+  }
+
+  archiveRenderRecordDetails(record);
+}
+
+function renderArchiveResultsList(records) {
+  if (!archiveResultsList) return;
+
+  if (archiveResultsCount) {
+    archiveResultsCount.textContent = `${records.length} ${archiveLabel("records", "records")} (${archiveTotalCount} total)`;
+  }
+
+  if (records.length === 0) {
+    archiveResultsList.innerHTML = `
+      <div class="results-empty">
+        <p>${archiveLabel("No matching records.", "No matching records.")}</p>
+      </div>
+    `;
+    return;
+  }
+
+  archiveResultsList.innerHTML = records
+    .map((record, index) => {
+      const s = record.summary || {};
+      return `
+        <div
+          class="result-card"
+          data-archive-result-index="${index}"
+          data-archive-record-id="${record.identity?.id ?? ""}"
+        >
+          <div class="result-card-header">
+            <strong>${safeArchiveValue(s.original_title || s.english_title)}</strong>
+          </div>
+          <div class="result-card-meta">${safeArchiveValue(record.identity?.caal_id)}</div>
+          <div class="result-card-meta">${safeArchiveValue(s.content_type)}</div>
+          <div class="result-card-meta">${safeArchiveValue(archiveScopeLabel(record.source?.scope))}</div>
+          <div class="panel-actions" style="margin-top: 0.6rem;">
+            <button type="button" class="action-btn archive-preview-btn" data-archive-preview-index="${index}">
+              ${archiveLabel("Preview", "Preview")}
+            </button>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+
+    Array.from(archiveResultsList.querySelectorAll(".result-card")).forEach((card) => {
+    card.addEventListener("click", () => {
+      const idx = Number(card.dataset.archiveResultIndex);
+      const record = records[idx];
+      if (!record) return;
+
+      if (!archiveConfirmLoseChanges()) {
+        return;
+      }
+
+      archiveIsEditMode = false;
+      archivePendingNewRecord = null;
+      archiveRenderRecordDetails(record);
+      archiveUpdateSelectedResultCard();
+    });
+  });
+
+  Array.from(archiveResultsList.querySelectorAll(".archive-preview-btn")).forEach((btn) => {
+    btn.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const idx = Number(btn.dataset.archivePreviewIndex);
+      const record = records[idx];
+      if (!record) return;
+      archiveOpenPreview(record);
+    });
+  });
+
+  archiveUpdateSelectedResultCard();
+  updatePaginationUI();
+}
+
+// Detail rendering
+// --------------------------------------------------------
+function renderArchiveEmptyState() {
+  if (!archiveRecordDetails) return;
+
+  archiveRecordDetails.innerHTML = `
+    <div class="empty-state">
+      <p>${archiveLabel("No record selected yet.", "No record selected yet.")}</p>
+    </div>
+  `;
+}
+
+function archiveUpdateSelectedResultCard() {
+  if (!archiveResultsList) return;
+
+  const selectedId = archiveSelectedRecord?.identity?.id;
+
+  Array.from(archiveResultsList.querySelectorAll(".result-card")).forEach((card) => {
+    const cardId = Number(card.dataset.archiveRecordId);
+
+    card.classList.toggle(
+      "result-card-selected",
+      selectedId !== null && selectedId !== undefined && cardId === selectedId
+    );
+
+    card.classList.toggle(
+      "result-card-saved",
+      archiveJustSavedRecordId !== null && cardId === archiveJustSavedRecordId
+    );
+  });
+}
+
+function archiveRenderRecordDetails(record) {
+  archiveSelectedRecord = record;
+
+  if (archiveIsEditMode) {
+    archiveRenderEditMode(record);
+  } else {
+    archiveRenderDisplayMode(record);
+  }
+}
+
+function archiveRenderDisplayMode(record) {
+  archiveSelectedRecord = record;
+
+  const s = record.summary || {};
+
+  let materialHtml = "";
+  materialHtml += archiveRenderDetailItem(archiveLabel("Level", "Level"), s.level);
+  materialHtml += archiveRenderDetailItem(archiveLabel("Original Reference", "Original Reference"), s.original_reference);
+  materialHtml += archiveRenderDetailItem(archiveLabel("Associated CAAL_ID", "Associated CAAL_ID"), archiveIdentity(record, "associated_caal_id"));
+  materialHtml += archiveRenderDetailItem(archiveLabel("Original Title", "Original Title"), s.original_title, true);
+  materialHtml += archiveRenderDetailItem(archiveLabel("English Title", "English Title"), s.english_title, true);
+  materialHtml += archiveRenderDetailItem(archiveLabel("Content Type", "Content Type"), s.content_type);
+  materialHtml += archiveRenderDetailItem(archiveLabel("Number and Type of Original Material", "Number and Type of Original Material"), archiveRaw(record, "Number and Type of Original Material"), true);
+  materialHtml += archiveRenderDetailItem(archiveLabel("Size and Dimensions of Original Material", "Size and Dimensions of Original Material"), archiveRaw(record, "Size and Dimensions of Original Material"));
+  materialHtml += archiveRenderDetailItem(archiveLabel("Condition of Original Material", "Condition of Original Material"), archiveRaw(record, "Condition of Original Material"));
+
+  let publicationHtml = "";
+  publicationHtml += archiveRenderDetailItem(archiveLabel("Dates of Original Material", "Dates of Original Material"), archiveRaw(record, "Dates of Original Material"));
+  publicationHtml += archiveRenderDetailItem(archiveLabel("Author of the Original Material", "Author of the Original Material"), archiveRaw(record, "Author of the Original Material"), true);
+  publicationHtml += archiveRenderDetailItem(archiveLabel("Publisher of the Original Material", "Publisher of the Original Material"), archiveRaw(record, "Publisher of the Original Material"), true);
+  publicationHtml += archiveRenderDetailItem(archiveLabel("Editor of the Original Material", "Editor of the Original Material"), archiveRaw(record, "Editor of the Original Material"), true);
+  publicationHtml += archiveRenderDetailItem(archiveLabel("Volume and Issue Number", "Volume and Issue Number"), archiveRaw(record, "Volume and Issue Number"));
+
+  let contentHtml = "";
+  contentHtml += archiveRenderDetailItem(archiveLabel("Description", "Description"), archiveRaw(record, "Description"), true);
+  contentHtml += archiveRenderDetailItem(archiveLabel("Description - alternative language", "Description - alternative language"), archiveRaw(record, "Description - alternative language"), true);
+  contentHtml += archiveRenderDetailItem(archiveLabel("Related Countries", "Related Countries"), archiveArrayValue(archiveRaw(record, "Related Countries")).join(", "), true);
+  contentHtml += archiveRenderDetailItem(archiveLabel("Related Towns and Cities", "Related Towns and Cities"), archiveRaw(record, "Related Towns and Cities"), true);
+  contentHtml += archiveRenderDetailItem(archiveLabel("Related Religions", "Related Religions"), archiveArrayValue(archiveRaw(record, "Related Religions")).join(", "), true);
+  contentHtml += archiveRenderDetailItem(archiveLabel("Related Subjects", "Related Subjects"), archiveArrayValue(archiveRaw(record, "Related Subjects")).join(", "), true);
+  contentHtml += archiveRenderDetailItem(archiveLabel("Other Subjects", "Other Subjects"), archiveRaw(record, "Other Subjects"), true);
+  contentHtml += archiveRenderDetailItem(archiveLabel("Languages of Material", "Languages of Material"), archiveArrayValue(archiveRaw(record, "Languages of Material")).join(", "), true);
+  contentHtml += archiveRenderDetailItem(archiveLabel("Script of Material", "Script of Material"), archiveRaw(record, "Script of Material"));
+  contentHtml += archiveRenderDetailItem(archiveLabel("Writing System", "Writing System"), archiveRaw(record, "Writing System"));
+
+  let digitalHtml = "";
+  digitalHtml += archiveRenderDetailItem(archiveLabel("Still under Copyright", "Still under Copyright"), archiveBoolLabel(archiveRaw(record, "still_under_copyright")));
+  digitalHtml += archiveRenderDetailItem(archiveLabel("Copyright Holder Name", "Copyright Holder Name"), archiveRaw(record, "Copyright Holder Name"), true);
+  digitalHtml += archiveRenderDetailItem(archiveLabel("Copyright Attribution", "Copyright Attribution"), archiveRaw(record, "Copyright Attribution"), true);
+  digitalHtml += archiveRenderDetailItem(archiveLabel("Digital Folder Name", "Digital Folder Name"), archiveRaw(record, "Digital Folder Name"), true);
+  digitalHtml += archiveRenderDetailItem(archiveLabel("Digital Files Name", "Digital Files Name"), archiveRaw(record, "Digital Files Name"), true);
+  digitalHtml += archiveRenderDetailItem(archiveLabel("Creation Date of Digital Files", "Creation Date of Digital Files"), archiveRaw(record, "Creation Date of Digital Files"));
+  digitalHtml += archiveRenderDetailItem(archiveLabel("Format of Digital Files", "Format of Digital Files"), archiveRaw(record, "Format of Digital Files"));
+  digitalHtml += archiveRenderDetailItem(archiveLabel("Number of Digital Files", "Number of Digital Files"), archiveRaw(record, "Number of Digital Files"));
+  digitalHtml += archiveRenderDetailItem(archiveLabel("Colour", "Colour"), archiveRaw(record, "Colour"));
+  digitalHtml += archiveRenderDetailItem(archiveLabel("Resolution", "Resolution"), archiveRaw(record, "Resolution"));
+
+  let metadataHtml = "";
+  metadataHtml += archiveRenderDetailItem(archiveLabel("Archive Recorder", "Archive Recorder"), s.archive_recorder);
+  metadataHtml += archiveRenderDetailItem(archiveLabel("Date of Recording", "Date of Recording"), s.date_of_recording);
+  metadataHtml += archiveRenderDetailItem(archiveLabel("Resource", "Resource"), archiveRaw(record, "Resource"), true);
+  metadataHtml += archiveRenderDetailItem(archiveLabel("Scope", "Scope"), archiveScopeLabel(record.source?.scope));
+  metadataHtml += archiveRenderDetailItem(archiveLabel("Editable", "Editable"), record.source?.is_editable ? archiveLabel("Yes", "Yes") : archiveLabel("No", "No"));
+
+  const materialHasValues = archiveSectionHasValues([
+    s.level,
+    s.original_reference,
+    archiveIdentity(record, "associated_caal_id"),
+    s.original_title,
+    s.english_title,
+    s.content_type,
+    archiveRaw(record, "Number and Type of Original Material"),
+    archiveRaw(record, "Size and Dimensions of Original Material"),
+    archiveRaw(record, "Condition of Original Material")
+  ]);
+
+  const publicationHasValues = archiveSectionHasValues([
+    archiveRaw(record, "Dates of Original Material"),
+    archiveRaw(record, "Author of the Original Material"),
+    archiveRaw(record, "Publisher of the Original Material"),
+    archiveRaw(record, "Editor of the Original Material"),
+    archiveRaw(record, "Volume and Issue Number")
+  ]);
+
+  const contentHasValues = archiveSectionHasValues([
+    archiveRaw(record, "Description"),
+    archiveRaw(record, "Description - alternative language"),
+    archiveRaw(record, "Related Towns and Cities"),
+    archiveRaw(record, "Other Subjects"),
+    archiveRaw(record, "Script of Material"),
+    archiveRaw(record, "Writing System"),
+    ...archiveArrayValue(archiveRaw(record, "Related Countries")),
+    ...archiveArrayValue(archiveRaw(record, "Related Religions")),
+    ...archiveArrayValue(archiveRaw(record, "Related Subjects")),
+    ...archiveArrayValue(archiveRaw(record, "Languages of Material"))
+  ]);
+
+  const digitalHasValues = archiveSectionHasValues([
+    archiveRaw(record, "still_under_copyright"),
+    archiveRaw(record, "Copyright Holder Name"),
+    archiveRaw(record, "Copyright Attribution"),
+    archiveRaw(record, "Digital Folder Name"),
+    archiveRaw(record, "Digital Files Name"),
+    archiveRaw(record, "Creation Date of Digital Files"),
+    archiveRaw(record, "Format of Digital Files"),
+    archiveRaw(record, "Number of Digital Files"),
+    archiveRaw(record, "Colour"),
+    archiveRaw(record, "Resolution")
+  ]);
+
+  const metadataHasValues = archiveSectionHasValues([
+    s.archive_recorder,
+    s.date_of_recording,
+    archiveRaw(record, "Resource"),
+    archiveScopeLabel(record.source?.scope)
+  ]);
+
+  archiveRecordDetails.innerHTML = `
+    <div class="${archiveRecordTitleClass(record)}">
+      <h3>${safeArchiveValue(s.original_title || s.english_title)}</h3>
+      <p>${safeArchiveValue(s.original_reference || archiveIdentity(record, "caal_id"))}</p>
+    </div>
+
+    <div class="panel-actions">
+      <button
+        type="button"
+        class="action-btn"
+        id="archiveEditBtn"
+        ${record.source?.is_editable ? "" : "disabled"}
+      >
+        ${record.source?.is_editable ? archiveLabel("Edit record", "Edit record") : archiveLabel("Read only", "Read only")}
+      </button>
+    </div>
+
+    <div class="group-stack">
+      ${archiveRenderGroupBlock(archiveLabel("Material Details", "Material Details"), materialHtml, materialHasValues)}
+      ${archiveRenderGroupBlock(archiveLabel("Publication Details", "Publication Details"), publicationHtml, publicationHasValues)}
+      ${archiveRenderGroupBlock(archiveLabel("Content", "Content"), contentHtml, contentHasValues)}
+      ${archiveRenderGroupBlock(archiveLabel("Digital Files", "Digital Files"), digitalHtml, digitalHasValues)}
+      ${archiveRenderGroupBlock(archiveLabel("Metadata", "Metadata"), metadataHtml, metadataHasValues)}
+    </div>
+  `;
+
+  const archiveEditBtn = document.getElementById("archiveEditBtn");
+
+  if (archiveEditBtn && record.source?.is_editable) {
+    archiveEditBtn.addEventListener("click", () => {
+      archiveIsEditMode = true;
+      archiveIsDirty = false;
+      archiveRenderRecordDetails(record);
+    });
+  }
+}
+
+// Edit mode scaffolding
+// --------------------------------------------------------
+function archiveRenderEditMode(record) {
+  archiveSelectedRecord = record;
+
+  const r = record.raw || {};
+
+  let materialHtml = "";
+  //materialHtml += archiveRenderTextInput("Level", archiveLabel("Level", "Level"), archiveRaw(record, "Level"));
+   materialHtml += archiveRenderSelect(
+    "Level",
+    archiveLabel("Level", "Level"),
+    "level",
+    archiveRaw(record, "Level")
+  );
+  materialHtml += archiveRenderTextInput("Original Reference", archiveLabel("Original Reference", "Original Reference"), archiveRaw(record, "Original Reference"));
+  materialHtml += archiveRenderReadOnlyItem(archiveLabel("CAAL_ID", "CAAL_ID"), archiveIdentity(record, "caal_id"));
+  materialHtml += archiveRenderTextInput("Associated CAAL_ID", archiveLabel("Associated CAAL_ID", "Associated CAAL_ID"), archiveRaw(record, "Associated CAAL_ID"));
+  materialHtml += archiveRenderTextarea("Original Title", archiveLabel("Original Title", "Original Title"), archiveRaw(record, "Original Title"), true);
+  materialHtml += archiveRenderTextarea("English Title", archiveLabel("English Title", "English Title"), archiveRaw(record, "English Title"), true);
+  materialHtml += archiveRenderSelect("Content Type", archiveLabel("Content Type", "Content Type"),   "content_type", archiveRaw(record, "Content Type") );
+  materialHtml += archiveRenderTextarea("Number and Type of Original Material", archiveLabel("Number and Type of Original Material", "Number and Type of Original Material"), archiveRaw(record, "Number and Type of Original Material"), true);
+  materialHtml += archiveRenderSelect(
+    "Size and Dimensions of Original Material",
+    archiveLabel("Size and Dimensions of Original Material", "Size and Dimensions of Original Material"),
+    "size_dimensions_original_material",
+    archiveRaw(record, "Size and Dimensions of Original Material")
+  );
+  materialHtml += archiveRenderSelect(
+    "Condition of Original Material",
+    archiveLabel("Condition of Original Material", "Condition of Original Material"),
+    "condition_original_material",
+    archiveRaw(record, "Condition of Original Material")
+  );
+
+  let publicationHtml = "";
+  publicationHtml += archiveRenderTextInput("Dates of Original Material", archiveLabel("Dates of Original Material", "Dates of Original Material"), archiveRaw(record, "Dates of Original Material"));
+  publicationHtml += archiveRenderTextarea("Author of the Original Material", archiveLabel("Author of the Original Material", "Author of the Original Material"), archiveRaw(record, "Author of the Original Material"), true);
+  publicationHtml += archiveRenderTextarea("Publisher of the Original Material", archiveLabel("Publisher of the Original Material", "Publisher of the Original Material"), archiveRaw(record, "Publisher of the Original Material"), true);
+  publicationHtml += archiveRenderTextarea("Editor of the Original Material", archiveLabel("Editor of the Original Material", "Editor of the Original Material"), archiveRaw(record, "Editor of the Original Material"), true);
+  publicationHtml += archiveRenderTextInput("Volume and Issue Number", archiveLabel("Volume and Issue Number", "Volume and Issue Number"), archiveRaw(record, "Volume and Issue Number"));
+
+  let contentHtml = "";
+  contentHtml += archiveRenderTextarea("Description", archiveLabel("Description", "Description"), archiveRaw(record, "Description"), true);
+  contentHtml += archiveRenderTextarea("Description - alternative language", archiveLabel("Description - alternative language", "Description - alternative language"), archiveRaw(record, "Description - alternative language"), true);
+  contentHtml += archiveRenderSelect(
+    "Related Countries",
+    archiveLabel("Related Countries", "Related Countries"),
+    "related_country",
+    archiveRaw(record, "Related Countries"),
+    true
+  );
+  contentHtml += archiveRenderTextarea("Related Towns and Cities", archiveLabel("Related Towns and Cities", "Related Towns and Cities"), archiveRaw(record, "Related Towns and Cities"), true);
+  contentHtml += archiveRenderSelect(
+    "Related Religions",
+    archiveLabel("Related Religions", "Related Religions"),
+    "related_religion",
+    archiveRaw(record, "Related Religions"),
+    true
+  );
+  contentHtml += archiveRenderSelect(
+    "Related Subjects",
+    archiveLabel("Related Subjects", "Related Subjects"),
+    "related_subject",
+    archiveRaw(record, "Related Subjects"),
+    true
+  );
+  contentHtml += archiveRenderTextarea("Other Subjects", archiveLabel("Other Subjects", "Other Subjects"), archiveRaw(record, "Other Subjects"), true);
+  contentHtml += archiveRenderTextarea("Languages of Material", archiveLabel("Languages of Material", "Languages of Material"), archiveRaw(record, "Languages of Material"), true);
+  contentHtml += archiveRenderSelect(
+    "Script of Material",
+    archiveLabel("Script of Material", "Script of Material"),
+    "script",
+    archiveRaw(record, "Script of Material")
+  );
+  contentHtml += archiveRenderSelect(
+    "Writing System",
+    archiveLabel("Writing System", "Writing System"),
+    "writing_system",
+    archiveRaw(record, "Writing System")
+  );
+
+  let digitalHtml = "";
+  digitalHtml += archiveRenderTextInput("Copyright Holder Name", archiveLabel("Copyright Holder Name", "Copyright Holder Name"), archiveRaw(record, "Copyright Holder Name"), true);
+  digitalHtml += archiveRenderTextarea("Copyright Attribution", archiveLabel("Copyright Attribution", "Copyright Attribution"), archiveRaw(record, "Copyright Attribution"), true);
+  digitalHtml += archiveRenderTextInput("Digital Folder Name", archiveLabel("Digital Folder Name", "Digital Folder Name"), archiveRaw(record, "Digital Folder Name"), true);
+  digitalHtml += archiveRenderTextarea("Digital Files Name", archiveLabel("Digital Files Name", "Digital Files Name"), archiveRaw(record, "Digital Files Name"), true);
+  digitalHtml += archiveRenderTextInput("Creation Date of Digital Files", archiveLabel("Creation Date of Digital Files", "Creation Date of Digital Files"), archiveRaw(record, "Creation Date of Digital Files"));
+  digitalHtml += archiveRenderSelect(
+    "Format of Digital Files",
+    archiveLabel("Format of Digital Files", "Format of Digital Files"),
+    "format",
+    archiveRaw(record, "Format of Digital Files")
+  );
+  digitalHtml += archiveRenderTextInput("Number of Digital Files", archiveLabel("Number of Digital Files", "Number of Digital Files"), archiveRaw(record, "Number of Digital Files"));
+  digitalHtml += archiveRenderSelect(
+    "Colour",
+    archiveLabel("Colour", "Colour"),
+    "colour",
+    archiveRaw(record, "Colour")
+  );  
+  digitalHtml += archiveRenderTextInput("Resolution", archiveLabel("Resolution", "Resolution"), archiveRaw(record, "Resolution"));
+
+  let metadataHtml = "";
+  metadataHtml += archiveRenderTextInput("Archive Recorder", archiveLabel("Archive Recorder", "Archive Recorder"), archiveRaw(record, "Archive Recorder"));
+  metadataHtml += archiveRenderTextInput("Date of Recording", archiveLabel("Date of Recording", "Date of Recording"), archiveRaw(record, "Date of Recording"));
+  metadataHtml += archiveRenderTextarea("Resource", archiveLabel("Resource", "Resource"), archiveRaw(record, "Resource"), true);
+  metadataHtml += archiveRenderTextInput("Preferred Language", archiveLabel("Preferred Language", "Preferred Language"), archiveRaw(record, "Preferred Language"));
+  metadataHtml += archiveRenderTextInput("Country", archiveLabel("Country", "Country"), archiveRaw(record, "Country"));
+
+  archiveRecordDetails.innerHTML = `
+    <div class="${archiveRecordTitleClass(record)}">
+      <h3>${safeArchiveValue(record?.summary?.original_title)}</h3>
+      <p>${safeArchiveValue(record?.identity?.caal_id || archiveRaw(record, "Original Reference"))}</p>
+    </div>
+
+    <div class="panel-actions">
+      <button type="button" class="action-btn primary" id="archiveSaveBtn">${archiveLabel("Save", "Save")}</button>
+      <button type="button" class="action-btn" id="archiveCancelEditBtn">${archiveLabel("Cancel", "Cancel")}</button>
+    </div>
+
+    <div class="group-stack">
+      ${archiveRenderGroupBlock(archiveLabel("Material Details", "Material Details"), materialHtml, true)}
+      ${archiveRenderGroupBlock(archiveLabel("Publication Details", "Publication Details"), publicationHtml, true)}
+      ${archiveRenderGroupBlock(archiveLabel("Content", "Content"), contentHtml, true)}
+      ${archiveRenderGroupBlock(archiveLabel("Digital Files", "Digital Files"), digitalHtml, true)}
+      ${archiveRenderGroupBlock(archiveLabel("Metadata", "Metadata"), metadataHtml, true)}
+    </div>
+  `;
+
+  const cancelBtn = document.getElementById("archiveCancelEditBtn");
+  const saveBtn = document.getElementById("archiveSaveBtn");
+
+  if (cancelBtn) {
+    cancelBtn.addEventListener("click", () => {
+      if (archivePendingNewRecord && record === archivePendingNewRecord) {
+        archivePendingNewRecord = null;
+        archiveSelectedRecord = null;
+        archiveIsEditMode = false;
+        archiveIsDirty = false;
+        renderArchiveEmptyState();
+        archiveUpdateSelectedResultCard();
+        return;
+      }
+
+      archiveIsEditMode = false;
+      archiveIsDirty = false;
+      archiveRenderRecordDetails(record);
+    });
+  }
+
+  if (saveBtn) {
+    saveBtn.addEventListener("click", async () => {
+      try {
+        const payload = archiveBuildSavePayload();
+        const lang =
+          (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
+          window.appSession?.profile?.preferred_language ||
+          "en";
+
+        const isNewRecord = !record?.identity?.id;
+
+        const url = isNewRecord
+          ? `/api/archive?lang=${encodeURIComponent(lang)}`
+          : `/api/archive/${record.identity.id}?lang=${encodeURIComponent(lang)}`;
+
+        const method = isNewRecord ? "POST" : "PATCH";
+
+        const response = await fetch(url, {
+          method,
+          headers: {
+            "Content-Type": "application/json"
+          },
+          credentials: "include",
+          body: JSON.stringify(payload)
+        });
+
+        const data = await response.json();
+
+        if (!response.ok || !data.ok) {
+          console.error("Archive save response:", data);
+          alert(
+            data.detail ||
+            data.error ||
+            "Archive save failed"
+          );
+          return;
+        }
+
+        archivePendingNewRecord = null;
+        archiveIsEditMode = false;
+        archiveIsDirty = false;
+
+        await loadArchiveRecords(archiveLimit, archiveOffset);
+        archiveJustSavedRecordId = data.record?.identity?.id || null;
+
+        const refreshedRecord = archiveAllRecords.find(
+          (item) => item?.identity?.id === data.record?.identity?.id
+        );
+
+        if (refreshedRecord) {
+          archiveRenderRecordDetails(refreshedRecord);
+          archiveUpdateSelectedResultCard();
+
+          setTimeout(() => {
+            archiveJustSavedRecordId = null;
+            archiveUpdateSelectedResultCard();
+
+            if (archiveSelectedRecord?.identity?.id === refreshedRecord.identity?.id) {
+              archiveRenderRecordDetails(refreshedRecord);
+            }
+          }, 2500);
+        } else {
+          renderArchiveEmptyState();
+        }
+      } catch (error) {
+        console.error("Archive save failed:", error);
+        alert(error.message || "Archive save failed");
+      }
+    });
+  }
+
+  Array.from(archiveRecordDetails.querySelectorAll("input, textarea, select")).forEach((el) => {
+    el.addEventListener("input", () => {
+      archiveIsDirty = true;
+    });
+    el.addEventListener("change", () => {
+      archiveIsDirty = true;
+    });
+  });
+}
+
+
+
 // Events
 // --------------------------------------------------------
 if (toggleArchiveFiltersBtn && archiveFiltersPanel) {
   toggleArchiveFiltersBtn.addEventListener("click", () => {
     const isHidden = archiveFiltersPanel.hidden;
     archiveFiltersPanel.hidden = !isHidden;
-    toggleArchiveFiltersBtn.textContent = isHidden ? "Hide advanced filters" : "Advanced filters";
+    toggleArchiveFiltersBtn.textContent = isHidden
+      ? archiveLabel("Hide advanced filters", "Hide advanced filters")
+      : archiveLabel("Advanced filters", "Advanced filters");
   });
 }
 
@@ -847,153 +1310,126 @@ if (archiveSearch) {
   }
 });
 
-document.addEventListener("app:languageChanged", () => {
-  archiveRenderResultsList(archiveVisibleRecords);
+[showArchiveWorkspace, showArchiveNationalRef, showArchiveAllCaal].forEach((el) => {
+  if (el) {
+    el.addEventListener("change", () => {
+      if (!archiveConfirmLoseChanges()) {
+        el.checked = !el.checked;
+        return;
+      }
 
-  if (archiveSelectedRecord) {
-    archiveRenderRecordDetails(archiveSelectedRecord);
+      archiveOffset = 0;
+      archivePendingNewRecord = null;
+      archiveIsEditMode = false;
+      loadArchiveRecords(archiveLimit, 0);
+    });
   }
 });
 
-// Initial load
-// --------------------------------------------------------
-document.addEventListener("DOMContentLoaded", () => {
-  archiveAllRecords = ARCHIVE_SAMPLE_RECORDS;
-  archiveVisibleRecords = archiveAllRecords;
+document.addEventListener("app:languageChanged", async () => {
+  const selectedId = archiveSelectedRecord?.identity?.id || null;
 
-  const options = archiveCollectFilterOptions(archiveAllRecords);
+  try {
+    await loadArchiveLabels();
+    await loadArchiveLookups();
+  } catch (error) {
+    console.error("Archive labels/lookups refresh failed:", error);
+    archiveLabels = {};
+    archiveLookups = {};
+  }
 
-  archivePopulateMultiSelect(filterArchiveRelatedCountries, options.relatedCountries);
-  archivePopulateMultiSelect(filterArchiveRelatedReligions, options.relatedReligions);
-  archivePopulateMultiSelect(filterArchiveRelatedSubjects, options.relatedSubjects);
-  archivePopulateMultiSelect(filterArchiveContentType, options.contentTypes);
-  archivePopulateMultiSelect(filterArchiveLanguages, options.languages);
+  try {
+    await loadArchiveRecords(archiveLimit, archiveOffset);
 
-  archiveRenderResultsList(archiveVisibleRecords);
+    if (selectedId) {
+      const refreshedRecord = archiveAllRecords.find(
+        (record) => record?.identity?.id === selectedId
+      );
+
+      if (refreshedRecord) {
+        archiveRenderRecordDetails(refreshedRecord);
+      } else {
+        renderArchiveEmptyState();
+      }
+    }
+  } catch (error) {
+    console.error("Archive records refresh failed:", error);
+  }
 });
 
-// Edit mode
-function archiveRenderEditMode(record) {
-  archiveSelectedRecord = record;
+if (archivePreviewCloseBtn) {
+  archivePreviewCloseBtn.addEventListener("click", archiveClosePreview);
+}
 
-  archiveRecordDetails.innerHTML = `
-    <div class="record-title">
-      <h3>${safeValue(record["Original Title"])}</h3>
-      <p>${safeValue(record["Original Reference"] || record["CAAL_ID"])}</p>
-    </div>
-
-    <div class="panel-actions">
-      <button type="button" class="action-btn primary" id="archiveSaveBtn">Save</button>
-      <button type="button" class="action-btn" id="archiveCancelEditBtn">Cancel</button>
-    </div>
-
-    <div class="group-stack">
-
-      ${archiveRenderGroupBlock("Material Details", `
-        ${renderTextInput("archive_Level", "Level", record["Level"])}
-        ${renderTextInput("archive_Original_Reference", "Original Reference", record["Original Reference"])}
-        ${renderTextInput("archive_Associated_CAAL_ID", "Associated CAAL_ID", record["Associated CAAL_ID"])}
-        ${renderTextInput("archive_Original_Title", "Original Title", record["Original Title"], true)}
-        ${renderTextInput("archive_English_Title", "English Title", record["English Title"], true)}
-        ${renderTextInput("archive_Content_Type", "Content Type", record["Content Type"])}
-        ${renderTextInput("archive_Number_and_Type", "Number and Type of Original Material", record["Number and Type of Original Material"], true)}
-        ${renderTextInput("archive_Size_and_Dimensions", "Size and Dimensions of Original Material", record["Size and Dimensions of Original Material"])}
-        ${renderTextInput("archive_Condition", "Condition of Original Material", record["Condition of Original Material"])}
-      `, true)}
-
-      ${archiveRenderGroupBlock("Publication Details", `
-        ${renderTextInput("archive_Dates_Original", "Dates of Original Material", record["Dates of Original Material"])}
-        ${renderTextInput("archive_Author", "Author of the Original Material", record["Author of the Original Material"], true)}
-        ${renderTextInput("archive_Publisher", "Publisher of the Original Material", record["Publisher of the Original Material"], true)}
-        ${renderTextInput("archive_Editor", "Editor of the Original Material", record["Editor of the Original Material"], true)}
-        ${renderTextInput("archive_Volume_Issue", "Volume and Issue Number", record["Volume and Issue Number"])}
-      `, true)}
-
-      ${archiveRenderGroupBlock("Content", `
-        ${renderTextarea("archive_Description", "Description", record["Description"], true)}
-        ${renderTextarea("archive_Description_Alt", "Description - alternative language", record["Description - alternative language"], true)}
-        ${renderTextInput("archive_Related_Countries", "Related Countries", archiveArrayValue(record["Related Countries"]).join(", "), true)}
-        ${renderTextInput("archive_Related_Towns", "Related Towns and Cities", record["Related Towns and Cities"], true)}
-        ${renderTextInput("archive_Related_Religions", "Related Religions", archiveArrayValue(record["Related Religions"]).join(", "), true)}
-        ${renderTextInput("archive_Related_Subjects", "Related Subjects", archiveArrayValue(record["Related Subjects"]).join(", "), true)}
-        ${renderTextInput("archive_Other_Subjects", "Other Subjects", record["Other Subjects"], true)}
-        ${renderTextInput("archive_Languages", "Languages of Material", archiveArrayValue(record["Languages of Material"]).join(", "), true)}
-        ${renderTextInput("archive_Script", "Script of Material", record["Script of Material"])}
-        ${renderTextInput("archive_Writing_System", "Writing System", record["Writing System"])}
-      `, true)}
-
-      ${archiveRenderGroupBlock("Digital Files", `
-        ${renderTextInput("archive_Copyright_YN", "Still under Copyright", record["still_under_copyright"] || record["Still under CopyrightYN"])}
-        ${renderTextInput("archive_Copyright_Holder", "Copyright Holder Name", record["Copyright Holder Name"], true)}
-        ${renderTextInput("archive_Copyright_Attribution", "Copyright Attribution", record["Copyright Attribution"], true)}
-        ${renderTextInput("archive_Digital_Folder", "Digital Folder Name", record["Digital Folder Name"], true)}
-        ${renderTextInput("archive_Digital_Files", "Digital Files Name", record["Digital Files Name"], true)}
-        ${renderTextInput("archive_Creation_Date_Files", "Creation Date of Digital Files", record["Creation Date of Digital Files"])}
-        ${renderTextInput("archive_Format_Files", "Format of Digital Files", record["Format of Digital Files"])}
-        ${renderTextInput("archive_Number_Files", "Number of Digital Files", record["Number of Digital Files"])}
-        ${renderTextInput("archive_Colour", "Colour", record["Colour"])}
-        ${renderTextInput("archive_Resolution", "Resolution", record["Resolution"])}
-      `, true)}
-
-      ${archiveRenderGroupBlock("Metadata", `
-        ${renderTextInput("archive_Recorder", "Archive Recorder", record["Archive Recorder"])}
-        ${renderTextInput("archive_Date_Recording", "Date of Recording", record["Date of Recording"])}
-        ${renderTextInput("archive_Resource", "Resource", record["Resource"], true)}
-      `, true)}
-
-    </div>
-  `;
-
-  document.getElementById("archiveSaveBtn").addEventListener("click", () => {
-    record["Level"] = getInputValue("archive_Level");
-    record["Original Reference"] = getInputValue("archive_Original_Reference");
-    record["Associated CAAL_ID"] = getInputValue("archive_Associated_CAAL_ID");
-    record["Original Title"] = getInputValue("archive_Original_Title");
-    record["English Title"] = getInputValue("archive_English_Title");
-    record["Content Type"] = getInputValue("archive_Content_Type");
-    record["Number and Type of Original Material"] = getInputValue("archive_Number_and_Type");
-    record["Size and Dimensions of Original Material"] = getInputValue("archive_Size_and_Dimensions");
-    record["Condition of Original Material"] = getInputValue("archive_Condition");
-
-    record["Dates of Original Material"] = getInputValue("archive_Dates_Original");
-    record["Author of the Original Material"] = getInputValue("archive_Author");
-    record["Publisher of the Original Material"] = getInputValue("archive_Publisher");
-    record["Editor of the Original Material"] = getInputValue("archive_Editor");
-    record["Volume and Issue Number"] = getInputValue("archive_Volume_Issue");
-
-    record["Description"] = getInputValue("archive_Description");
-    record["Description - alternative language"] = getInputValue("archive_Description_Alt");
-    record["Related Countries"] = splitArchiveMultiValue(getInputValue("archive_Related_Countries"));
-    record["Related Towns and Cities"] = getInputValue("archive_Related_Towns");
-    record["Related Religions"] = splitArchiveMultiValue(getInputValue("archive_Related_Religions"));
-    record["Related Subjects"] = splitArchiveMultiValue(getInputValue("archive_Related_Subjects"));
-    record["Other Subjects"] = getInputValue("archive_Other_Subjects");
-    record["Languages of Material"] = splitArchiveMultiValue(getInputValue("archive_Languages"));
-    record["Script of Material"] = getInputValue("archive_Script");
-    record["Writing System"] = getInputValue("archive_Writing_System");
-
-    record["still_under_copyright"] = getInputValue("archive_Copyright_YN");
-    record["Copyright Holder Name"] = getInputValue("archive_Copyright_Holder");
-    record["Copyright Attribution"] = getInputValue("archive_Copyright_Attribution");
-    record["Digital Folder Name"] = getInputValue("archive_Digital_Folder");
-    record["Digital Files Name"] = getInputValue("archive_Digital_Files");
-    record["Creation Date of Digital Files"] = getInputValue("archive_Creation_Date_Files");
-    record["Format of Digital Files"] = getInputValue("archive_Format_Files");
-    record["Number of Digital Files"] = getInputValue("archive_Number_Files");
-    record["Colour"] = getInputValue("archive_Colour");
-    record["Resolution"] = getInputValue("archive_Resolution");
-
-    record["Archive Recorder"] = getInputValue("archive_Recorder");
-    record["Date of Recording"] = getInputValue("archive_Date_Recording");
-    record["Resource"] = getInputValue("archive_Resource");
-
-    archiveIsEditMode = false;
-    archiveRenderRecordDetails(record);
-    archiveRenderResultsList(archiveVisibleRecords);
+if (archivePreviewModal) {
+  archivePreviewModal.addEventListener("click", (event) => {
+    if (event.target === archivePreviewModal) {
+      archiveClosePreview();
+    }
   });
+}
 
-  document.getElementById("archiveCancelEditBtn").addEventListener("click", () => {
+if (addArchiveBtn) {
+  addArchiveBtn.addEventListener("click", () => {
+    if (!archiveConfirmLoseChanges()) return;
+
+    const newRecord = makeNewBlankArchiveRecord();
+    archivePendingNewRecord = newRecord;
+    archiveSelectedRecord = newRecord;
+    archiveIsEditMode = true;
+    archiveIsDirty = false;
+    archiveRenderRecordDetails(newRecord);
+    archiveUpdateSelectedResultCard();
+  });
+}
+
+// Initial load
+// --------------------------------------------------------
+document.addEventListener("DOMContentLoaded", async () => {
+  const session = await requireSession();
+  if (!session) return;
+
+  if (session.permissions?.can_view_all_caal && allCaalArchiveToggleWrapper) {
+    allCaalArchiveToggleWrapper.hidden = false;
+  }
+
+  try {
+    await loadArchiveLabels();
+    await loadArchiveLookups();
+  } catch (error) {
+    console.error("Archive labels/lookups failed to load:", error);
+    archiveLabels = {};
+    archiveLookups = {};
+  }
+
+  renderArchiveEmptyState();
+
+  try {
+    await loadArchiveRecords(10, 0);
+  } catch (error) {
+    console.error("Archive records failed to load:", error);
+  }
+});
+
+// Pagination
+if (archivePrevBtn) {
+  archivePrevBtn.addEventListener("click", () => {
+    if (!archiveConfirmLoseChanges()) return;
+
+    const newOffset = Math.max(0, archiveOffset - archiveLimit);
+    archivePendingNewRecord = null;
     archiveIsEditMode = false;
-    archiveRenderRecordDetails(record);
+    loadArchiveRecords(archiveLimit, newOffset);
+  });
+}
+
+if (archiveNextBtn) {
+  archiveNextBtn.addEventListener("click", () => {
+    if (!archiveConfirmLoseChanges()) return;
+
+    const newOffset = archiveOffset + archiveLimit;
+    archivePendingNewRecord = null;
+    archiveIsEditMode = false;
+    loadArchiveRecords(archiveLimit, newOffset);
   });
 }

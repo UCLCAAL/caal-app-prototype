@@ -22,9 +22,10 @@
     </div>
 
     <nav class="main-nav" aria-label="Main navigation">
-      <a href="index.html" class="nav-link">Home</a>
+      <a href="index.html" class="nav-link nav-link">Home</a>
       <a href="monuments.html" class="nav-link">Monuments</a>
       <a href="archive.html" class="nav-link nav-link-active">Archive</a>
+      <button type="button" class="action-btn js-logout-btn" data-i18n="logout_button">Log out</button>
     </nav>
 
     <div class="lang-switcher">
@@ -33,6 +34,11 @@
         <option value="en">English</option>
         <option value="ru">Русский</option>
         <option value="zh">中文</option>
+        <option value="kk">Қазақша</option>
+        <option value="ky">Кыргызча</option>
+        <option value="tg">Тоҷикӣ</option>
+        <option value="tk">Türkmençe</option>
+        <option value="uz">O'zbekcha</option>
       </select>
     </div>
   </header>
@@ -40,66 +46,90 @@
   <main class="workspace-shell archive-workspace">
     <aside class="workspace-pane browse-pane">
       <div class="pane-header">
-        <h2>Browse</h2>
-        <p>Search and consult archive records</p>
+        <h2 data-i18n="archive_browse">Browse</h2>
+        <p data-i18n="archive_browse_intro">Search and consult archive records</p>
       </div>
 
       <div class="pane-body">
         <div class="search-box search-box-stacked">
-          <label for="archiveSearch">Search</label>
+          <label for="archiveSearch" data-i18n="archive_search">Search</label>
           <input
             type="text"
             id="archiveSearch"
+            data-i18n-placeholder="archive_search_placeholder"
             placeholder="Search titles, references, descriptions, authors..."
           />
         </div>
 
-        <button type="button" class="action-btn filters-toggle" id="toggleArchiveFiltersBtn">
+        <div class="browse-controls">
+          <label class="browse-checkbox">
+            <input type="checkbox" id="showArchiveWorkspace" checked />
+            <span data-i18n="archive_workspace_records">Workspace records</span>
+          </label>
+
+          <label class="browse-checkbox">
+            <input type="checkbox" id="showArchiveNationalRef" />
+            <span data-i18n="archive_national_records">National CAAL records</span>
+          </label>
+
+          <label class="browse-checkbox" id="allCaalArchiveToggleWrapper" hidden>
+            <input type="checkbox" id="showArchiveAllCaal" />
+            <span data-i18n="archive_all_records">All CAAL records</span>
+          </label>
+        </div>
+
+        <button type="button" class="action-btn filters-toggle" id="toggleArchiveFiltersBtn" data-i18n="archive_advanced_filters">
           Advanced filters
         </button>
 
         <div class="filters-panel" id="archiveFiltersPanel" hidden>
           <div class="filters-grid">
             <div class="filter-group">
-              <label for="filterArchiveRelatedCountries">Related Countries</label>
+              <label for="filterArchiveRelatedCountries" data-i18n="archive_related_countries">Related Countries</label>
               <select id="filterArchiveRelatedCountries" class="form-control" multiple></select>
             </div>
 
             <div class="filter-group">
-              <label for="filterArchiveRelatedReligions">Related Religions</label>
+              <label for="filterArchiveRelatedReligions" data-i18n="archive_related_religions">Related Religions</label>
               <select id="filterArchiveRelatedReligions" class="form-control" multiple></select>
             </div>
 
             <div class="filter-group">
-              <label for="filterArchiveRelatedSubjects">Related Subjects</label>
+              <label for="filterArchiveRelatedSubjects" data-i18n="archive_related_subjects">Related Subjects</label>
               <select id="filterArchiveRelatedSubjects" class="form-control" multiple></select>
             </div>
 
             <div class="filter-group">
-              <label for="filterArchiveContentType">Content Type</label>
+              <label for="filterArchiveContentType" data-i18n="archive_content_type">Content Type</label>
               <select id="filterArchiveContentType" class="form-control" multiple></select>
             </div>
 
             <div class="filter-group">
-              <label for="filterArchiveLanguages">Languages of Material</label>
+              <label for="filterArchiveLanguages" data-i18n="archive_languages_material">Languages of Material</label>
               <select id="filterArchiveLanguages" class="form-control" multiple></select>
             </div>
           </div>
 
           <div class="filters-actions">
-            <button type="button" class="action-btn" id="clearArchiveFiltersBtn">Clear filters</button>
+            <button type="button" class="action-btn" id="clearArchiveFiltersBtn" data-i18n="archive_clear_filters">Clear filters</button>
           </div>
         </div>
 
         <div class="results-panel">
           <div class="results-panel-header">
-            <h3>Results</h3>
+            <h3 data-i18n="archive_results">Results</h3>
             <p id="archiveResultsCount">0 records</p>
+          </div>
+          
+          <div class="pagination-bar">
+            <button id="archivePrevBtn" class="action-btn">Previous</button>
+            <span id="archivePageInfo">Page</span>
+            <button id="archiveNextBtn" class="action-btn">Next</button>
           </div>
 
           <div id="archiveResultsList" class="results-list">
             <div class="results-empty">
-              <p>Results will appear here.</p>
+              <p data-i18n="archive_results_will_appear">Results will appear here.</p>
             </div>
           </div>
         </div>
@@ -108,8 +138,10 @@
 
     <aside class="workspace-pane detail-pane">
       <div class="pane-header">
-        <h2>Record Details</h2>
-        <p>Selected archive record</p>
+        <h2 data-i18n="record_details">Record Details</h2>
+        <p data-i18n="archive_selected_record">Selected archive record</p>
+        <p></p>
+        <button type="button" class="action-btn primary" id="addArchiveBtn">Add record</button>
       </div>
 
       <div class="pane-body" id="archiveRecordDetails">
@@ -119,6 +151,20 @@
       </div>
     </aside>
   </main>
+
+  <!-- hidden popup container -->
+  <div id="archivePreviewModal" class="modal-overlay" hidden>
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <h3 id="archivePreviewTitle">Record preview</h3>
+        <button type="button" class="action-btn" id="archivePreviewCloseBtn">Close</button>
+      </div>
+
+      <div class="modal-body" id="archivePreviewBody">
+        <p>No preview loaded.</p>
+      </div>
+    </div>
+  </div>
 
   <script src="js/shared.js"></script>
   <script src="js/archive.js"></script>

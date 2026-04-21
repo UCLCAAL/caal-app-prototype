@@ -3,82 +3,48 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>CAAL Workspace</title>
+  <title>CAAL Workspace Login</title>
   <link rel="stylesheet" href="style.css" />
 </head>
-<body class="home-page">
-  <!-- =====================================
-       GLOBAL HEADER
-       Smaller lggo for shell
-       ========================================= -->
-  <header class="app-header">
-    <div class="app-brand">
-      <img
-        src="assets/logo_plain.png"
-        alt="CAAL project logo"
-        class="app-brand-logo"
-      />
-      <div class="app-brand-text">
-        <h1>CAAL Workspace</h1>
-        <p>National data entry and browsing environment</p>
+<body class="login-page">
+  <div class="login-shell">
+    <div class="login-card">
+      <div class="login-card-header">
+        <img
+          src="assets/logo_plain.png"
+          alt="CAAL project logo"
+          class="login-logo"
+        />
+        <div class="login-title-wrap">
+          <h1>CAAL Workspace</h1>
+          <p>Sign in to continue</p>
+        </div>
+      </div>
+
+      <div class="login-card-body">
+        <form id="loginForm" class="login-form">
+          <div class="login-form-group">
+            <label for="username">Username</label>
+            <input id="username" name="username" type="text" autocomplete="username" required />
+          </div>
+
+          <div class="login-form-group">
+            <label for="password">Password</label>
+            <input id="password" name="password" type="password" autocomplete="current-password" required />
+          </div>
+
+          <p id="loginError" class="login-error"></p>
+
+          <button type="submit" class="login-submit">Sign in</button>
+        </form>
+
+        <div class="login-help">
+          Use your workspace credentials to access the CAAL archive and monuments tools.
+        </div>
       </div>
     </div>
+  </div>
 
-    <nav class="main-nav" aria-label="Main navigation">
-      <a href="index.html" class="nav-link nav-link-active">Home</a>
-      <a href="monuments.html" class="nav-link">Monuments</a>
-      <a href="archive.html" class="nav-link">Archive</a>
-    </nav>
-
-    <div class="lang-switcher">
-      <label for="languageSelect" data-i18n="language_label">Language</label>
-      <select id="languageSelect">
-        <option value="en">English</option>
-        <option value="ru">Русский</option>
-        <option value="zh">中文</option>
-      </select>
-    </div>
-  </header>
-
-  <!-- ===================================
-       HOME PAGE MAIN CONTENT
-       Uses the larger logo 
-       ========================================= -->
-  <main class="home-main">
-    <section class="home-hero">
-      <img
-        src="assets/logo.png"
-        alt="Central Asian Archaeological Landscapes project logo"
-        class="home-hero-logo"
-      />
-
-      <div class="home-hero-text">
-        <h2 data-i18n="home_workspace_title">CAAL Kazakhstan</h2>
-        <p data-i18n="home_workspace_intro">
-          Browse, consult, and maintain monument and archive records within a
-          shared CAAL environment.
-        </p>
-      </div>
-    </section>
-
-    <section class="home-actions" aria-label="Workspace sections">
-      <a href="monuments.html" class="home-card">
-        <h3>Monuments</h3>
-        <p>
-          Search and browse Monument records, view them on a map, and work on
-          editable national workspace records.
-        </p>
-      </a>
-
-      <a href="archive.html" class="home-card">
-        <h3>Archive</h3>
-        <p>
-          Search and browse Archive records, consult CAAL entries, and
-          work on editable national workspace records.
-        </p>
-      </a>
-    </section>
-  </main>
-<script src="js/shared.js"></script>
+  <script src="js/login.js"></script>
 </body>
 </html>
