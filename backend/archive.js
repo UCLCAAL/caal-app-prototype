@@ -330,6 +330,9 @@ router.patch("/:id", async (req, res) => {
     console.log("Archive PATCH fields:", fields);
     console.log("Archive PATCH values:", values);
     console.log("Archive PATCH setSql:", setSql);
+
+    const userId = currentSession?.user?.user_id ?? null;
+    
     const result = await pool.query(
       `
       UPDATE ${ARCHIVE_TABLE}
