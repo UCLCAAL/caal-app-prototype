@@ -7,9 +7,7 @@
 
   <link
     rel="stylesheet"
-    href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
-    integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY="
-    crossorigin=""
+    href="https://unpkg.com/maplibre-gl/dist/maplibre-gl.css"
   />
 
   <link rel="stylesheet" href="style.css" />
@@ -162,6 +160,12 @@
         </div>
 
         <div class="map-actions">
+          <select id="basemapSelect" class="form-control" style="width: 180px;">
+            <option value="osm">OpenStreetMap</option>
+            <option value="satellite">Satellite</option>
+            <option value="demo">Demo style</option>
+          </select>
+
           <button type="button" id="addPointBtn" class="action-btn primary">
             Add record
           </button>
@@ -195,11 +199,7 @@
 
   </main>
 
-  <script
-    src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
-    integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo="
-    crossorigin=""
-  ></script>
+  <script src="https://unpkg.com/maplibre-gl/dist/maplibre-gl.js"></script>
   <script src="js/shared.js"></script>
   <script src="js/monuments.js"></script>
 </body>

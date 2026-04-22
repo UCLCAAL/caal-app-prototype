@@ -582,6 +582,84 @@ body {
   grid-template-columns: minmax(300px, 28vw) minmax(520px, 1fr);
 }
 
+/* =========================================================
+   ARCHIVE EDIT / ADD MODE VISUAL STATE
+   Darker accent background for the details side only
+   ========================================================= */
+
+#archiveDetailPane.archive-editing {
+  background: #f4f8f6;
+}
+
+#archiveDetailPane.archive-editing .pane-header {
+  background: #e8f0ec;
+  border-bottom-color: #cad8d1;
+}
+
+#archiveDetailPane.archive-editing .record-title {
+  background: #dde9e3;
+  border-color: #aac0b6;
+}
+
+#archiveDetailPane.archive-editing .group-block {
+  background: #e3ede8;
+  border-color: #bfd1c8;
+}
+
+#archiveDetailPane.archive-editing .detail-item {
+  background: #fcfdfd;
+  border-color: #c9d7d1;
+}
+
+.detail-item.section-header {
+  grid-column: 1 / -1;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 0;
+  margin: 0 0 0.35rem;
+}
+
+.detail-item.section-header .detail-section-title {
+  display: block;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: var(--text);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+#archiveDetailPane.archive-editing .form-control {
+  background: #ffffff;
+  border-color: #aebfb8;
+}
+
+#archiveDetailPane.archive-editing .form-control:focus {
+  border-color: #6b9183;
+  box-shadow: 0 0 0 2px rgba(47, 111, 95, 0.16);
+}
+
+#archiveDetailPane.archive-editing .detail-item.section-header {
+  grid-column: 1 / -1;
+  background: transparent !important;
+  border: none !important;
+  box-shadow: none !important;
+  border-radius: 0 !important;
+  padding: 0 !important;
+  margin: 0 0 0.5rem 0 !important;
+}
+
+#archiveDetailPane.archive-editing .detail-item.section-header .detail-section-title {
+  display: block;
+  background: transparent !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: none !important;
+  box-shadow: none !important;
+  color: #2d473d;
+}
+
 @media (max-width: 980px) {
   .archive-workspace {
     grid-template-columns: 1fr;

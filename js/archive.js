@@ -393,6 +393,14 @@ function makeNewBlankArchiveRecord() {
   };
 }
 
+const archiveDetailPane = document.getElementById("archiveDetailPane");
+
+function archiveSyncModeVisualState() {
+  if (!archiveDetailPane) return;
+  archiveDetailPane.classList.toggle("archive-editing", archiveIsEditMode);
+}
+
+
 // Record field helpers
 // --------------------------------------------------------
 function archiveRaw(record, fieldName) {
@@ -607,6 +615,7 @@ async function loadArchiveRecords(limit = 100, offset = 0) {
   archiveVisibleRecords = [];
   archiveSelectedRecord = null;
   archiveIsEditMode = false;
+  archiveSyncModeVisualState();
 
   if (scopes.length === 0) {
     renderArchiveResultsList([]);
@@ -732,10 +741,7 @@ function archiveCollectFilterOptions(records) {
 // Filter logic
 // --------------------------------------------------------
 function archiveMatchesFilters(record, filters) {
-  const relatedCountries = archiveArrayValue(archiveRaw(record, "Related Countries"));
-  const relatedReligions = archiveArrayValue(archiveRaw(record, "Related Religions"));
-  const relatedSubjects = archiveArrayValue(archiveRaw(record, "Related Subjects"));
-  const languages = archiveArrayValue(archiveRaw(record, "Languages of Material"));
+  const fv = record.filter_values || {};
 
   const matchesText =
     !filters.text ||
@@ -743,23 +749,23 @@ function archiveMatchesFilters(record, filters) {
 
   const matchesRelatedCountries =
     filters.relatedCountries.length === 0 ||
-    relatedCountries.some((value) => filters.relatedCountries.includes(value));
+    (fv.related_countries || []).some((value) => filters.relatedCountries.includes(value));
 
   const matchesRelatedReligions =
     filters.relatedReligions.length === 0 ||
-    relatedReligions.some((value) => filters.relatedReligions.includes(value));
+    (fv.related_religions || []).some((value) => filters.relatedReligions.includes(value));
 
   const matchesRelatedSubjects =
     filters.relatedSubjects.length === 0 ||
-    relatedSubjects.some((value) => filters.relatedSubjects.includes(value));
+    (fv.related_subjects || []).some((value) => filters.relatedSubjects.includes(value));
 
   const matchesContentType =
     filters.contentTypes.length === 0 ||
-    filters.contentTypes.includes(record?.summary?.content_type);
+    filters.contentTypes.includes(fv.content_type);
 
   const matchesLanguages =
     filters.languages.length === 0 ||
-    languages.some((value) => filters.languages.includes(value));
+    (fv.languages || []).some((value) => filters.languages.includes(value));
 
   return (
     matchesText &&
@@ -895,6 +901,8 @@ function renderArchiveResultsList(records) {
 function renderArchiveEmptyState() {
   if (!archiveRecordDetails) return;
 
+  archiveSyncModeVisualState();
+
   archiveRecordDetails.innerHTML = `
     <div class="empty-state">
       <p>${archiveLabel("No record selected yet.", "No record selected yet.")}</p>
@@ -926,6 +934,7 @@ function archiveUpdateSelectedResultCard() {
 
 function archiveRenderRecordDetails(record) {
   archiveSelectedRecord = record;
+  archiveSyncModeVisualState();
 
   if (archiveIsEditMode) {
     archiveRenderEditMode(record);

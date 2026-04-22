@@ -27,6 +27,8 @@ const showCaalRecords = document.getElementById("showCaalRecords");
 const resultsList = document.getElementById("resultsList");
 const resultsCount = document.getElementById("resultsCount");
 
+const basemapSelect = document.getElementById("basemapSelect");
+
 // --------------------------------------------------------
 // State
 // --------------------------------------------------------
@@ -40,18 +42,66 @@ let visibleFeatures = [];
 let geoJsonLayer = null;
 
 // --------------------------------------------------------
-// Leaflet map
+// MapLibre map
 // --------------------------------------------------------
 const mapElement = document.getElementById("map");
 let map = null;
+let mapLoaded = false;
 
-if (mapElement && typeof L !== "undefined") {
-  map = L.map("map").setView([48.0, 67.0], 5);
 
-  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-    maxZoom: 19,
-    attribution: "&copy; OpenStreetMap contributors"
-  }).addTo(map);
+function getRasterStyle(tileUrl, attribution, tileSize = 256) {
+  return {
+    version: 8,
+    sources: {
+      "raster-tiles": {
+        type: "raster",
+        tiles: [tileUrl],
+        tileSize
+      }
+    },
+    layers: [
+      {
+        id: "raster-tiles",
+        type: "raster",
+        source: "raster-tiles",
+        minzoom: 0,
+        maxzoom: 19
+      }
+    ],
+    attribution
+  };
+}
+
+function getBasemapStyle(name) {
+  if (name === "osm") {
+    return {
+      version: 8,
+      sources: {
+        osm: {
+          type: "raster",
+          tiles: ["https://tile.openstreetmap.org/{z}/{x}/{y}.png"],
+          tileSize: 256,
+          attribution:
+            '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a>'
+        }
+      },
+      layers: [
+        {
+          id: "osm",
+          type: "raster",
+          source: "osm",
+          minzoom: 0,
+          maxzoom: 19
+        }
+      ]
+    };
+  }
+
+  if (name === "satellite") {
+    return "https://api.maptiler.com/maps/satellite/style.json?key=wZNaIRIPfJrrJLopqgo0";
+  }
+
+  return "https://demotiles.maplibre.org/style.json";
 }
 
 // --------------------------------------------------------
@@ -109,6 +159,32 @@ function populateMultiSelect(selectEl, values) {
     option.textContent = value;
     selectEl.appendChild(option);
   });
+}
+
+// map helper
+let monumentsLayerEventsBound = false;
+
+function bindMonumentLayerEvents() {
+  if (!map || monumentsLayerEventsBound) return;
+
+  map.on("click", "monuments-layer", (e) => {
+    const feature = e.features?.[0];
+    if (!feature) return;
+
+    const props = feature.properties;
+    isEditMode = false;
+    renderRecordDetails(props);
+  });
+
+  map.on("mouseenter", "monuments-layer", () => {
+    map.getCanvas().style.cursor = "pointer";
+  });
+
+  map.on("mouseleave", "monuments-layer", () => {
+    map.getCanvas().style.cursor = "";
+  });
+
+  monumentsLayerEventsBound = true;
 }
 
 // --------------------------------------------------------
@@ -234,17 +310,9 @@ function recordMatchesFilters(properties, filters) {
 // --------------------------------------------------------
 // Map drawing
 // --------------------------------------------------------
-function pointStyle(feature, latlng) {
-  return L.circleMarker(latlng, {
-    radius: 7,
-    weight: 1,
-    opacity: 1,
-    fillOpacity: 0.85
-  });
-}
 
 function drawFeatures(features) {
-  if (!map) return;
+  if (!map || !mapLoaded) return;
 
   const drawableFeatures = features.filter(
     (feature) =>
@@ -253,35 +321,45 @@ function drawFeatures(features) {
       Array.isArray(feature.geometry.coordinates)
   );
 
-  if (geoJsonLayer) {
-    map.removeLayer(geoJsonLayer);
+  const geojson = {
+    type: "FeatureCollection",
+    features: drawableFeatures
+  };
+
+  if (map.getLayer("monuments-layer")) {
+    map.removeLayer("monuments-layer");
+  }
+  if (map.getSource("monuments")) {
+    map.removeSource("monuments");
   }
 
-  geoJsonLayer = L.geoJSON(
-    { type: "FeatureCollection", features: drawableFeatures },
-    {
-      pointToLayer: pointStyle,
-      onEachFeature: (feature, layer) => {
-        const props = feature.properties;
+  map.addSource("monuments", {
+    type: "geojson",
+    data: geojson
+  });
 
-        layer.bindPopup(`
-          <div>
-            <p class="popup-title">${safeValue(props["Primary Name"])}</p>
-            <p class="popup-meta">${safeValue(props["CAAL_ID"])}</p>
-          </div>
-        `);
-
-        layer.on("click", () => {
-          isEditMode = false;
-          renderRecordDetails(props);
-        });
-      }
+  map.addLayer({
+    id: "monuments-layer",
+    type: "circle",
+    source: "monuments",
+    paint: {
+      "circle-radius": 7,
+      "circle-color": "#c62828",
+      "circle-opacity": 0.9,
+      "circle-stroke-width": 1.5,
+      "circle-stroke-color": "#ffffff"
     }
-  ).addTo(map);
+  });
 
-  const bounds = geoJsonLayer.getBounds();
-  if (bounds.isValid()) {
-    map.fitBounds(bounds, { padding: [30, 30] });
+  bindMonumentLayerEvents();
+
+  if (drawableFeatures.length > 0) {
+    const bounds = new maplibregl.LngLatBounds();
+    drawableFeatures.forEach((f) => {
+      const [lng, lat] = f.geometry.coordinates;
+      bounds.extend([lng, lat]);
+    });
+    map.fitBounds(bounds, { padding: 40 });
   }
 }
 
@@ -333,7 +411,10 @@ function renderResultsList(features) {
 
       if (map && feature.geometry && Array.isArray(feature.geometry.coordinates)) {
         const [lng, lat] = feature.geometry.coordinates;
-        map.setView([lat, lng], Math.max(map.getZoom(), 12));
+        map.flyTo({
+          center: [lng, lat],
+          zoom: Math.max(map.getZoom(), 12)
+        });
       }
     });
   });
@@ -1054,7 +1135,12 @@ document.addEventListener("keydown", (event) => {
 if (map) {
   map.on("click", (event) => {
     if (!isAddMode) return;
-    applyMapClickToSelectedRecord(event.latlng);
+
+    const lng = event.lngLat.lng;
+    const lat = event.lngLat.lat;
+
+    applyMapClickToSelectedRecord({ lng, lat });
+
     exitAddMode();
     isEditMode = true;
     renderRecordDetails(selectedProperties);
@@ -1076,45 +1162,75 @@ document.addEventListener("app:languageChanged", () => {
   }
 });
 
+
 // --------------------------------------------------------
 // Initial load
 // --------------------------------------------------------
 updateAddModeUI();
 
-if (map) {
-  fetch("./data/monuments_kaz_sample.geojson")
-    .then((response) => {
-      if (!response.ok) {
-        throw new Error(`Failed to load GeoJSON: ${response.status}`);
-      }
-      return response.json();
-    })
-    .then((geojson) => {
-      allFeatures = geojson.features;
-      visibleFeatures = allFeatures;
+if (mapElement && typeof maplibregl !== "undefined") {
+  const initialBasemap = basemapSelect ? basemapSelect.value : "osm";
 
-      const options = collectFilterOptions(allFeatures);
+  map = new maplibregl.Map({
+    container: "map",
+    style: getBasemapStyle(initialBasemap),
+    center: [67.0, 48.0],
+    zoom: 5
+  });
 
-      populateMultiSelect(filterMonumentType, options.monumentTypes);
-      populateMultiSelect(filterClassification, options.classifications);
-      populateMultiSelect(filterDesignation, options.designations);
-      populateMultiSelect(filterReligion, options.religions);
-      populateMultiSelect(filterCulturalPeriod, options.culturalPeriods);
-      populateMultiSelect(filterCountry, options.countries);
+  map.addControl(new maplibregl.NavigationControl(), "top-right");
 
-      renderResultsList(visibleFeatures);
-      drawFeatures(visibleFeatures);
-      applyLanguage();
-    })
-    .catch((error) => {
-      console.error(error);
-      if (recordDetails) {
-        recordDetails.innerHTML = `
-          <div class="empty-state">
-            <p>Could not load sample data.</p>
-            <p>${error.message}</p>
-          </div>
-        `;
-      }
+  map.on("load", () => {
+    mapLoaded = true;
+
+    fetch("./data/monuments_kaz_sample.geojson")
+      .then((response) => {
+        if (!response.ok) {
+          throw new Error(`Failed to load GeoJSON: ${response.status}`);
+        }
+        return response.json();
+      })
+      .then((geojson) => {
+        allFeatures = geojson.features;
+        visibleFeatures = allFeatures;
+
+        const options = collectFilterOptions(allFeatures);
+
+        populateMultiSelect(filterMonumentType, options.monumentTypes);
+        populateMultiSelect(filterClassification, options.classifications);
+        populateMultiSelect(filterDesignation, options.designations);
+        populateMultiSelect(filterReligion, options.religions);
+        populateMultiSelect(filterCulturalPeriod, options.culturalPeriods);
+        populateMultiSelect(filterCountry, options.countries);
+
+        renderResultsList(visibleFeatures);
+        drawFeatures(visibleFeatures);
+        applyLanguage();
+      })
+      .catch((error) => {
+        console.error(error);
+        if (recordDetails) {
+          recordDetails.innerHTML = `
+            <div class="empty-state">
+              <p>Could not load sample data.</p>
+              <p>${error.message}</p>
+            </div>
+          `;
+        }
+      });
+  });
+
+  if (basemapSelect) {
+    basemapSelect.addEventListener("change", () => {
+      mapLoaded = false;
+      monumentsLayerEventsBound = false;
+
+      map.setStyle(getBasemapStyle(basemapSelect.value));
+
+      map.once("style.load", () => {
+        mapLoaded = true;
+        drawFeatures(visibleFeatures);
+      });
     });
+  }
 }

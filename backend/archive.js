@@ -92,6 +92,14 @@ function blankToNull(value) {
   return value === "" ? null : value;
 }
 
+function splitCanonicalList(value) {
+  if (value == null || value === "") return [];
+  return String(value)
+    .split(", ")
+    .map((s) => s.trim())
+    .filter(Boolean);
+}
+
 function buildArchiveRecord(row, lang) {
   return {
     identity: {
@@ -119,6 +127,15 @@ function buildArchiveRecord(row, lang) {
     source: {
       scope: row.source_scope,
       is_editable: row.is_editable === true || row.is_editable === "true"
+    },
+    filter_values: {
+      related_countries: splitCanonicalList(firstDefined(row["Related Countries"], row.related_countries)),
+      related_religions: splitCanonicalList(firstDefined(row["Related Religions"], row.related_religions)),
+      related_subjects: splitCanonicalList(firstDefined(row["Related Subjects"], row.related_subjects)),
+      languages: splitCanonicalList(firstDefined(row["Languages of Material"], row.languages_of_material)),
+      content_type: firstDefined(row["Content Type"], row.content_type),
+      country: firstDefined(row["Country"], row.country),
+      level: firstDefined(row["Level"], row.level)
     }
   };
 }
