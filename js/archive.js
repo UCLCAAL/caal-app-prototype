@@ -240,6 +240,23 @@ function archiveLookupOptions(lookupName) {
   return Array.isArray(archiveLookups?.[lookupName]) ? archiveLookups[lookupName] : [];
 }
 
+function archiveLookupLabel(lookupName, value) {
+  const options = archiveLookupOptions(lookupName);
+  const match = options.find((item) => String(item.value ?? "") === String(value ?? ""));
+  return match ? (match.label ?? match.value ?? value) : value;
+}
+
+function archiveRenderLookupMultiValue(lookupName, rawValue) {
+  return archiveArrayValue(rawValue)
+    .map((value) => archiveLookupLabel(lookupName, value))
+    .join(", ");
+}
+
+function archiveRenderLookupSingleValue(lookupName, rawValue) {
+  if (!archiveHasRealValue(rawValue)) return rawValue;
+  return archiveLookupLabel(lookupName, rawValue);
+}
+
 function archiveRenderSelect(fieldName, label, lookupName, currentValue, fullWidth = false) {
   const inputId = archiveInputId(fieldName);
   const fullWidthClass = fullWidth ? " full-width" : "";
@@ -263,6 +280,29 @@ function archiveRenderSelect(fieldName, label, lookupName, currentValue, fullWid
   `;
 }
 
+function archiveRenderMultiSelect(fieldName, label, lookupName, currentValue, fullWidth = false) {
+  const inputId = archiveInputId(fieldName);
+  const fullWidthClass = fullWidth ? " full-width" : "";
+  const selectedValues = archiveArrayValue(currentValue).map(String);
+
+  const optionsHtml = archiveLookupOptions(lookupName)
+    .map((item) => {
+      const value = String(item.value ?? "");
+      const selected = selectedValues.includes(value) ? "selected" : "";
+      return `<option value="${value}" ${selected}>${item.label ?? value}</option>`;
+    })
+    .join("");
+
+  return `
+    <div class="detail-item${fullWidthClass}">
+      <label class="detail-label" for="${inputId}">${label}</label>
+      <select id="${inputId}" class="form-control" multiple>
+        ${optionsHtml}
+      </select>
+    </div>
+  `;
+}
+
 function archiveRenderReadOnlyItem(label, value, fullWidth = false) {
   return archiveRenderDetailItem(label, value, fullWidth);
 }
@@ -270,6 +310,16 @@ function archiveRenderReadOnlyItem(label, value, fullWidth = false) {
 function archiveGetInputValue(fieldName) {
   const el = document.getElementById(archiveInputId(fieldName));
   return el ? el.value : "";
+}
+
+function archiveGetMultiSelectValue(fieldName) {
+  const el = document.getElementById(archiveInputId(fieldName));
+  if (!el) return "";
+
+  return Array.from(el.selectedOptions)
+    .map((option) => option.value)
+    .filter(Boolean)
+    .join(", ");
 }
 
 function archiveBuildSavePayload() {
@@ -285,17 +335,17 @@ function archiveBuildSavePayload() {
     "Number and Type of Original Material": archiveGetInputValue("Number and Type of Original Material"),
     "Size and Dimensions of Original Material": archiveGetInputValue("Size and Dimensions of Original Material"),
     "Condition of Original Material": archiveGetInputValue("Condition of Original Material"),
-    "Related Countries": archiveGetInputValue("Related Countries"),
+    "Related Countries": archiveGetMultiSelectValue("Related Countries"),
     "Related Towns and Cities": archiveGetInputValue("Related Towns and Cities"),
-    "Related Religions": archiveGetInputValue("Related Religions"),
-    "Related Subjects": archiveGetInputValue("Related Subjects"),
+    "Related Religions": archiveGetMultiSelectValue("Related Religions"),
+    "Related Subjects": archiveGetMultiSelectValue("Related Subjects"),
     "Other Subjects": archiveGetInputValue("Other Subjects"),
     "Dates of Original Material": archiveGetInputValue("Dates of Original Material"),
     "Author of the Original Material": archiveGetInputValue("Author of the Original Material"),
     "Publisher of the Original Material": archiveGetInputValue("Publisher of the Original Material"),
     "Editor of the Original Material": archiveGetInputValue("Editor of the Original Material"),
     "Volume and Issue Number": archiveGetInputValue("Volume and Issue Number"),
-    "Languages of Material": archiveGetInputValue("Languages of Material"),
+    "Languages of Material": archiveGetMultiSelectValue("Languages of Material"),
     "Script of Material": archiveGetInputValue("Script of Material"),
     "Writing System": archiveGetInputValue("Writing System"),
     "Copyright Holder Name": archiveGetInputValue("Copyright Holder Name"),
@@ -969,12 +1019,29 @@ function archiveRenderDisplayMode(record) {
   let contentHtml = "";
   contentHtml += archiveRenderDetailItem(archiveLabel("Description", "Description"), archiveRaw(record, "Description"), true);
   contentHtml += archiveRenderDetailItem(archiveLabel("Description - alternative language", "Description - alternative language"), archiveRaw(record, "Description - alternative language"), true);
-  contentHtml += archiveRenderDetailItem(archiveLabel("Related Countries", "Related Countries"), archiveArrayValue(archiveRaw(record, "Related Countries")).join(", "), true);
+  contentHtml += archiveRenderDetailItem(
+    archiveLabel("Related Countries", "Related Countries"),
+    archiveRenderLookupMultiValue("related_country", archiveRaw(record, "Related Countries")),
+    true
+  );
   contentHtml += archiveRenderDetailItem(archiveLabel("Related Towns and Cities", "Related Towns and Cities"), archiveRaw(record, "Related Towns and Cities"), true);
-  contentHtml += archiveRenderDetailItem(archiveLabel("Related Religions", "Related Religions"), archiveArrayValue(archiveRaw(record, "Related Religions")).join(", "), true);
-  contentHtml += archiveRenderDetailItem(archiveLabel("Related Subjects", "Related Subjects"), archiveArrayValue(archiveRaw(record, "Related Subjects")).join(", "), true);
+  contentHtml += archiveRenderDetailItem(
+    archiveLabel("Related Religions", "Related Religions"),
+    archiveRenderLookupMultiValue("related_religion", archiveRaw(record, "Related Religions")),
+    true
+  );
+
+  contentHtml += archiveRenderDetailItem(
+    archiveLabel("Related Subjects", "Related Subjects"),
+    archiveRenderLookupMultiValue("related_subject", archiveRaw(record, "Related Subjects")),
+    true
+  );
   contentHtml += archiveRenderDetailItem(archiveLabel("Other Subjects", "Other Subjects"), archiveRaw(record, "Other Subjects"), true);
-  contentHtml += archiveRenderDetailItem(archiveLabel("Languages of Material", "Languages of Material"), archiveArrayValue(archiveRaw(record, "Languages of Material")).join(", "), true);
+  contentHtml += archiveRenderDetailItem(
+    archiveLabel("Languages of Material", "Languages of Material"),
+    archiveRenderLookupMultiValue("language", archiveRaw(record, "Languages of Material")),
+    true
+  );
   contentHtml += archiveRenderDetailItem(archiveLabel("Script of Material", "Script of Material"), archiveRaw(record, "Script of Material"));
   contentHtml += archiveRenderDetailItem(archiveLabel("Writing System", "Writing System"), archiveRaw(record, "Writing System"));
 
@@ -1145,7 +1212,7 @@ function archiveRenderEditMode(record) {
   let contentHtml = "";
   contentHtml += archiveRenderTextarea("Description", archiveLabel("Description", "Description"), archiveRaw(record, "Description"), true);
   contentHtml += archiveRenderTextarea("Description - alternative language", archiveLabel("Description - alternative language", "Description - alternative language"), archiveRaw(record, "Description - alternative language"), true);
-  contentHtml += archiveRenderSelect(
+  contentHtml += archiveRenderMultiSelect(
     "Related Countries",
     archiveLabel("Related Countries", "Related Countries"),
     "related_country",
@@ -1153,14 +1220,14 @@ function archiveRenderEditMode(record) {
     true
   );
   contentHtml += archiveRenderTextarea("Related Towns and Cities", archiveLabel("Related Towns and Cities", "Related Towns and Cities"), archiveRaw(record, "Related Towns and Cities"), true);
-  contentHtml += archiveRenderSelect(
+  contentHtml += archiveRenderMultiSelect(
     "Related Religions",
     archiveLabel("Related Religions", "Related Religions"),
     "related_religion",
     archiveRaw(record, "Related Religions"),
     true
   );
-  contentHtml += archiveRenderSelect(
+  contentHtml += archiveRenderMultiSelect(
     "Related Subjects",
     archiveLabel("Related Subjects", "Related Subjects"),
     "related_subject",
@@ -1168,7 +1235,13 @@ function archiveRenderEditMode(record) {
     true
   );
   contentHtml += archiveRenderTextarea("Other Subjects", archiveLabel("Other Subjects", "Other Subjects"), archiveRaw(record, "Other Subjects"), true);
-  contentHtml += archiveRenderTextarea("Languages of Material", archiveLabel("Languages of Material", "Languages of Material"), archiveRaw(record, "Languages of Material"), true);
+  contentHtml += archiveRenderMultiSelect(
+    "Languages of Material",
+    archiveLabel("Languages of Material", "Languages of Material"),
+    "language",
+    archiveRaw(record, "Languages of Material"),
+    true
+  );
   contentHtml += archiveRenderSelect(
     "Script of Material",
     archiveLabel("Script of Material", "Script of Material"),
