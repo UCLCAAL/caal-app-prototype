@@ -38,6 +38,10 @@ const archivePreviewBody = document.getElementById("archivePreviewBody");
 const archivePreviewCloseBtn = document.getElementById("archivePreviewCloseBtn");
 
 const addArchiveBtn = document.getElementById("addArchiveBtn");
+const archiveActionBar = document.getElementById("archiveActionBar");
+const archiveSaveBtn = document.getElementById("archiveSaveBtn");
+const archiveCancelEditBtn = document.getElementById("archiveCancelEditBtn");
+const archiveEditBtn = document.getElementById("archiveEditBtn");
 
 // API base
 // --------------------------------------------------------
@@ -154,14 +158,14 @@ function archiveSelectedValues(selectEl) {
   return Array.from(selectEl.selectedOptions).map((option) => option.value);
 }
 
-function archivePopulateMultiSelect(selectEl, values) {
+function archivePopulateMultiSelect(selectEl, items) {
   if (!selectEl) return;
   selectEl.innerHTML = "";
 
-  values.forEach((value) => {
+  items.forEach((item) => {
     const option = document.createElement("option");
-    option.value = value;
-    option.textContent = value;
+    option.value = item.value ?? "";
+    option.textContent = item.label ?? item.value ?? "";
     selectEl.appendChild(option);
   });
 }
@@ -195,6 +199,14 @@ function archiveRecordTitleClass(record) {
   }
 
   return "record-title record-title-selected";
+}
+
+function archivePopulateFilterLookups() {
+  archivePopulateMultiSelect(filterArchiveRelatedCountries, archiveLookupOptions("related_country"));
+  archivePopulateMultiSelect(filterArchiveRelatedReligions, archiveLookupOptions("related_religion"));
+  archivePopulateMultiSelect(filterArchiveRelatedSubjects, archiveLookupOptions("related_subject"));
+  archivePopulateMultiSelect(filterArchiveContentType, archiveLookupOptions("content_type"));
+  archivePopulateMultiSelect(filterArchiveLanguages, archiveLookupOptions("language"));
 }
 
 // edit/add helpers
@@ -295,10 +307,7 @@ function archiveBuildSavePayload() {
     "Number of Digital Files": archiveGetInputValue("Number of Digital Files"),
     "Colour": archiveGetInputValue("Colour"),
     "Resolution": archiveGetInputValue("Resolution"),
-    "Archive Recorder": archiveGetInputValue("Archive Recorder"),
-    "Date of Recording": archiveGetInputValue("Date of Recording"),
     "Resource": archiveGetInputValue("Resource"),
-    "Preferred Language": archiveGetInputValue("Preferred Language"),
     "Country": archiveGetInputValue("Country")
   };
 }
@@ -310,6 +319,11 @@ function makeNewBlankArchiveRecord() {
     (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
     window.appSession?.profile?.preferred_language ||
     "en";
+  
+    const sessionCountry = window.appSession?.profile?.country || "";
+    const sessionUsername = window.appSession?.user?.username || "";
+
+    const today = new Date().toISOString().slice(0, 10);
 
   return {
     identity: {
@@ -322,10 +336,10 @@ function makeNewBlankArchiveRecord() {
       english_title: "",
       original_reference: "",
       content_type: "",
-      country: "",
+      country: sessionCountry,
       level: "",
-      archive_recorder: window.appSession?.profile?.username || "",
-      date_of_recording: ""
+      archive_recorder: sessionUsername,
+      date_of_recording: today
     },
     raw: {
       "Level": "",
@@ -363,13 +377,13 @@ function makeNewBlankArchiveRecord() {
       "Number of Digital Files": "",
       "Colour": "",
       "Resolution": "",
-      "Archive Recorder": window.appSession?.profile?.username || "",
-      "Date of Recording": "",
+      "Archive Recorder": sessionUsername,
+      "Date of Recording": today,
       "Resource": "",
       "Preferred Language": lang,
       "still_under_copyright": null,
       "Tstamp": "",
-      "Country": ""
+      "Country": sessionCountry
     },
     source: {
       scope: "workspace",
@@ -526,6 +540,24 @@ window.archiveCanChangeLanguage = function () {
   return true;
 };
 
+// for buttons
+function archiveRenderActionBar({ hasRecord = false, canEdit = false } = {}) {
+  const isEditing = archiveIsEditMode;
+
+  if (addArchiveBtn) addArchiveBtn.hidden = isEditing;
+  if (archiveEditBtn) archiveEditBtn.hidden = isEditing || !hasRecord;
+  if (archiveSaveBtn) archiveSaveBtn.hidden = !isEditing;
+  if (archiveCancelEditBtn) archiveCancelEditBtn.hidden = !isEditing;
+
+  if (archiveEditBtn) {
+    archiveEditBtn.disabled = !canEdit;
+    archiveEditBtn.title = canEdit ? "" : archiveLabel("Read only", "Read only");
+  }
+
+  if (addArchiveBtn) addArchiveBtn.classList.toggle("is-active", !isEditing && !hasRecord);
+  if (archiveEditBtn) archiveEditBtn.classList.toggle("is-active", !isEditing && hasRecord);
+  if (archiveSaveBtn) archiveSaveBtn.classList.toggle("is-active", isEditing);
+}
 
 
 // Labels API
@@ -607,13 +639,13 @@ async function loadArchiveRecords(limit = 100, offset = 0) {
   archiveLimit = data.limit || limit;
   archiveOffset = data.offset || offset;
 
-  const options = archiveCollectFilterOptions(archiveAllRecords);
+  //const options = archiveCollectFilterOptions(archiveAllRecords);
 
-  archivePopulateMultiSelect(filterArchiveRelatedCountries, options.relatedCountries);
-  archivePopulateMultiSelect(filterArchiveRelatedReligions, options.relatedReligions);
-  archivePopulateMultiSelect(filterArchiveRelatedSubjects, options.relatedSubjects);
-  archivePopulateMultiSelect(filterArchiveContentType, options.contentTypes);
-  archivePopulateMultiSelect(filterArchiveLanguages, options.languages);
+  //archivePopulateMultiSelect(filterArchiveRelatedCountries, options.relatedCountries);
+  //archivePopulateMultiSelect(filterArchiveRelatedReligions, options.relatedReligions);
+  //archivePopulateMultiSelect(filterArchiveRelatedSubjects, options.relatedSubjects);
+  //archivePopulateMultiSelect(filterArchiveContentType, options.contentTypes);
+  //archivePopulateMultiSelect(filterArchiveLanguages, options.languages);
 
   archiveVisibleRecords = archiveAllRecords;
   renderArchiveResultsList(archiveVisibleRecords);
@@ -868,6 +900,8 @@ function renderArchiveEmptyState() {
       <p>${archiveLabel("No record selected yet.", "No record selected yet.")}</p>
     </div>
   `;
+
+  archiveRenderActionBar();
 }
 
 function archiveUpdateSelectedResultCard() {
@@ -1007,21 +1041,31 @@ function archiveRenderDisplayMode(record) {
     archiveScopeLabel(record.source?.scope)
   ]);
 
+  const currentUsername = window.appSession?.user?.username;
+  const recordRecorder =
+    record?.summary?.archive_recorder ||
+    record?.raw?.["Archive Recorder"];
+
+  const isOwner =
+    currentUsername != null &&
+    recordRecorder != null &&
+    String(currentUsername) === String(recordRecorder);
+
+  const canEditThisRecord =
+    record.source?.is_editable &&
+    isOwner;
+
+  const statusBadge = canEditThisRecord
+  ? `<span class="record-status-badge record-status-editable">${archiveLabel("Editable", "Editable")}</span>`
+  : `<span class="record-status-badge record-status-readonly">${archiveLabel("Read only", "Read only")}</span>`;
+
   archiveRecordDetails.innerHTML = `
     <div class="${archiveRecordTitleClass(record)}">
-      <h3>${safeArchiveValue(s.original_title || s.english_title)}</h3>
+      <div class="record-title-row">
+        <h3>${safeArchiveValue(s.original_title || s.english_title)}</h3>
+        ${statusBadge}
+      </div>
       <p>${safeArchiveValue(s.original_reference || archiveIdentity(record, "caal_id"))}</p>
-    </div>
-
-    <div class="panel-actions">
-      <button
-        type="button"
-        class="action-btn"
-        id="archiveEditBtn"
-        ${record.source?.is_editable ? "" : "disabled"}
-      >
-        ${record.source?.is_editable ? archiveLabel("Edit record", "Edit record") : archiveLabel("Read only", "Read only")}
-      </button>
     </div>
 
     <div class="group-stack">
@@ -1033,15 +1077,18 @@ function archiveRenderDisplayMode(record) {
     </div>
   `;
 
-  const archiveEditBtn = document.getElementById("archiveEditBtn");
-
-  if (archiveEditBtn && record.source?.is_editable) {
-    archiveEditBtn.addEventListener("click", () => {
+  if (archiveEditBtn) {
+    archiveEditBtn.onclick = () => {
+      if (!canEditThisRecord) return;
       archiveIsEditMode = true;
       archiveIsDirty = false;
       archiveRenderRecordDetails(record);
-    });
+    };
   }
+  archiveRenderActionBar({
+    hasRecord: true,
+    canEdit: canEditThisRecord
+  });
 }
 
 // Edit mode scaffolding
@@ -1148,21 +1195,22 @@ function archiveRenderEditMode(record) {
   digitalHtml += archiveRenderTextInput("Resolution", archiveLabel("Resolution", "Resolution"), archiveRaw(record, "Resolution"));
 
   let metadataHtml = "";
-  metadataHtml += archiveRenderTextInput("Archive Recorder", archiveLabel("Archive Recorder", "Archive Recorder"), archiveRaw(record, "Archive Recorder"));
-  metadataHtml += archiveRenderTextInput("Date of Recording", archiveLabel("Date of Recording", "Date of Recording"), archiveRaw(record, "Date of Recording"));
+    metadataHtml += archiveRenderReadOnlyItem(
+    archiveLabel("Archive Recorder", "Archive Recorder"),
+    archiveRaw(record, "Archive Recorder")
+  );
+  metadataHtml += archiveRenderReadOnlyItem(
+    archiveLabel("Date of Recording", "Date of Recording"),
+    archiveRaw(record, "Date of Recording") || archiveLabel("Set automatically on save", "Set automatically on save")
+  );
   metadataHtml += archiveRenderTextarea("Resource", archiveLabel("Resource", "Resource"), archiveRaw(record, "Resource"), true);
-  metadataHtml += archiveRenderTextInput("Preferred Language", archiveLabel("Preferred Language", "Preferred Language"), archiveRaw(record, "Preferred Language"));
+  metadataHtml += archiveRenderReadOnlyItem(archiveLabel("Preferred Language", "Preferred Language"),archiveRaw(record, "Preferred Language"));
   metadataHtml += archiveRenderTextInput("Country", archiveLabel("Country", "Country"), archiveRaw(record, "Country"));
 
   archiveRecordDetails.innerHTML = `
     <div class="${archiveRecordTitleClass(record)}">
-      <h3>${safeArchiveValue(record?.summary?.original_title)}</h3>
+      <h3>${safeArchiveValue(record?.summary?.original_title || record?.summary?.english_title)}</h3>
       <p>${safeArchiveValue(record?.identity?.caal_id || archiveRaw(record, "Original Reference"))}</p>
-    </div>
-
-    <div class="panel-actions">
-      <button type="button" class="action-btn primary" id="archiveSaveBtn">${archiveLabel("Save", "Save")}</button>
-      <button type="button" class="action-btn" id="archiveCancelEditBtn">${archiveLabel("Cancel", "Cancel")}</button>
     </div>
 
     <div class="group-stack">
@@ -1174,97 +1222,96 @@ function archiveRenderEditMode(record) {
     </div>
   `;
 
-  const cancelBtn = document.getElementById("archiveCancelEditBtn");
-  const saveBtn = document.getElementById("archiveSaveBtn");
+  archiveRenderActionBar({
+    hasRecord: true,
+    canEdit: false
+  });
 
-  if (cancelBtn) {
-    cancelBtn.addEventListener("click", () => {
-      if (archivePendingNewRecord && record === archivePendingNewRecord) {
-        archivePendingNewRecord = null;
-        archiveSelectedRecord = null;
-        archiveIsEditMode = false;
-        archiveIsDirty = false;
-        renderArchiveEmptyState();
-        archiveUpdateSelectedResultCard();
+if (archiveCancelEditBtn) {
+  archiveCancelEditBtn.onclick = () => {
+    if (archivePendingNewRecord && record === archivePendingNewRecord) {
+      archivePendingNewRecord = null;
+      archiveSelectedRecord = null;
+      archiveIsEditMode = false;
+      archiveIsDirty = false;
+      archiveRenderActionBar();
+      renderArchiveEmptyState();
+      archiveUpdateSelectedResultCard();
+      return;
+    }
+
+    archiveIsEditMode = false;
+    archiveIsDirty = false;
+    archiveRenderActionBar();
+    archiveRenderRecordDetails(record);
+  };
+}
+
+if (archiveSaveBtn) {
+  archiveSaveBtn.onclick = async () => {
+    try {
+      const payload = archiveBuildSavePayload();
+      const lang =
+        (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
+        window.appSession?.profile?.preferred_language ||
+        "en";
+
+      const isNewRecord = !record?.identity?.id;
+
+      const url = isNewRecord
+        ? `/api/archive?lang=${encodeURIComponent(lang)}`
+        : `/api/archive/${record.identity.id}?lang=${encodeURIComponent(lang)}`;
+
+      const method = isNewRecord ? "POST" : "PATCH";
+
+      const response = await fetch(url, {
+        method,
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify(payload)
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data.ok) {
+        console.error("Archive save response:", data);
+        alert(data.detail || data.error || "Archive save failed");
         return;
       }
 
+      archivePendingNewRecord = null;
       archiveIsEditMode = false;
       archiveIsDirty = false;
-      archiveRenderRecordDetails(record);
-    });
-  }
+      archiveRenderActionBar();
 
-  if (saveBtn) {
-    saveBtn.addEventListener("click", async () => {
-      try {
-        const payload = archiveBuildSavePayload();
-        const lang =
-          (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
-          window.appSession?.profile?.preferred_language ||
-          "en";
+      await loadArchiveRecords(archiveLimit, archiveOffset);
+      archiveJustSavedRecordId = data.record?.identity?.id || null;
 
-        const isNewRecord = !record?.identity?.id;
+      const refreshedRecord = archiveAllRecords.find(
+        (item) => item?.identity?.id === data.record?.identity?.id
+      );
 
-        const url = isNewRecord
-          ? `/api/archive?lang=${encodeURIComponent(lang)}`
-          : `/api/archive/${record.identity.id}?lang=${encodeURIComponent(lang)}`;
+      if (refreshedRecord) {
+        archiveRenderRecordDetails(refreshedRecord);
+        archiveUpdateSelectedResultCard();
 
-        const method = isNewRecord ? "POST" : "PATCH";
-
-        const response = await fetch(url, {
-          method,
-          headers: {
-            "Content-Type": "application/json"
-          },
-          credentials: "include",
-          body: JSON.stringify(payload)
-        });
-
-        const data = await response.json();
-
-        if (!response.ok || !data.ok) {
-          console.error("Archive save response:", data);
-          alert(
-            data.detail ||
-            data.error ||
-            "Archive save failed"
-          );
-          return;
-        }
-
-        archivePendingNewRecord = null;
-        archiveIsEditMode = false;
-        archiveIsDirty = false;
-
-        await loadArchiveRecords(archiveLimit, archiveOffset);
-        archiveJustSavedRecordId = data.record?.identity?.id || null;
-
-        const refreshedRecord = archiveAllRecords.find(
-          (item) => item?.identity?.id === data.record?.identity?.id
-        );
-
-        if (refreshedRecord) {
-          archiveRenderRecordDetails(refreshedRecord);
+        setTimeout(() => {
+          archiveJustSavedRecordId = null;
           archiveUpdateSelectedResultCard();
 
-          setTimeout(() => {
-            archiveJustSavedRecordId = null;
-            archiveUpdateSelectedResultCard();
-
-            if (archiveSelectedRecord?.identity?.id === refreshedRecord.identity?.id) {
-              archiveRenderRecordDetails(refreshedRecord);
-            }
-          }, 2500);
-        } else {
-          renderArchiveEmptyState();
-        }
-      } catch (error) {
-        console.error("Archive save failed:", error);
-        alert(error.message || "Archive save failed");
+          if (archiveSelectedRecord?.identity?.id === refreshedRecord.identity?.id) {
+            archiveRenderRecordDetails(refreshedRecord);
+          }
+        }, 2500);
+      } else {
+        renderArchiveEmptyState();
       }
-    });
-  }
+    } catch (error) {
+      console.error("Archive save failed:", error);
+      alert(error.message || "Archive save failed");
+    }
+  };
+}
 
   Array.from(archiveRecordDetails.querySelectorAll("input, textarea, select")).forEach((el) => {
     el.addEventListener("input", () => {
@@ -1332,6 +1379,7 @@ document.addEventListener("app:languageChanged", async () => {
   try {
     await loadArchiveLabels();
     await loadArchiveLookups();
+    archivePopulateFilterLookups();
   } catch (error) {
     console.error("Archive labels/lookups refresh failed:", error);
     archiveLabels = {};
@@ -1396,6 +1444,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   try {
     await loadArchiveLabels();
     await loadArchiveLookups();
+    archivePopulateFilterLookups();
   } catch (error) {
     console.error("Archive labels/lookups failed to load:", error);
     archiveLabels = {};

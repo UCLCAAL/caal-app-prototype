@@ -231,10 +231,7 @@ const ARCHIVE_EDITABLE_FIELDS = [
   "Number of Digital Files",
   "Colour",
   "Resolution",
-  "Archive Recorder",
-  "Date of Recording",
   "Resource",
-  "Preferred Language",
   "still_under_copyright",
   "Country"
 ];
@@ -340,15 +337,16 @@ router.patch("/:id", async (req, res) => {
         ${setSql},
         "Tstamp" = NOW()
       WHERE id = $${fields.length + 1}
+        AND created_by_app_user_id = $${fields.length + 2}
       RETURNING *
       `,
-      [...values, id]
+      [...values, id, userId]
     );
 
     if (result.rows.length === 0) {
-      return res.status(404).json({
+      return res.status(403).json({
         ok: false,
-        error: "Archive record not found in workspace table"
+        error: "You can only edit your own records"
       });
     }
 
@@ -398,9 +396,17 @@ router.post("/", async (req, res) => {
 
   const payload = normaliseArchivePayload(req.body || {});
   const appUserId = currentSession?.user?.user_id ?? null;
+  const sessionUsername = currentSession?.user?.username ?? null;
+  const preferredLanguage = currentSession?.profile?.preferred_language ?? null;
+  const sessionCountry = currentSession?.profile?.country ?? null;
 
   payload.created_by_app_user_id = appUserId;
-  console.log("Resolved appUserId:", appUserId);
+  payload["Archive Recorder"] = sessionUsername;
+  payload["Preferred Language"] = preferredLanguage;
+
+  if (!payload["Country"]) {
+    payload["Country"] = sessionCountry;
+  }
 
   const fields = Object.keys(payload);
 

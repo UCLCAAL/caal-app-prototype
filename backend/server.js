@@ -97,7 +97,6 @@ app.get("/monuments.html", (req, res) => {
 // --------------------------------------------------------
 // Start server
 // --------------------------------------------------------
-app.listen(PORT, () => {
-  console.log(`Server listening on http://localhost:${PORT}`);
-  console.log("Serving static files from:", appRoot);
+app.listen(PORT, "0.0.0.0", () => {
+  console.log(`Server listening on port ${PORT}`);
 });

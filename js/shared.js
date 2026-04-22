@@ -7,6 +7,8 @@ let appSession = null;
 //const API_BASE = "http://localhost:3000";
 const API_BASE = "";
 
+const APP_LANG_STORAGE_KEY = "caal_ui_language";
+
 // --------------------------------------------------------
 // Backend session handling
 // --------------------------------------------------------
@@ -73,6 +75,14 @@ window.loadBackendSession = loadBackendSession;
 window.logoutUser = logoutUser;
 window.appSession = appSession;
 
+function initialiseLanguageSelector() {
+  const languageSelect = document.getElementById("languageSelect");
+  if (!languageSelect) return;
+
+  const lang = resolveInitialLanguage();
+  languageSelect.value = lang;
+}
+
 // --------------------------------------------------------
 // Session helpers
 // --------------------------------------------------------
@@ -111,6 +121,33 @@ window.canViewCaal = canViewCaal;
 window.canEditCaal = canEditCaal;
 window.getWorkspaceCode = getWorkspaceCode;
 window.getPreferredLanguageFromSession = getPreferredLanguageFromSession;
+
+// lang persistence
+function getStoredLanguage() {
+  try {
+    return localStorage.getItem(APP_LANG_STORAGE_KEY);
+  } catch (error) {
+    return null;
+  }
+}
+
+function setStoredLanguage(lang) {
+  try {
+    localStorage.setItem(APP_LANG_STORAGE_KEY, lang);
+  } catch (error) {
+    console.warn("Could not store UI language:", error);
+  }
+}
+
+function resolveInitialLanguage() {
+  const stored = getStoredLanguage();
+  if (stored && translations[stored]) return stored;
+
+  const sessionLang = window.appSession?.profile?.preferred_language;
+  if (sessionLang && translations[sessionLang]) return sessionLang;
+
+  return "en";
+}
 
 // --------------------------------------------------------
 // UI translations for shell text only
@@ -253,25 +290,19 @@ const lookupLabels = {
 // --------------------------------------------------------
 // Language persistence
 // --------------------------------------------------------
-const LANGUAGE_STORAGE_KEY = "caal_workspace_language";
 
-function saveLanguagePreference(lang) {
-  localStorage.setItem(LANGUAGE_STORAGE_KEY, lang);
-}
-
-function loadLanguagePreference() {
-  const saved = localStorage.getItem(LANGUAGE_STORAGE_KEY);
-  if (saved && translations[saved]) {
-    return saved;
-  }
-  return "en";
-}
 
 let currentLang = "en";
 const languageSelect = document.getElementById("languageSelect");
 
 function getCurrentLanguage() {
-  return currentLang;
+  const languageSelect = document.getElementById("languageSelect");
+
+  if (languageSelect?.value) {
+    return languageSelect.value;
+  }
+
+  return resolveInitialLanguage();
 }
 
 window.getCurrentLanguage = getCurrentLanguage;
@@ -487,37 +518,29 @@ function applyLanguage() {
 
 if (languageSelect) {
   languageSelect.addEventListener("change", (event) => {
-    const nextLang = event.target.value;
-    const previousLang = currentLang;
+    const lang = event.target.value;
 
-    if (
-      typeof window.archiveCanChangeLanguage === "function" &&
-      !window.archiveCanChangeLanguage()
-    ) {
-      event.target.value = previousLang;
-      return;
-    }
-
-    currentLang = nextLang;
-    saveLanguagePreference(currentLang);
+    currentLang = lang;
+    setStoredLanguage(lang);
     applyLanguage();
   });
 }
-
 
 // --------------------------------------------------------
 // Initial language/session load
 // --------------------------------------------------------
 document.addEventListener("DOMContentLoaded", async () => {
-  const session = await loadBackendSession();
-
-  if (session && session.profile?.preferred_language) {
-    currentLang = session.profile.preferred_language;
-    saveLanguagePreference(currentLang);
-  } else {
-    currentLang = loadLanguagePreference();
-  }
-
+  currentLang = resolveInitialLanguage();
   bindLogoutButtons();
   applyLanguage();
+  initialiseLanguageSelector();
+
+  await loadBackendSession();
+
+  const resolvedAfterSession = resolveInitialLanguage();
+  if (resolvedAfterSession !== currentLang) {
+    currentLang = resolvedAfterSession;
+    applyLanguage();
+    initialiseLanguageSelector();
+  }
 });
