@@ -1546,17 +1546,23 @@ function renderMonumentEditMode(record) {
     </div>
   `;
 
+  function bindMonumentDirtyTracking() {
+    Array.from(
+      document.querySelectorAll(
+        "#monumentDetailPane input, #monumentDetailPane textarea, #monumentDetailPane select"
+      )
+    ).forEach((el) => {
+      el.addEventListener("input", () => {
+        monumentIsDirty = true;
+      });
+
+      el.addEventListener("change", () => {
+        monumentIsDirty = true;
+      });
+    });
+  }
 }
 
-Array.from(document.querySelectorAll("#monumentDetailPane input, #monumentDetailPane textarea, #monumentDetailPane select"))
-  .forEach((el) => {
-    el.addEventListener("input", () => {
-      monumentIsDirty = true;
-    });
-    el.addEventListener("change", () => {
-      monumentIsDirty = true;
-    });
-  });
 
 // --------------------------------------------------------
 // Add mode
