@@ -382,6 +382,8 @@ function mBuildSavePayload() {
     "Cultural Period4": mGetInputValue("Cultural Period4"),
     "Cultural Period5": mGetInputValue("Cultural Period5"),
     "Cultural Period6": mGetInputValue("Cultural Period6"),
+    "Start Date": mGetInputValue("Start Date"),
+    "End Date": mGetInputValue("End Date"),
     "Primary Description": mGetInputValue("Primary Description"),
     "Primary Description (English)": mGetInputValue("Primary Description (English)"),
     "Additional Notes": mGetInputValue("Additional Notes"),
@@ -615,6 +617,83 @@ function buildMonumentQueryParams({ includePaging = true } = {}) {
   }
 
   return params;
+}
+
+// determine dates
+let culturalPeriodLookup = {};
+
+function buildCulturalPeriodLookup() {
+  culturalPeriodLookup = {};
+
+  (monumentLookups.cultural_period || []).forEach((item) => {
+    const key = item.value ?? item.raw?.canonical_value;
+    if (!key) return;
+
+    culturalPeriodLookup[key] = {
+      date_from: item.raw?.date_from,
+      date_to: item.raw?.date_to
+    };
+  });
+}
+
+function recalculateMonumentDates(record) {
+  if (!culturalPeriodLookup || !Object.keys(culturalPeriodLookup).length) return;
+
+  const cpFields = [
+    "Cultural Period1",
+    "Cultural Period2",
+    "Cultural Period3",
+    "Cultural Period4",
+    "Cultural Period5",
+    "Cultural Period6"
+  ];
+
+  const starts = [];
+  const ends = [];
+
+  cpFields.forEach((field) => {
+    const cpValue = String(mRaw(record, field) || "").trim();
+    if (!cpValue) return;
+
+    const row = culturalPeriodLookup[cpValue];
+    if (!row) return;
+
+    const from = Number(row.date_from);
+    const to = Number(row.date_to);
+
+    if (!Number.isNaN(from)) starts.push(from);
+    if (!Number.isNaN(to)) ends.push(to);
+  });
+
+  record.raw["Start Date"] = starts.length ? Math.min(...starts) : null;
+  record.raw["End Date"] = ends.length ? Math.max(...ends) : null;
+
+  // update display values in edit view
+  const startInput = document.getElementById(mInputId("Start Date"));
+  const endInput = document.getElementById(mInputId("End Date"));
+
+  if (startInput) startInput.value = record.raw["Start Date"];
+  if (endInput) endInput.value = record.raw["End Date"];
+}
+
+function wireMonumentCulturalPeriodDateRecalc() {
+  [
+    "Cultural Period1",
+    "Cultural Period2",
+    "Cultural Period3",
+    "Cultural Period4",
+    "Cultural Period5",
+    "Cultural Period6"
+  ].forEach((fieldName) => {
+    const select = document.getElementById(mInputId(fieldName));
+    if (!select) return;
+
+    select.addEventListener("change", (e) => {
+      if (!monumentSelectedRecord?.raw) return;
+      monumentSelectedRecord.raw[fieldName] = e.target.value || "";
+      recalculateMonumentDates(monumentSelectedRecord);
+    });
+  });
 }
 
 // modal helpers
@@ -863,6 +942,7 @@ async function loadMonumentLookups() {
   }
 
   monumentLookups = data.lookups || {};
+  buildCulturalPeriodLookup();
 }
 
 function populateMonumentFilterLookups() {
@@ -1573,9 +1653,9 @@ function renderMonumentEditMode(record) {
           ${mRenderSelect("Cultural Period5", mLabel("Cultural Period5", "Cultural Period5"), "cultural_period", mRaw(record, "Cultural Period5"))}
           ${mRenderSelect("Cultural Period6", mLabel("Cultural Period6", "Cultural Period6"), "cultural_period", mRaw(record, "Cultural Period6"))}
 
-          ${mRenderReadOnlyItem(mLabel("Start Date", "Start Date"), mRaw(record, "Start Date"))}
-          ${mRenderReadOnlyItem(mLabel("End Date", "End Date"), mRaw(record, "End Date"))}
-
+          ${mRenderNumberInput("Start Date", mLabel("Start Date", "Start Date"), mRaw(record, "Start Date"), "1")}
+          ${mRenderNumberInput("End Date", mLabel("End Date", "End Date"), mRaw(record, "End Date"), "1")}
+          
           ${mRenderTextarea("Primary Description", mLabel("Primary Description", "Primary Description"), mRaw(record, "Primary Description"), true)}
           ${mRenderTextarea("Primary Description (English)", mLabel("Primary Description (English)", "Primary Description (English)"), mRaw(record, "Primary Description (English)"), true)}
           ${mRenderTextarea("Additional Notes", mLabel("Additional Notes", "Additional Notes"), mRaw(record, "Additional Notes"), true)}
@@ -1659,6 +1739,12 @@ function renderMonumentEditMode(record) {
     </div>
   `;
 
+const startDateInput = document.getElementById(mInputId("Start Date"));
+const endDateInput = document.getElementById(mInputId("End Date"));
+
+if (startDateInput) startDateInput.readOnly = true;
+if (endDateInput) endDateInput.readOnly = true;
+
   function bindMonumentDirtyTracking() {
     Array.from(
       document.querySelectorAll(
@@ -1675,6 +1761,8 @@ function renderMonumentEditMode(record) {
     });
   }
   bindMonumentDirtyTracking();
+  wireMonumentCulturalPeriodDateRecalc();
+  recalculateMonumentDates(record);
 }
 
 

@@ -165,7 +165,7 @@ function buildGeometry(row) {
   };
 }
 
-function buildMonumentRecord(row, lang, currentAppUserId = null) {
+function buildMonumentRecord(row, lang, currentAppUserId = null, canEditCaal = false) {
   return {
     identity: {
       id: row.id,
@@ -195,9 +195,12 @@ function buildMonumentRecord(row, lang, currentAppUserId = null) {
     source: {
       scope: row.source_scope || "workspace",
       is_editable:
-        (row.source_scope === "workspace") &&
-        currentAppUserId !== null &&
-        Number(row.created_by_app_user_id) === Number(currentAppUserId)
+        canEditCaal ||
+        (
+          row.source_scope === "workspace" &&
+          currentAppUserId !== null &&
+          Number(row.created_by_app_user_id) === Number(currentAppUserId)
+        )
     },
 
     filter_values: {
@@ -540,9 +543,10 @@ router.get("/monuments/map", async (req, res) => {
     console.log("MAP raw rows:", result.rows.length);
 
     const currentAppUserId = currentSession?.user?.user_id ?? null;
+    const canEditCaal = canEditCaalMonuments(currentSession);
 
     const records = result.rows.map((row) =>
-      buildMonumentRecord(row, lang, currentAppUserId)
+      buildMonumentRecord(row, lang, currentAppUserId, canEditCaal)
     );
 
     console.log("MAP final records:", records.length);
@@ -621,8 +625,10 @@ router.get("/monuments", async (req, res) => {
     ]);
     
     const currentAppUserId = currentSession?.user?.user_id ?? null;
+    const canEditCaal = canEditCaalMonuments(currentSession);
+
     const records = dataResult.rows.map((row) =>
-      buildMonumentRecord(row, lang, currentAppUserId)
+      buildMonumentRecord(row, lang, currentAppUserId, canEditCaal)
     );
 
     return res.json({
@@ -644,6 +650,10 @@ router.get("/monuments", async (req, res) => {
     });
   }
 });
+
+function canEditCaalMonuments(session) {
+  return !!session?.permissions?.can_edit_caal;
+}
 
 // ========================================================
 // SAVE HELPERS
@@ -816,7 +826,12 @@ router.post("/monuments", async (req, res) => {
 
     return res.status(201).json({
       ok: true,
-      record: buildMonumentRecord(freshRow, lang, appUserId)
+      record: buildMonumentRecord(
+        freshRow,
+        lang,
+        userId,
+        canEditCaalMonuments(currentSession)
+      )
     });
   } catch (error) {
     console.error("Monument create failed:");
@@ -883,16 +898,31 @@ router.patch("/monuments/:id", async (req, res) => {
 
   try {
     const userId = currentSession?.user?.user_id ?? null;
+    const canEditCaal = canEditCaalMonuments(currentSession);
 
-    const updateSql = `
-      UPDATE ${MONUMENTS_TABLE}
-      SET ${setParts.join(", ")}
-      WHERE id = $${values.length + 1}
-        AND created_by_app_user_id = $${values.length + 2}
-      RETURNING id
-    `;
+    let updateSql;
+    let updateValues;
 
-    const updateResult = await pool.query(updateSql, [...values, id, userId]);
+    if (canEditCaal) {
+      updateSql = `
+        UPDATE ${MONUMENTS_TABLE}
+        SET ${setParts.join(", ")}
+        WHERE id = $${values.length + 1}
+        RETURNING id
+      `;
+      updateValues = [...values, id];
+    } else {
+      updateSql = `
+        UPDATE ${MONUMENTS_TABLE}
+        SET ${setParts.join(", ")}
+        WHERE id = $${values.length + 1}
+          AND created_by_app_user_id = $${values.length + 2}
+        RETURNING id
+      `;
+      updateValues = [...values, id, userId];
+    }
+
+    const updateResult = await pool.query(updateSql, updateValues);
 
     if (updateResult.rows.length === 0) {
       return res.status(403).json({
@@ -906,7 +936,12 @@ router.patch("/monuments/:id", async (req, res) => {
 
     return res.json({
       ok: true,
-      record: buildMonumentRecord(freshRow, lang, userId)
+      record: buildMonumentRecord(
+        freshRow,
+        lang,
+        userId,
+        canEditCaalMonuments(currentSession)
+      )
     });
   } catch (error) {
     console.error("Monument update failed:");
