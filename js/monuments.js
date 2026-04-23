@@ -71,6 +71,8 @@ let monumentPageOffset = 0;
 
 let monumentsIsLoading = false;
 
+let monumentMoveDebounceTimer = null;
+
 // --------------------------------------------------------
 // MapLibre map
 // --------------------------------------------------------
@@ -532,9 +534,11 @@ function updateMonumentActionBar() {
   }
 
   if (monumentEditBtn) {
-    monumentEditBtn.hidden = monumentIsEditMode || !hasSelectedRecord;
-    monumentEditBtn.disabled = !canEditThisRecord;
-  }
+  monumentEditBtn.hidden = monumentIsEditMode || !hasSelectedRecord;
+  monumentEditBtn.disabled = !canEditThisRecord;
+  monumentEditBtn.title = canEditThisRecord ? "" : mLabel("Read only", "Read only");
+  monumentEditBtn.classList.toggle("is-disabled", !canEditThisRecord);
+}
 
   if (monumentSaveBtn) {
     monumentSaveBtn.hidden = !monumentIsEditMode;
@@ -870,6 +874,18 @@ function populateMonumentFilterLookups() {
   mPopulateMultiSelect(filterCountry, mLookupOptions("country"));
 }
 
+function getMapBboxParam() {
+  if (!map) return null;
+
+  const bounds = map.getBounds();
+  return [
+    bounds.getWest(),
+    bounds.getSouth(),
+    bounds.getEast(),
+    bounds.getNorth()
+  ].join(",");
+}
+
 // --------------------------------------------------------
 // Records API
 // --------------------------------------------------------
@@ -883,6 +899,11 @@ async function loadMonumentMapRecords() {
   }
 
   const params = buildMonumentQueryParams({ includePaging: false });
+
+  const bbox = getMapBboxParam();
+  if (bbox) {
+    params.set("bbox", bbox);
+  }
 
   const response = await fetch(`/api/monuments/map?${params.toString()}`, {
     method: "GET",
@@ -1078,13 +1099,32 @@ function monumentRecordToFeature(record) {
     properties: {
       id: record.identity?.id,
       caal_id: record.identity?.caal_id,
-      primary_name: record.summary?.primary_name
+      primary_name: record.summary?.primary_name,
+      source_scope: record.source?.scope || "unknown"
     }
   };
 }
 
 function bindMonumentLayerEvents() {
   if (!map || monumentsLayerEventsBound) return;
+
+  map.on("click", "monument-clusters", (e) => {
+    const features = map.queryRenderedFeatures(e.point, {
+      layers: ["monument-clusters"]
+    });
+
+    const clusterId = features[0]?.properties?.cluster_id;
+    if (clusterId == null) return;
+
+    map.getSource("monuments").getClusterExpansionZoom(clusterId, (err, zoom) => {
+      if (err) return;
+
+      map.easeTo({
+        center: features[0].geometry.coordinates,
+        zoom
+      });
+    });
+  });
 
   map.on("click", "monuments-layer", (e) => {
     const feature = e.features?.[0];
@@ -1136,48 +1176,113 @@ function drawMonumentRecords(records) {
     features
   };
 
-  if (map.getLayer("monuments-layer")) {
-    map.removeLayer("monuments-layer");
-  }
+  // clear old
+  ["monument-clusters", "monument-cluster-count", "monuments-layer"].forEach((layer) => {
+    if (map.getLayer(layer)) map.removeLayer(layer);
+  });
+
   if (map.getSource("monuments")) {
     map.removeSource("monuments");
   }
 
+  // add clustered source
+  const hasNonWorkspace = records.some(
+    (r) => r.source?.scope !== "workspace"
+  );
+
   map.addSource("monuments", {
     type: "geojson",
-    data: geojson
+    data: geojson,
+    cluster: hasNonWorkspace,
+    clusterMaxZoom: 10,
+    clusterRadius: 40
   });
 
+  // cluster circles
   map.addLayer({
-    id: "monuments-layer",
+    id: "monument-clusters",
     type: "circle",
     source: "monuments",
+    filter: ["has", "point_count"],
     paint: {
       "circle-radius": [
-        "interpolate",
-        ["linear"],
-        ["zoom"],
-        4, 3,
-        8, 4.5,
-        12, 6
+        "step",
+        ["get", "point_count"],
+        14, 20, 18, 100, 22, 500, 26
       ],
       "circle-color": "#c95a4a",
-      "circle-opacity": 0.8,
+      "circle-opacity": 0.75,
       "circle-stroke-width": 1,
       "circle-stroke-color": "rgba(255,255,255,0.9)"
     }
   });
 
-  bindMonumentLayerEvents();
+  // cluster labels
+  map.addLayer({
+    id: "monument-cluster-count",
+    type: "symbol",
+    source: "monuments",
+    filter: ["has", "point_count"],
+    layout: {
+      "text-field": ["get", "point_count_abbreviated"],
+      "text-size": 12
+    },
+    paint: {
+      "text-color": "#ffffff"
+    }
+  });
 
-  if (features.length > 0) {
-    const bounds = new maplibregl.LngLatBounds();
-    features.forEach((f) => {
-      const [lng, lat] = f.geometry.coordinates;
-      bounds.extend([lng, lat]);
-    });
-    map.fitBounds(bounds, { padding: 50, duration: 700 });
+  // individual points
+  map.addLayer({
+    id: "monuments-layer",
+    type: "circle",
+    source: "monuments",
+    filter: ["!", ["has", "point_count"]],
+    paint: {
+    "circle-radius": [
+      "interpolate",
+      ["linear"],
+      ["zoom"],
+
+      4,
+      [
+        "case",
+        ["==", ["get", "source_scope"], "workspace"],
+        5,
+        4.5
+      ],
+
+      8,
+      [
+        "case",
+        ["==", ["get", "source_scope"], "workspace"],
+        7,
+        6
+      ],
+
+      12,
+      [
+        "case",
+        ["==", ["get", "source_scope"], "workspace"],
+        9,
+        8
+      ]
+    ],
+
+    "circle-color": [
+      "match",
+      ["get", "source_scope"],
+      "workspace", "#2e7d32",   // green for editable
+      "#c95a4a"                // default for CAAL
+    ],
+
+    "circle-opacity": 0.85,
+    "circle-stroke-width": 1.2,
+    "circle-stroke-color": "rgba(255,255,255,0.9)"
   }
+  });
+
+  bindMonumentLayerEvents();
 }
 
 
@@ -1295,6 +1400,11 @@ function renderMonumentRecordDetails(record) {
 
 function renderMonumentDisplayMode(record) {
   const canEditThisRecord = record.source?.is_editable === true;
+
+  const statusBadge = canEditThisRecord
+    ? `<span class="record-status-badge record-status-editable">${mLabel("Editable", "Editable")}</span>`
+    : `<span class="record-status-badge record-status-readonly">${mLabel("Read only", "Read only")}</span>`;
+    
   const basicHtml = [
     mRenderDetailItem(mLabel("Primary Name", "Primary Name"), mSummary(record, "primary_name"), true),
     mRenderDetailItem(mLabel("Primary Name (English)", "Primary Name (English)"), mSummary(record, "primary_name_english"), true),
@@ -1382,7 +1492,10 @@ function renderMonumentDisplayMode(record) {
 
   recordDetails.innerHTML = `
     <div class="record-title">
-      <h3>${mSafeValue(mSummary(record, "primary_name"))}</h3>
+      <div class="record-title-row">
+        <h3>${mSafeValue(mSummary(record, "primary_name"))}</h3>
+        ${statusBadge}
+      </div>
       <p>${mSafeValue(mIdentity(record, "caal_id"))}</p>
     </div>
 
@@ -1561,6 +1674,7 @@ function renderMonumentEditMode(record) {
       });
     });
   }
+  bindMonumentDirtyTracking();
 }
 
 
@@ -1803,7 +1917,13 @@ async function saveCurrentMonumentRecord() {
       monumentMapRecords.find((item) => item?.identity?.id === data.record?.identity?.id);
 
     if (refreshed) {
+      monumentSelectedRecord = refreshed;
       renderMonumentRecordDetails(refreshed);
+
+      if (map && refreshed.geometry?.coordinates) {
+        drawSelectedMonumentHighlight(refreshed);
+        ensureRecordVisibleOnMap(refreshed);
+      }
     } else {
       renderMonumentEmptyState();
     }
@@ -2098,8 +2218,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     map = new maplibregl.Map({
       container: "map",
       style: getBasemapStyle(initialBasemap),
-      center: [67.0, 48.0],
-      zoom: 5
+      center: [66.9, 48.2],
+      zoom: 4.2
     });
 
     map.addControl(new maplibregl.NavigationControl(), "top-right");
@@ -2134,6 +2254,22 @@ document.addEventListener("DOMContentLoaded", async () => {
       } finally {
         setMonumentsLoading(false);
       }
+    });
+
+    map.on("moveend", () => {
+      if (monumentMoveDebounceTimer) {
+        clearTimeout(monumentMoveDebounceTimer);
+      }
+
+      monumentMoveDebounceTimer = setTimeout(async () => {
+        if (monumentsIsLoading) return;
+
+        try {
+          await loadMonumentMapRecords();
+        } catch (error) {
+          console.error("Failed to reload monuments for bbox:", error);
+        }
+      }, 300); // 300ms debounce
     });
 
     if (basemapSelect) {

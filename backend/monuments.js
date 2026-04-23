@@ -36,6 +36,7 @@ const browseScopeConfig = {
     sql: `
       SELECT
         *,
+        NULL::integer AS created_by_app_user_id,
         'national_ref'::text AS source_scope,
         false AS is_editable
       FROM ui.mv_monuments_caal
@@ -46,6 +47,7 @@ const browseScopeConfig = {
     sql: `
       SELECT
         *,
+        NULL::integer AS created_by_app_user_id,
         'all_caal'::text AS source_scope,
         false AS is_editable
       FROM ui.mv_monuments_caal
@@ -163,7 +165,7 @@ function buildGeometry(row) {
   };
 }
 
-function buildMonumentRecord(row, lang) {
+function buildMonumentRecord(row, lang, currentAppUserId = null) {
   return {
     identity: {
       id: row.id,
@@ -192,7 +194,10 @@ function buildMonumentRecord(row, lang) {
 
     source: {
       scope: row.source_scope || "workspace",
-      is_editable: row.is_editable === true || row.is_editable === "true"
+      is_editable:
+        (row.source_scope === "workspace") &&
+        currentAppUserId !== null &&
+        Number(row.created_by_app_user_id) === Number(currentAppUserId)
     },
 
     filter_values: {
@@ -319,6 +324,57 @@ function buildMonumentFilterWhere(req) {
   };
 }
 
+//bbox helper
+function parseBboxParam(bboxParam) {
+  if (!bboxParam) return null;
+
+  const parts = String(bboxParam)
+    .split(",")
+    .map((v) => Number(v.trim()));
+
+  if (parts.length !== 4 || parts.some((n) => !Number.isFinite(n))) {
+    return null;
+  }
+
+  const [minLng, minLat, maxLng, maxLat] = parts;
+  return { minLng, minLat, maxLng, maxLat };
+}
+
+async function applyCulturalPeriodDatesToPayload(payload) {
+  const periodValues = [
+    payload["Cultural Period1"],
+    payload["Cultural Period2"],
+    payload["Cultural Period3"],
+    payload["Cultural Period4"],
+    payload["Cultural Period5"],
+    payload["Cultural Period6"]
+  ]
+    .filter((value) => value !== null && value !== undefined && value !== "");
+
+  if (periodValues.length === 0) {
+    payload["Start Date"] = null;
+    payload["End Date"] = null;
+    return payload;
+  }
+
+  const result = await pool.query(
+    `
+    SELECT
+      MIN(NULLIF(date_from, '')::integer) AS start_date,
+      MAX(NULLIF(date_to, '')::integer) AS end_date
+    FROM ui.v_lkp_cultural_periods_context
+    WHERE canonical_value = ANY($1)
+    `,
+    [periodValues]
+  );
+
+  payload["Start Date"] = result.rows[0]?.start_date ?? null;
+  payload["End Date"] = result.rows[0]?.end_date ?? null;
+
+  return payload;
+}
+
+
 // ========================================================
 // LOOKUPS
 // ========================================================
@@ -401,17 +457,18 @@ router.get("/lookups/monuments", async (req, res) => {
 router.get("/monuments/map", async (req, res) => {
   console.log("MONUMENTS route session:", JSON.stringify(req.session, null, 2));
   console.log("MONUMENTS query:", req.query);
-  console.log("MONUMENTS appSession:", req.session?.appSession || null);
+
   const currentSession = req.session?.appSession || null;
 
   if (!currentSession) {
     return res.status(401).json({ ok: false, error: "No active session" });
   }
 
+  // --- scopes ---
   const requestedScopes = parseScopes(req.query.scopes);
   const normalizedScopes = normalizeRequestedScopes(requestedScopes);
   const allowedScopes = getAllowedScopes(currentSession);
-  const scopes = normalizedScopes.filter((scope) => allowedScopes.includes(scope));
+  const scopes = normalizedScopes.filter((s) => allowedScopes.includes(s));
 
   if (scopes.length === 0) {
     return res.status(403).json({
@@ -420,28 +477,82 @@ router.get("/monuments/map", async (req, res) => {
     });
   }
 
-  const lang = req.query.lang || currentSession.profile?.preferred_language || "en";
+  const lang =
+    req.query.lang ||
+    currentSession.profile?.preferred_language ||
+    "en";
 
+  // --- base SQL parts ---
+  const unionSql = buildBrowseUnionSql(scopes);
+  const { whereSql, values } = buildMonumentFilterWhere(req);
+
+  // --- bbox handling ---
+  const bbox = parseBboxParam(req.query.bbox);
+
+  const extraClauses = [];
+  const extraValues = [...values];
+  let nextIndex = extraValues.length + 1;
+
+  if (bbox) {
+    extraClauses.push(`
+      "Longitude" BETWEEN $${nextIndex} AND $${nextIndex + 1}
+      AND "Latitude" BETWEEN $${nextIndex + 2} AND $${nextIndex + 3}
+    `);
+
+    extraValues.push(
+      bbox.minLng,
+      bbox.maxLng,
+      bbox.minLat,
+      bbox.maxLat
+    );
+
+    nextIndex += 4;
+  }
+
+  // --- combine WHERE clauses ---
+  let combinedWhere = whereSql;
+
+  if (extraClauses.length) {
+    if (combinedWhere) {
+      combinedWhere += ` AND ${extraClauses.join(" AND ")}`;
+    } else {
+      combinedWhere = `WHERE ${extraClauses.join(" AND ")}`;
+    }
+  }
+
+  // --- final query ---
   try {
-    const unionSql = buildBrowseUnionSql(scopes);
-    const { whereSql, values } = buildMonumentFilterWhere(req);
+    console.log("MAP scopes:", scopes);
+    console.log("MAP where:", combinedWhere);
+    console.log("MAP values:", extraValues);
 
     const dataSql = `
       SELECT *
       FROM (
         ${unionSql}
       ) combined
-      ${whereSql}
+      ${combinedWhere}
+      LIMIT 5000
     `;
 
-    const result = await pool.query(dataSql, values);
-    const records = result.rows.map((row) => buildMonumentRecord(row, lang));
+    const result = await pool.query(dataSql, extraValues);
+
+    console.log("MAP raw rows:", result.rows.length);
+
+    const currentAppUserId = currentSession?.user?.user_id ?? null;
+
+    const records = result.rows.map((row) =>
+      buildMonumentRecord(row, lang, currentAppUserId)
+    );
+
+    console.log("MAP final records:", records.length);
 
     return res.json({
       ok: true,
       total: records.length,
       records
     });
+
   } catch (error) {
     console.error("Monument map fetch failed:");
     console.error(error);
@@ -509,7 +620,10 @@ router.get("/monuments", async (req, res) => {
       pool.query(countSql, values)
     ]);
     
-    const records = dataResult.rows.map((row) => buildMonumentRecord(row, lang));
+    const currentAppUserId = currentSession?.user?.user_id ?? null;
+    const records = dataResult.rows.map((row) =>
+      buildMonumentRecord(row, lang, currentAppUserId)
+    );
 
     return res.json({
       ok: true,
@@ -702,7 +816,7 @@ router.post("/monuments", async (req, res) => {
 
     return res.status(201).json({
       ok: true,
-      record: buildMonumentRecord(freshRow, lang)
+      record: buildMonumentRecord(freshRow, lang, appUserId)
     });
   } catch (error) {
     console.error("Monument create failed:");
@@ -792,7 +906,7 @@ router.patch("/monuments/:id", async (req, res) => {
 
     return res.json({
       ok: true,
-      record: buildMonumentRecord(freshRow, lang)
+      record: buildMonumentRecord(freshRow, lang, userId)
     });
   } catch (error) {
     console.error("Monument update failed:");
