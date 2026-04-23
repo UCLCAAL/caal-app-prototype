@@ -1,6 +1,7 @@
 const path = require("path");
 const express = require("express");
 const session = require("express-session");
+const pgSession = require("connect-pg-simple")(session);
 const cors = require("cors");
 require("dotenv").config();
 
@@ -29,6 +30,10 @@ app.use(express.json());
 app.set("trust proxy", 1);
 
 app.use(session({
+  store: new pgSession({
+    pool,
+    tableName: "user_sessions"
+  }),
   secret: process.env.SESSION_SECRET || "change-this-for-production",
   resave: false,
   saveUninitialized: false,
