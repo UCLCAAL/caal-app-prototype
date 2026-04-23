@@ -26,6 +26,8 @@ app.use(cors({
 
 app.use(express.json());
 
+app.set("trust proxy", 1);
+
 app.use(session({
   secret: process.env.SESSION_SECRET || "change-this-for-production",
   resave: false,
@@ -33,7 +35,7 @@ app.use(session({
   cookie: {
     httpOnly: true,
     sameSite: "lax",
-    secure: false
+    secure: process.env.NODE_ENV === "production"
   }
 }));
 
