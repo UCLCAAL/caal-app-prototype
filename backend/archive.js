@@ -141,6 +141,7 @@ function buildArchiveRecord(row, lang) {
 }
 
 router.get("/", async (req, res) => {
+  console.log("ARCHIVE route session:", JSON.stringify(req.session, null, 2));
   const currentSession = req.session?.appSession || null;
 
   if (!currentSession) {

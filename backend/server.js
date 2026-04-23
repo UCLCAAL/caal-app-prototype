@@ -41,6 +41,10 @@ app.use(session({
 
 app.use((req, res, next) => {
   console.log("Incoming request:", req.method, req.url);
+  console.log("Cookie header:", req.headers.cookie || "[none]");
+  console.log("Session ID:", req.sessionID || "[no session id]");
+  console.log("Session keys:", req.session ? Object.keys(req.session) : "[no req.session]");
+  console.log("appSession present:", !!req.session?.appSession);
   next();
 });
 

@@ -1821,6 +1821,7 @@ function cancelCurrentMonumentEdit() {
     clearPendingPickPoint();
     monumentSelectedRecord = null;
     monumentIsEditMode = false;
+    updateMonumentActionBar();
     monumentSyncModeVisualState();
     monumentIsDirty = false;
     monumentIsAddMode = false;

@@ -335,6 +335,9 @@ async function fetchLookupRows(sql, lang) {
 }
 
 router.get("/lookups/monuments", async (req, res) => {
+  console.log("MONUMENTS route session:", JSON.stringify(req.session, null, 2));
+  console.log("MONUMENTS query:", req.query);
+  console.log("MONUMENTS appSession:", req.session?.appSession || null);
   const currentSession = req.session?.appSession || null;
 
   if (!currentSession) {
@@ -396,6 +399,9 @@ router.get("/lookups/monuments", async (req, res) => {
 });
 
 router.get("/monuments/map", async (req, res) => {
+  console.log("MONUMENTS route session:", JSON.stringify(req.session, null, 2));
+  console.log("MONUMENTS query:", req.query);
+  console.log("MONUMENTS appSession:", req.session?.appSession || null);
   const currentSession = req.session?.appSession || null;
 
   if (!currentSession) {
