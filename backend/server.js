@@ -9,6 +9,8 @@ const authRoutes = require("./auth");
 const uiRoutes = require("./ui");
 const lookupRoutes = require("./lookups");
 const archiveRoutes = require("./archive");
+const monumentsRoutes = require("./monuments");
+
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -71,6 +73,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/ui", uiRoutes);
 app.use("/api/lookups", lookupRoutes);
 app.use("/api/archive", archiveRoutes);
+app.use("/api", monumentsRoutes);
 
 // --------------------------------------------------------
 // Static frontend

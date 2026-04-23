@@ -71,6 +71,9 @@
       </div>
     
       <div class="pane-body">
+        <div id="monumentsLoadingIndicator" class="loading-indicator" hidden>
+          <span class="spinner"></span>
+        </div>
         <div class="search-box search-box-stacked">
           <label for="siteSearch">Search</label>
           <input
@@ -83,12 +86,17 @@
         <div class="browse-controls">
           <label class="browse-checkbox">
             <input type="checkbox" id="showWorkspaceRecords" checked />
-            <span>Workspace records</span>
+            <span data-i18n="monuments_workspace_records">Workspace records</span>
           </label>
-    
+
           <label class="browse-checkbox">
-            <input type="checkbox" id="showCaalRecords" checked />
-            <span>CAAL records</span>
+            <input type="checkbox" id="showNationalRecords" checked />
+            <span data-i18n="monuments_national_records">National CAAL records</span>
+          </label>
+
+          <label class="browse-checkbox" id="allCaalMonumentsToggleWrapper" hidden>
+            <input type="checkbox" id="showAllCaalRecords" />
+            <span data-i18n="monuments_all_records">All CAAL records</span>
           </label>
         </div>
     
@@ -98,6 +106,10 @@
     
         <div class="filters-panel" id="filtersPanel" hidden>
           <div class="filters-grid">
+              <div class="filters-actions">
+                <button type="button" class="action-btn" id="clearFiltersBtn">Clear filters</button>
+              </div>
+            </div>
             <div class="filter-group">
               <label for="filterMonumentType">Monument Type</label>
               <select id="filterMonumentType" class="form-control" multiple></select>
@@ -129,15 +141,18 @@
             </div>
           </div>
     
-          <div class="filters-actions">
-            <button type="button" class="action-btn" id="clearFiltersBtn">Clear filters</button>
-          </div>
-        </div>
+         
     
         <div class="results-panel">
           <div class="results-panel-header">
             <h3>Results</h3>
             <p id="resultsCount">0 records</p>
+          </div>
+
+          <div class="pagination-bar">
+            <button id="monumentPrevBtn" class="action-btn">Previous</button>
+            <span id="monumentPageInfo">Page 1 of 1</span>
+            <button id="monumentNextBtn" class="action-btn">Next</button>
           </div>
     
           <div id="resultsList" class="results-list">
@@ -160,18 +175,14 @@
         </div>
 
         <div class="map-actions">
+          <div id="monumentMapActionBar" class="map-action-bar" hidden>
+          <button type="button" class="action-btn" id="monumentPickPointBtn">Select point on map</button>
+          <button type="button" class="action-btn" id="monumentCancelPickPointBtn" hidden>Cancel point selection</button>
+        </div>
           <select id="basemapSelect" class="form-control" style="width: 180px;">
             <option value="osm">OpenStreetMap</option>
             <option value="satellite">Satellite</option>
-            <option value="demo">Demo style</option>
           </select>
-
-          <button type="button" id="addPointBtn" class="action-btn primary">
-            Add record
-          </button>
-          <button type="button" id="cancelAddBtn" class="action-btn" hidden>
-            Cancel add
-          </button>
         </div>
       </div>
 
@@ -184,10 +195,17 @@
          RIGHT PANE: ACTIVE RECORD
          Keeps current recordDetails so the existing JS can keep working
          ===================================== -->
-    <aside class="workspace-pane detail-pane" id="sidePanel">
+    <aside class="workspace-pane detail-pane" id="monumentDetailPane">
       <div class="pane-header">
         <h2 data-i18n="record_details">Record Details</h2>
         <p>Selected monument record</p>
+        <p></p>
+        <div class="detail-action-bar" id="monumentsActionBar">
+          <button type="button" class="action-btn primary" id="addMonumentBtn">Add record</button>
+          <button type="button" class="action-btn" id="monumentEditBtn" hidden>Edit record</button>
+          <button type="button" class="action-btn primary" id="monumentSaveBtn" hidden>Save</button>
+          <button type="button" class="action-btn" id="monumentCancelEditBtn" hidden>Cancel</button>
+        </div>
       </div>
 
       <div class="pane-body" id="recordDetails">
@@ -198,6 +216,20 @@
     </aside>
 
   </main>
+
+  <!-- hidden popup container -->
+  <div id="monumentPreviewModal" class="modal-overlay" hidden>
+  <div class="modal-dialog">
+    <div class="modal-header">
+      <h3 id="monumentPreviewTitle">Monument preview</h3>
+      <button type="button" class="action-btn" id="monumentPreviewCloseBtn">Close</button>
+    </div>
+
+    <div class="modal-body" id="monumentPreviewBody">
+      <p>No preview loaded.</p>
+    </div>
+  </div>
+</div>
 
   <script src="https://unpkg.com/maplibre-gl/dist/maplibre-gl.js"></script>
   <script src="js/shared.js"></script>

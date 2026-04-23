@@ -1,5 +1,6 @@
 // ========================================================
 // MONUMENTS PAGE LOGIC
+// Backend-driven MVP
 // ========================================================
 
 // --------------------------------------------------------
@@ -7,8 +8,6 @@
 // --------------------------------------------------------
 const recordDetails = document.getElementById("recordDetails");
 const siteSearch = document.getElementById("siteSearch");
-const addPointBtn = document.getElementById("addPointBtn");
-const cancelAddBtn = document.getElementById("cancelAddBtn");
 
 const toggleFiltersBtn = document.getElementById("toggleFiltersBtn");
 const filtersPanel = document.getElementById("filtersPanel");
@@ -21,25 +20,56 @@ const filterReligion = document.getElementById("filterReligion");
 const filterCulturalPeriod = document.getElementById("filterCulturalPeriod");
 const filterCountry = document.getElementById("filterCountry");
 
-const showWorkspaceRecords = document.getElementById("showWorkspaceRecords");
-const showCaalRecords = document.getElementById("showCaalRecords");
-
 const resultsList = document.getElementById("resultsList");
 const resultsCount = document.getElementById("resultsCount");
 
 const basemapSelect = document.getElementById("basemapSelect");
 
+const showWorkspaceRecords = document.getElementById("showWorkspaceRecords");
+const showNationalRecords = document.getElementById("showNationalRecords");
+const showAllCaalRecords = document.getElementById("showAllCaalRecords");
+const allCaalMonumentsToggleWrapper = document.getElementById("allCaalMonumentsToggleWrapper");
+//buttons
+const monumentPrevBtn = document.getElementById("monumentPrevBtn");
+const monumentNextBtn = document.getElementById("monumentNextBtn");
+const monumentPageInfo = document.getElementById("monumentPageInfo");
+
+const monumentsActionBar = document.getElementById("monumentsActionBar");
+const addMonumentBtn = document.getElementById("addMonumentBtn");
+const monumentEditBtn = document.getElementById("monumentEditBtn");
+const monumentSaveBtn = document.getElementById("monumentSaveBtn");
+const monumentCancelEditBtn = document.getElementById("monumentCancelEditBtn");
+
+const monumentMapActionBar = document.getElementById("monumentMapActionBar");
+const monumentPickPointBtn = document.getElementById("monumentPickPointBtn");
+const monumentCancelPickPointBtn = document.getElementById("monumentCancelPickPointBtn");
+// modal
+const monumentPreviewModal = document.getElementById("monumentPreviewModal");
+const monumentPreviewTitle = document.getElementById("monumentPreviewTitle");
+const monumentPreviewBody = document.getElementById("monumentPreviewBody");
+const monumentPreviewCloseBtn = document.getElementById("monumentPreviewCloseBtn");
+
+
 // --------------------------------------------------------
 // State
 // --------------------------------------------------------
-let selectedProperties = null;
-let isEditMode = false;
-let isAddMode = false;
-let pendingNewFeature = null;
+let monumentMapRecords = [];
+let monumentListRecords = [];
+let monumentSelectedRecord = null;
 
-let allFeatures = [];
-let visibleFeatures = [];
-let geoJsonLayer = null;
+let monumentIsEditMode = false;
+let monumentIsAddMode = false;
+let monumentPendingNewRecord = null;
+let monumentIsDirty = false;
+
+let monumentLabels = {};
+let monumentLookups = {};
+
+let monumentTotalCount = 0;
+let monumentPageLimit = 100;
+let monumentPageOffset = 0;
+
+let monumentsIsLoading = false;
 
 // --------------------------------------------------------
 // MapLibre map
@@ -47,31 +77,966 @@ let geoJsonLayer = null;
 const mapElement = document.getElementById("map");
 let map = null;
 let mapLoaded = false;
+let monumentsLayerEventsBound = false;
 
+function drawSelectedMonumentHighlight(record) {
+  if (!map || !mapLoaded || !record?.geometry?.coordinates) return;
 
-function getRasterStyle(tileUrl, attribution, tileSize = 256) {
-  return {
-    version: 8,
-    sources: {
-      "raster-tiles": {
-        type: "raster",
-        tiles: [tileUrl],
-        tileSize
-      }
-    },
-    layers: [
+  const feature = {
+    type: "FeatureCollection",
+    features: [
       {
-        id: "raster-tiles",
-        type: "raster",
-        source: "raster-tiles",
-        minzoom: 0,
-        maxzoom: 19
+        type: "Feature",
+        geometry: record.geometry,
+        properties: {
+          id: record.identity?.id,
+          caal_id: record.identity?.caal_id,
+          primary_name: record.summary?.primary_name
+        }
       }
-    ],
-    attribution
+    ]
+  };
+
+  if (map.getLayer("monument-selected-ring")) {
+    map.removeLayer("monument-selected-ring");
+  }
+  if (map.getSource("monument-selected")) {
+    map.removeSource("monument-selected");
+  }
+
+  map.addSource("monument-selected", {
+    type: "geojson",
+    data: feature
+  });
+
+  map.addLayer({
+    id: "monument-selected-ring",
+    type: "circle",
+    source: "monument-selected",
+    paint: {
+      "circle-radius": [
+        "interpolate",
+        ["linear"],
+        ["zoom"],
+        4, 7,
+        8, 9,
+        12, 11
+      ],
+      "circle-color": "rgba(0,0,0,0)",
+      "circle-stroke-width": 2,
+      "circle-stroke-color": "#ffd54f"
+    }
+  });
+}
+
+function ensureRecordVisibleOnMap(record) {
+  if (!map || !record?.geometry?.coordinates) return;
+
+  const [lng, lat] = record.geometry.coordinates;
+  const bounds = map.getBounds();
+  const isSatellite = basemapSelect?.value === "satellite";
+  const targetZoom = isSatellite ? 4.5 : 5;
+
+  if (!bounds.contains([lng, lat])) {
+    map.easeTo({
+      center: [lng, lat],
+      zoom: Math.max(map.getZoom(), targetZoom),
+      duration: 500
+    });
+  }
+}
+
+function drawPendingPickPoint(latlng) {
+  if (!map || !mapLoaded) return;
+
+  const lng = Number(latlng.lng);
+  const lat = Number(latlng.lat);
+
+  const feature = {
+    type: "FeatureCollection",
+    features: [
+      {
+        type: "Feature",
+        geometry: {
+          type: "Point",
+          coordinates: [lng, lat]
+        },
+        properties: {}
+      }
+    ]
+  };
+
+  if (map.getLayer("monument-pick-point")) {
+    map.removeLayer("monument-pick-point");
+  }
+  if (map.getSource("monument-pick-point")) {
+    map.removeSource("monument-pick-point");
+  }
+
+  map.addSource("monument-pick-point", {
+    type: "geojson",
+    data: feature
+  });
+
+  map.addLayer({
+    id: "monument-pick-point",
+    type: "circle",
+    source: "monument-pick-point",
+    paint: {
+      "circle-radius": 7,
+      "circle-color": "#2a9d8f",
+      "circle-opacity": 0.95,
+      "circle-stroke-width": 2,
+      "circle-stroke-color": "#ffffff"
+    }
+  });
+}
+
+function clearPendingPickPoint() {
+  if (!map) return;
+
+  if (map.getLayer("monument-pick-point")) {
+    map.removeLayer("monument-pick-point");
+  }
+  if (map.getSource("monument-pick-point")) {
+    map.removeSource("monument-pick-point");
+  }
+}
+
+// --------------------------------------------------------
+// Helpers
+// --------------------------------------------------------
+const monumentDetailPane = document.getElementById("monumentDetailPane");
+
+function monumentSyncModeVisualState() {
+  if (!monumentDetailPane) return;
+  monumentDetailPane.classList.toggle("monument-editing", monumentIsEditMode);
+}
+
+function setMonumentsLoading(isLoading, message = "") {
+  monumentsIsLoading = isLoading;
+
+  const indicator = document.getElementById("monumentsLoadingIndicator");
+  const browsePane = document.getElementById("browse-pane");
+  const mapPane = document.getElementById("map-pane");
+  const detailPane = document.getElementById("detail-pane");
+
+  console.log("setMonumentsLoading:", isLoading, message);
+
+  if (indicator) {
+    indicator.hidden = !isLoading;
+    indicator.innerHTML = isLoading
+      ? `<span class="spinner"></span><span>${message || "Loading..."}</span>`
+      : "";
+  }
+
+  [browsePane, mapPane, detailPane].forEach((el) => {
+    if (el) {
+      if (isLoading) {
+        el.classList.add("is-loading");
+      } else {
+        el.classList.remove("is-loading");
+      }
+    }
+  });
+}
+
+function mLabel(name, fallback = null) {
+  return monumentLabels[name] || fallback || name;
+}
+
+function mSafeValue(value) {
+  if (value === null || value === undefined || value === "") {
+    return mLabel("Not recorded", "Not recorded");
+  }
+  return value;
+}
+
+function mHasValue(value) {
+  return value !== null && value !== undefined && value !== "";
+}
+
+function mNormalizeSearchText(value) {
+  if (!mHasValue(value)) return "";
+  return String(value).toLowerCase();
+}
+
+function mUniqueSorted(values) {
+  return Array.from(new Set(values.filter(mHasValue))).sort((a, b) =>
+    String(a).localeCompare(String(b))
+  );
+}
+
+function mSelectedValues(selectEl) {
+  if (!selectEl) return [];
+  return Array.from(selectEl.selectedOptions).map((option) => option.value);
+}
+
+function mPopulateMultiSelect(selectEl, items) {
+  if (!selectEl) return;
+  selectEl.innerHTML = "";
+
+  items.forEach((item) => {
+    const option = document.createElement("option");
+    option.value = item.value ?? "";
+    option.textContent = item.label ?? item.value ?? "";
+    selectEl.appendChild(option);
+  });
+}
+
+function mInputId(fieldName) {
+  return "mon_fld_" + fieldName.replace(/[^a-zA-Z0-9]+/g, "_");
+}
+
+function mGetInputValue(fieldName) {
+  const el = document.getElementById(mInputId(fieldName));
+  return el ? el.value : "";
+}
+
+function mRaw(record, fieldName) {
+  return record?.raw?.[fieldName] ?? null;
+}
+
+function mSummary(record, fieldName) {
+  return record?.summary?.[fieldName] ?? null;
+}
+
+function mIdentity(record, fieldName) {
+  return record?.identity?.[fieldName] ?? null;
+}
+
+function mGeometry(record) {
+  return record?.geometry ?? null;
+}
+
+function mLookupOptions(lookupName) {
+  return Array.isArray(monumentLookups?.[lookupName]) ? monumentLookups[lookupName] : [];
+}
+
+function mLookupLabel(lookupName, value) {
+  const options = mLookupOptions(lookupName);
+  const match = options.find((item) => String(item.value ?? "") === String(value ?? ""));
+  return match ? (match.label ?? match.value ?? value) : value;
+}
+
+function mRecordSearchText(record) {
+  const fields = [
+    mIdentity(record, "caal_id"),
+    mSummary(record, "primary_name"),
+    mSummary(record, "primary_name_english"),
+    mSummary(record, "country"),
+    mSummary(record, "region"),
+    mSummary(record, "classification"),
+    mSummary(record, "designation"),
+    mSummary(record, "monument_type1"),
+    mSummary(record, "cultural_period1"),
+    mSummary(record, "religion1"),
+    mRaw(record, "Other Names"),
+    mRaw(record, "Internal Reference"),
+    mRaw(record, "External Reference"),
+    mRaw(record, "Monument Passport"),
+    mRaw(record, "Descriptive Date"),
+    mRaw(record, "Primary Description"),
+    mRaw(record, "Primary Description (English)"),
+    mRaw(record, "Additional Notes"),
+    mRaw(record, "Location Notes"),
+    mRaw(record, "Primary Address"),
+    mRaw(record, "World Heritage Site Name"),
+    mRaw(record, "Monument is part of"),
+    mRaw(record, "Monument contains"),
+    mRaw(record, "Monument is associated with"),
+    ...(record?.filter_values?.monument_types || []),
+    ...(record?.filter_values?.religions || []),
+    ...(record?.filter_values?.cultural_periods || [])
+  ];
+
+  return fields.map(mNormalizeSearchText).join(" ");
+}
+
+function mBuildSavePayload() {
+  return {
+    "Primary Name": mGetInputValue("Primary Name"),
+    "Primary Name (English)": mGetInputValue("Primary Name (English)"),
+    "Other Names": mGetInputValue("Other Names"),
+    "Country": mGetInputValue("Country"),
+    "Region": mGetInputValue("Region"),
+    "Classification": mGetInputValue("Classification"),
+    "Internal Reference": mGetInputValue("Internal Reference"),
+    "External Reference": mGetInputValue("External Reference"),
+    "Monument Passport": mGetInputValue("Monument Passport"),
+    "Monument Type1": mGetInputValue("Monument Type1"),
+    "Monument Type2": mGetInputValue("Monument Type2"),
+    "Monument Type3": mGetInputValue("Monument Type3"),
+    "Monument Type4": mGetInputValue("Monument Type4"),
+    "Monument Type5": mGetInputValue("Monument Type5"),
+    "Monument Type6": mGetInputValue("Monument Type6"),
+    "Religion1": mGetInputValue("Religion1"),
+    "Religion2": mGetInputValue("Religion2"),
+    "Religion3": mGetInputValue("Religion3"),
+    "Descriptive Date": mGetInputValue("Descriptive Date"),
+    "Cultural Period1": mGetInputValue("Cultural Period1"),
+    "Cultural Period2": mGetInputValue("Cultural Period2"),
+    "Cultural Period3": mGetInputValue("Cultural Period3"),
+    "Cultural Period4": mGetInputValue("Cultural Period4"),
+    "Cultural Period5": mGetInputValue("Cultural Period5"),
+    "Cultural Period6": mGetInputValue("Cultural Period6"),
+    "Primary Description": mGetInputValue("Primary Description"),
+    "Primary Description (English)": mGetInputValue("Primary Description (English)"),
+    "Additional Notes": mGetInputValue("Additional Notes"),
+    "Longitude": mGetInputValue("Longitude"),
+    "Latitude": mGetInputValue("Latitude"),
+    "Altitude": mGetInputValue("Altitude"),
+    "Location Confidence": mGetInputValue("Location Confidence"),
+    "Location Notes": mGetInputValue("Location Notes"),
+    "Primary Address": mGetInputValue("Primary Address"),
+    "Administrative Subdivision Name1": mGetInputValue("Administrative Subdivision Name1"),
+    "Administrative Subdivision Type1": mGetInputValue("Administrative Subdivision Type1"),
+    "Administrative Subdivision Name2": mGetInputValue("Administrative Subdivision Name2"),
+    "Administrative Subdivision Type2": mGetInputValue("Administrative Subdivision Type2"),
+    "Administrative Subdivision Name3": mGetInputValue("Administrative Subdivision Name3"),
+    "Administrative Subdivision Type3": mGetInputValue("Administrative Subdivision Type3"),
+    "Administrative Subdivision Name4": mGetInputValue("Administrative Subdivision Name4"),
+    "Administrative Subdivision Type4": mGetInputValue("Administrative Subdivision Type4"),
+    "Measurement Value1": mGetInputValue("Measurement Value1"),
+    "Measurement Unit1": mGetInputValue("Measurement Unit1"),
+    "Measurement Type1": mGetInputValue("Measurement Type1"),
+    "Measurement Value2": mGetInputValue("Measurement Value2"),
+    "Measurement Unit2": mGetInputValue("Measurement Unit2"),
+    "Measurement Type2": mGetInputValue("Measurement Type2"),
+    "Measurement Value3": mGetInputValue("Measurement Value3"),
+    "Measurement Unit3": mGetInputValue("Measurement Unit3"),
+    "Measurement Type3": mGetInputValue("Measurement Type3"),
+    "Measurement Value4": mGetInputValue("Measurement Value4"),
+    "Measurement Unit4": mGetInputValue("Measurement Unit4"),
+    "Measurement Type4": mGetInputValue("Measurement Type4"),
+    "Designation": mGetInputValue("Designation"),
+    "World Heritage Site Name": mGetInputValue("World Heritage Site Name"),
+    "Monument is part of": mGetInputValue("Monument is part of"),
+    "Monument contains": mGetInputValue("Monument contains"),
+    "Monument is associated with": mGetInputValue("Monument is associated with"),
+    "MasterID": mGetInputValue("MasterID")
   };
 }
 
+function mSectionHasValues(values) {
+  return values.some((value) => mHasValue(value));
+}
+
+function mRenderDetailItem(label, value, fullWidth = false) {
+  const fullWidthClass = fullWidth ? " full-width" : "";
+  return `
+    <div class="detail-item${fullWidthClass}">
+      <span class="detail-label">${label}</span>
+      <div class="detail-value">${mSafeValue(value)}</div>
+    </div>
+  `;
+}
+
+function mRenderGroupBlock(title, innerHtml, hasValues = true) {
+  const content = hasValues
+    ? innerHtml
+    : `<div class="section-empty">${mLabel("No populated fields in this section.", "No populated fields in this section.")}</div>`;
+
+  return `
+    <div class="group-block">
+      <div class="group-grid">
+        <div class="detail-item full-width section-header">
+          <span class="detail-section-title">${title}</span>
+        </div>
+        ${content}
+      </div>
+    </div>
+  `;
+}
+
+function mRenderTextInput(fieldName, label, value, fullWidth = false) {
+  const inputId = mInputId(fieldName);
+  const fullWidthClass = fullWidth ? " full-width" : "";
+  return `
+    <div class="detail-item${fullWidthClass}">
+      <label class="detail-label" for="${inputId}">${label}</label>
+      <input type="text" id="${inputId}" class="form-control" value="${value ?? ""}">
+    </div>
+  `;
+}
+
+function mRenderTextarea(fieldName, label, value, fullWidth = true) {
+  const inputId = mInputId(fieldName);
+  const fullWidthClass = fullWidth ? " full-width" : "";
+  return `
+    <div class="detail-item${fullWidthClass}">
+      <label class="detail-label" for="${inputId}">${label}</label>
+      <textarea id="${inputId}" class="form-control" rows="4">${value ?? ""}</textarea>
+    </div>
+  `;
+}
+
+function mRenderNumberInput(fieldName, label, value, step = "any", fullWidth = false) {
+  const inputId = mInputId(fieldName);
+  const fullWidthClass = fullWidth ? " full-width" : "";
+  return `
+    <div class="detail-item${fullWidthClass}">
+      <label class="detail-label" for="${inputId}">${label}</label>
+      <input type="number" id="${inputId}" class="form-control" step="${step}" value="${value ?? ""}">
+    </div>
+  `;
+}
+
+function mRenderReadOnlyItem(label, value, fullWidth = false) {
+  return mRenderDetailItem(label, value, fullWidth);
+}
+
+function mRenderSelect(fieldName, label, lookupName, currentValue, fullWidth = false) {
+  const inputId = mInputId(fieldName);
+  const fullWidthClass = fullWidth ? " full-width" : "";
+
+  const optionsHtml = mLookupOptions(lookupName)
+    .map((item) => {
+      const value = item.value ?? "";
+      const selected = String(value) === String(currentValue ?? "") ? "selected" : "";
+      return `<option value="${value}" ${selected}>${item.label ?? value}</option>`;
+    })
+    .join("");
+
+  return `
+    <div class="detail-item${fullWidthClass}">
+      <label class="detail-label" for="${inputId}">${label}</label>
+      <select id="${inputId}" class="form-control">
+        <option value=""></option>
+        ${optionsHtml}
+      </select>
+    </div>
+  `;
+}
+
+function monumentConfirmLoseChanges() {
+  if (!monumentIsEditMode || !monumentIsDirty) {
+    return true;
+  }
+
+  return window.confirm(
+    mLabel(
+      "Unsaved changes prompt",
+      "You have unsaved changes. Do you want to discard them?"
+    )
+  );
+}
+
+// switches add/edit with save/cancel
+function updateMonumentActionBar() {
+  const hasSelectedRecord = !!monumentSelectedRecord;
+  const canEditThisRecord = monumentSelectedRecord?.source?.is_editable === true;
+
+  if (addMonumentBtn) {
+    addMonumentBtn.hidden = monumentIsEditMode;
+  }
+
+  if (monumentEditBtn) {
+    monumentEditBtn.hidden = monumentIsEditMode || !hasSelectedRecord;
+    monumentEditBtn.disabled = !canEditThisRecord;
+  }
+
+  if (monumentSaveBtn) {
+    monumentSaveBtn.hidden = !monumentIsEditMode;
+  }
+
+  if (monumentCancelEditBtn) {
+    monumentCancelEditBtn.hidden = !monumentIsEditMode;
+  }
+}
+
+function getMonumentEnabledScopes() {
+  const scopes = [];
+
+  if (showWorkspaceRecords?.checked) scopes.push("workspace");
+  if (showNationalRecords?.checked) scopes.push("national_ref");
+  if (showAllCaalRecords?.checked) scopes.push("all_caal");
+
+  return scopes;
+}
+
+function monumentScopeLabel(scope) {
+  switch (scope) {
+    case "workspace":
+      return mLabel("Workspace", "Workspace");
+    case "national_ref":
+      return mLabel("National CAAL", "National CAAL");
+    case "all_caal":
+      return mLabel("All CAAL", "All CAAL");
+    default:
+      return scope || mLabel("Unknown", "Unknown");
+  }
+}
+
+function getMonumentCurrentFilters() {
+  return {
+    text: siteSearch ? siteSearch.value.trim() : "",
+    monumentTypes: mSelectedValues(filterMonumentType),
+    classifications: mSelectedValues(filterClassification),
+    designations: mSelectedValues(filterDesignation),
+    religions: mSelectedValues(filterReligion),
+    culturalPeriods: mSelectedValues(filterCulturalPeriod),
+    countries: mSelectedValues(filterCountry)
+  };
+}
+
+function buildMonumentQueryParams({ includePaging = true } = {}) {
+  const scopes = getMonumentEnabledScopes();
+  const filters = getMonumentCurrentFilters();
+
+  const params = new URLSearchParams();
+
+  if (scopes.length) {
+    params.set("scopes", scopes.join(","));
+  }
+
+  const lang =
+    (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
+    window.appSession?.profile?.preferred_language ||
+    "en";
+
+  params.set("lang", lang);
+
+  if (filters.text) params.set("text", filters.text);
+  if (filters.monumentTypes.length) params.set("monumentTypes", filters.monumentTypes.join(","));
+  if (filters.classifications.length) params.set("classifications", filters.classifications.join(","));
+  if (filters.designations.length) params.set("designations", filters.designations.join(","));
+  if (filters.religions.length) params.set("religions", filters.religions.join(","));
+  if (filters.culturalPeriods.length) params.set("culturalPeriods", filters.culturalPeriods.join(","));
+  if (filters.countries.length) params.set("countries", filters.countries.join(","));
+
+  if (includePaging) {
+    params.set("limit", String(monumentPageLimit));
+    params.set("offset", String(monumentPageOffset));
+  }
+
+  return params;
+}
+
+// modal helpers
+// ================================
+//only populated fields
+function getPopulatedPreviewFields(record, fields) {
+  return fields
+    .map(({ label, value }) => ({ label, value }))
+    .filter((item) => item.value !== null && item.value !== undefined && item.value !== "");
+}
+
+// preview rows
+function renderPreviewRows(items) {
+  if (!items.length) {
+    return `<p class="section-empty">${mLabel("No populated fields in this section.", "No populated fields in this section.")}</p>`;
+  }
+
+  return items.map((item) => `
+    <div class="detail-item">
+      <span class="detail-label">${item.label}</span>
+      <div class="detail-value">${mSafeValue(item.value)}</div>
+    </div>
+  `).join("");
+}
+
+// summary list from repeated fields
+function getSummaryValues(record, fieldNames, lookupName = null) {
+  const values = fieldNames
+    .map((field) => mRaw(record, field))
+    .filter((value) => value !== null && value !== undefined && value !== "");
+
+  if (lookupName) {
+    return values.map((value) => mLookupLabel(lookupName, value));
+  }
+
+  return values;
+}
+
+//modal renderer
+function renderMonumentPreviewModal(record) {
+  const modal = document.getElementById("monumentPreviewModal");
+  const titleEl = document.getElementById("monumentPreviewTitle");
+  const bodyEl = document.getElementById("monumentPreviewBody");
+
+  if (!modal || !titleEl || !bodyEl || !record) return;
+
+  const basicFields = getPopulatedPreviewFields(record, [
+    { label: mLabel("Primary Name", "Primary Name"), value: mSummary(record, "primary_name") },
+    { label: mLabel("Primary Name (English)", "Primary Name (English)"), value: mSummary(record, "primary_name_english") },
+    { label: mLabel("Other Names", "Other Names"), value: mRaw(record, "Other Names") },
+    { label: mLabel("Country", "Country"), value: mSummary(record, "country") },
+    { label: mLabel("Region", "Region"), value: mSummary(record, "region") },
+    { label: mLabel("Classification", "Classification"), value: mSummary(record, "classification") },
+    { label: mLabel("CAAL_ID", "CAAL_ID"), value: mIdentity(record, "caal_id") },
+    { label: mLabel("Internal Reference", "Internal Reference"), value: mRaw(record, "Internal Reference") },
+    { label: mLabel("External Reference", "External Reference"), value: mRaw(record, "External Reference") },
+    { label: mLabel("Designation", "Designation"), value: mSummary(record, "designation") },
+    { label: mLabel("World Heritage Site Name", "World Heritage Site Name"), value: mRaw(record, "World Heritage Site Name") }
+  ]);
+
+  const monumentTypes = getSummaryValues(record, [
+    "Monument Type1", "Monument Type2", "Monument Type3",
+    "Monument Type4", "Monument Type5", "Monument Type6"
+  ], "monument_type");
+
+  const culturalPeriods = getSummaryValues(record, [
+    "Cultural Period1", "Cultural Period2", "Cultural Period3",
+    "Cultural Period4", "Cultural Period5", "Cultural Period6"
+  ], "cultural_period");
+
+  titleEl.textContent = mSafeValue(mSummary(record, "primary_name"));
+
+  bodyEl.innerHTML = `
+    <div class="record-title">
+      <h3>${mSafeValue(mSummary(record, "primary_name"))}</h3>
+      <p>${mSafeValue(mIdentity(record, "caal_id"))}</p>
+    </div>
+
+    <div class="group-stack">
+      <div class="group-block">
+        <div class="group-grid">
+          <div class="detail-item full-width section-header">
+            <span class="detail-section-title">${mLabel("Basic", "Basic")}</span>
+          </div>
+          ${renderPreviewRows(basicFields)}
+        </div>
+      </div>
+
+      <div class="group-block">
+        <div class="group-grid">
+          <div class="detail-item full-width section-header">
+            <span class="detail-section-title">${mLabel("Monument type summary", "Monument type summary")}</span>
+          </div>
+          <div class="detail-item full-width">
+            <div class="detail-value">${monumentTypes.length ? monumentTypes.join(", ") : mLabel("Not recorded", "Not recorded")}</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="group-block">
+        <div class="group-grid">
+          <div class="detail-item full-width section-header">
+            <span class="detail-section-title">${mLabel("Cultural period summary", "Cultural period summary")}</span>
+          </div>
+          <div class="detail-item full-width">
+            <div class="detail-value">${culturalPeriods.length ? culturalPeriods.join(", ") : mLabel("Not recorded", "Not recorded")}</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="group-block">
+        <div class="group-grid">
+          <div class="detail-item full-width section-header">
+            <span class="detail-section-title">${mLabel("Location", "Location")}</span>
+          </div>
+          <div class="detail-item full-width">
+            <div id="monumentPreviewMiniMap" style="height: 220px; border-radius: 10px; overflow: hidden;"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  modal.hidden = false;
+  initMonumentPreviewMiniMap(record);
+}
+
+// mini map
+let monumentPreviewMap = null;
+
+function initMonumentPreviewMiniMap(record) {
+  const mapEl = document.getElementById("monumentPreviewMiniMap");
+  if (!mapEl || !record?.geometry?.coordinates || typeof maplibregl === "undefined") return;
+
+  const [lng, lat] = record.geometry.coordinates;
+
+  if (monumentPreviewMap) {
+    monumentPreviewMap.remove();
+    monumentPreviewMap = null;
+  }
+
+  monumentPreviewMap = new maplibregl.Map({
+    container: "monumentPreviewMiniMap",
+    style: getBasemapStyle("osm"),
+    center: [lng, lat],
+    zoom: 12,
+    interactive: false
+  });
+
+  monumentPreviewMap.on("load", () => {
+    if (monumentPreviewMap.getLayer("preview-point")) {
+      monumentPreviewMap.removeLayer("preview-point");
+    }
+    if (monumentPreviewMap.getSource("preview-point")) {
+      monumentPreviewMap.removeSource("preview-point");
+    }
+
+    monumentPreviewMap.addSource("preview-point", {
+      type: "geojson",
+      data: {
+        type: "FeatureCollection",
+        features: [{
+          type: "Feature",
+          geometry: {
+            type: "Point",
+            coordinates: [lng, lat]
+          },
+          properties: {}
+        }]
+      }
+    });
+
+    monumentPreviewMap.addLayer({
+      id: "preview-point",
+      type: "circle",
+      source: "preview-point",
+      paint: {
+        "circle-radius": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          3, 2,
+          8, 4.5,
+          12, 6
+        ],
+        "circle-color": "#c95a4a",
+        "circle-opacity": 0.7,
+        "circle-stroke-width": 0.7,
+        "circle-stroke-color": "rgba(255,255,255,0.9)"
+      }
+    });
+  });
+}
+
+//modal close
+function closeMonumentPreviewModal() {
+  const modal = document.getElementById("monumentPreviewModal");
+  if (modal) modal.hidden = true;
+
+  if (monumentPreviewMap) {
+    monumentPreviewMap.remove();
+    monumentPreviewMap = null;
+  }
+}
+
+
+
+// --------------------------------------------------------
+// Labels + lookups API
+// --------------------------------------------------------
+async function loadMonumentLabels() {
+  const lang =
+    (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
+    window.appSession?.profile?.preferred_language ||
+    "en";
+
+  const response = await fetch(
+    `/api/ui/labels?page=monuments&lang=${encodeURIComponent(lang)}`,
+    { method: "GET", credentials: "include" }
+  );
+
+  const data = await response.json();
+
+  if (!response.ok || !data.ok) {
+    throw new Error(data.error || "Failed to load monuments labels");
+  }
+
+  monumentLabels = data.labels || {};
+}
+
+async function loadMonumentLookups() {
+  const lang =
+    (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
+    window.appSession?.profile?.preferred_language ||
+    "en";
+
+  const response = await fetch(
+    `/api/lookups/monuments?lang=${encodeURIComponent(lang)}`,
+    { method: "GET", credentials: "include" }
+  );
+
+  const data = await response.json();
+
+  if (!response.ok || !data.ok) {
+    throw new Error(data.error || "Failed to load monuments lookups");
+  }
+
+  monumentLookups = data.lookups || {};
+}
+
+function populateMonumentFilterLookups() {
+  mPopulateMultiSelect(filterMonumentType, mLookupOptions("monument_type"));
+  mPopulateMultiSelect(filterClassification, mLookupOptions("classification"));
+  mPopulateMultiSelect(filterDesignation, mLookupOptions("designation"));
+  mPopulateMultiSelect(filterReligion, mLookupOptions("religion"));
+  mPopulateMultiSelect(filterCulturalPeriod, mLookupOptions("cultural_period"));
+  mPopulateMultiSelect(filterCountry, mLookupOptions("country"));
+}
+
+// --------------------------------------------------------
+// Records API
+// --------------------------------------------------------
+async function loadMonumentMapRecords() {
+  const scopes = getMonumentEnabledScopes();
+
+  if (!scopes.length) {
+    monumentMapRecords = [];
+    drawMonumentRecords([]);
+    return;
+  }
+
+  const params = buildMonumentQueryParams({ includePaging: false });
+
+  const response = await fetch(`/api/monuments/map?${params.toString()}`, {
+    method: "GET",
+    credentials: "include"
+  });
+
+  const data = await response.json();
+
+  if (!response.ok || !data.ok) {
+    throw new Error(data.error || "Failed to load monument map records");
+  }
+
+  monumentMapRecords = data.records || [];
+  drawMonumentRecords(monumentMapRecords);
+}
+
+async function loadMonumentListRecords() {
+  const scopes = getMonumentEnabledScopes();
+
+  if (!scopes.length) {
+    monumentListRecords = [];
+    monumentTotalCount = 0;
+    renderMonumentResultsList([]);
+    renderMonumentEmptyState();
+    return;
+  }
+
+  const params = buildMonumentQueryParams({ includePaging: true });
+
+  const response = await fetch(`/api/monuments?${params.toString()}`, {
+    method: "GET",
+    credentials: "include"
+  });
+
+  const data = await response.json();
+
+  if (!response.ok || !data.ok) {
+    throw new Error(data.error || "Failed to load monument list records");
+  }
+
+  monumentListRecords = data.records || [];
+  monumentTotalCount = data.total || 0;
+
+  renderMonumentResultsList(monumentListRecords);
+  renderMonumentPageInfo();
+}
+
+function renderMonumentPageInfo() {
+  const pageInfo = document.getElementById("monumentPageInfo");
+  if (!pageInfo) return;
+
+  const totalPages = Math.max(1, Math.ceil(monumentTotalCount / monumentPageLimit));
+  const pageNumber = Math.floor(monumentPageOffset / monumentPageLimit) + 1;
+
+  pageInfo.textContent = `Page ${pageNumber} of ${totalPages}`;
+}
+
+// --------------------------------------------------------
+// Filters
+// --------------------------------------------------------
+function monumentMatchesFilters(record, filters) {
+  const fv = record.filter_values || {};
+
+  const matchesText =
+    !filters.text ||
+    mRecordSearchText(record).includes(filters.text.toLowerCase());
+
+  const matchesMonumentType =
+    filters.monumentTypes.length === 0 ||
+    (fv.monument_types || []).some((value) => filters.monumentTypes.includes(value));
+
+  const matchesClassification =
+    filters.classifications.length === 0 ||
+    filters.classifications.includes(fv.classification);
+
+  const matchesDesignation =
+    filters.designations.length === 0 ||
+    filters.designations.includes(fv.designation);
+
+  const matchesReligion =
+    filters.religions.length === 0 ||
+    (fv.religions || []).some((value) => filters.religions.includes(value));
+
+  const matchesCulturalPeriod =
+    filters.culturalPeriods.length === 0 ||
+    (fv.cultural_periods || []).some((value) => filters.culturalPeriods.includes(value));
+
+  const matchesCountry =
+    filters.countries.length === 0 ||
+    filters.countries.includes(fv.country);
+
+  return (
+    matchesText &&
+    matchesMonumentType &&
+    matchesClassification &&
+    matchesDesignation &&
+    matchesReligion &&
+    matchesCulturalPeriod &&
+    matchesCountry
+  );
+}
+
+async function applyMonumentFilters() {
+  monumentPageOffset = 0;
+  monumentSelectedRecord = null;
+  monumentPendingNewRecord = null;
+  monumentIsEditMode = false;
+  monumentSyncModeVisualState();
+
+  if (map) {
+    if (map.getLayer("monument-selected-ring")) {
+      map.removeLayer("monument-selected-ring");
+    }
+    if (map.getSource("monument-selected")) {
+      map.removeSource("monument-selected");
+    }
+  }
+
+  setMonumentsLoading(true, mLabel("Updating records...", "Updating records..."));
+
+  try {
+    await loadMonumentMapRecords();
+    await loadMonumentListRecords();
+    renderMonumentEmptyState();
+  } catch (error) {
+    console.error("Failed to reload monuments after scope change:", error);
+  } finally {
+    setMonumentsLoading(false);
+  }
+}
+
+async function clearMonumentFilters() {
+  if (siteSearch) siteSearch.value = "";
+
+  [
+    filterMonumentType,
+    filterClassification,
+    filterDesignation,
+    filterReligion,
+    filterCulturalPeriod,
+    filterCountry
+  ].forEach((selectEl) => {
+    if (!selectEl) return;
+    Array.from(selectEl.options).forEach((option) => {
+      option.selected = false;
+    });
+  });
+
+  await applyMonumentFilters();
+}
+
+// --------------------------------------------------------
+// Map
+// --------------------------------------------------------
 function getBasemapStyle(name) {
   if (name === "osm") {
     return {
@@ -104,65 +1069,19 @@ function getBasemapStyle(name) {
   return "https://demotiles.maplibre.org/style.json";
 }
 
-// --------------------------------------------------------
-// Repeated-field helpers
-// --------------------------------------------------------
-function hasRealValue(value) {
-  return value !== null && value !== undefined && value !== "";
-}
+function monumentRecordToFeature(record) {
+  if (!record?.geometry?.coordinates) return null;
 
-function normalizeSearchText(value) {
-  if (!hasRealValue(value)) return "";
-  return String(value).toLowerCase();
-}
-
-function uniqueSorted(values) {
-  return Array.from(new Set(values.filter(hasRealValue))).sort((a, b) =>
-    String(a).localeCompare(String(b))
-  );
-}
-
-function getRepeatedFieldValues(properties, baseName, start, end) {
-  const values = [];
-  for (let i = start; i <= end; i++) {
-    const value = properties[`${baseName}${i}`];
-    if (hasRealValue(value)) {
-      values.push(value);
+  return {
+    type: "Feature",
+    geometry: record.geometry,
+    properties: {
+      id: record.identity?.id,
+      caal_id: record.identity?.caal_id,
+      primary_name: record.summary?.primary_name
     }
-  }
-  return values;
+  };
 }
-
-function getMonumentTypes(properties) {
-  return getRepeatedFieldValues(properties, "Monument Type", 1, 6);
-}
-
-function getReligions(properties) {
-  return getRepeatedFieldValues(properties, "Religion", 1, 3);
-}
-
-function getCulturalPeriods(properties) {
-  return getRepeatedFieldValues(properties, "Cultural Period", 1, 6);
-}
-
-function getSelectedValues(selectEl) {
-  if (!selectEl) return [];
-  return Array.from(selectEl.selectedOptions).map((option) => option.value);
-}
-
-function populateMultiSelect(selectEl, values) {
-  if (!selectEl) return;
-  selectEl.innerHTML = "";
-  values.forEach((value) => {
-    const option = document.createElement("option");
-    option.value = value;
-    option.textContent = value;
-    selectEl.appendChild(option);
-  });
-}
-
-// map helper
-let monumentsLayerEventsBound = false;
 
 function bindMonumentLayerEvents() {
   if (!map || monumentsLayerEventsBound) return;
@@ -171,9 +1090,27 @@ function bindMonumentLayerEvents() {
     const feature = e.features?.[0];
     if (!feature) return;
 
-    const props = feature.properties;
-    isEditMode = false;
-    renderRecordDetails(props);
+    const clickedId = Number(feature.properties?.id);
+    const record = monumentMapRecords.find((r) => Number(r.identity?.id) === clickedId);
+    if (!record) return;
+
+    monumentIsEditMode = false;
+    monumentSyncModeVisualState();
+    renderMonumentRecordDetails(record);
+    drawSelectedMonumentHighlight(record);
+    ensureRecordVisibleOnMap(record);
+
+    new maplibregl.Popup({ closeButton: true, closeOnClick: true })
+      .setLngLat(record.geometry.coordinates)
+      .setHTML(`
+        <div class="map-popup">
+          <strong>${mSafeValue(mSummary(record, "primary_name"))}</strong><br>
+          <span>${mSafeValue(mIdentity(record, "caal_id"))}</span><br>
+          <span>${mSafeValue(mSummary(record, "classification"))}</span><br>
+          <span>${mSafeValue(mSummary(record, "monument_type1"))}</span>
+        </div>
+      `)
+      .addTo(map);
   });
 
   map.on("mouseenter", "monuments-layer", () => {
@@ -187,143 +1124,16 @@ function bindMonumentLayerEvents() {
   monumentsLayerEventsBound = true;
 }
 
-// --------------------------------------------------------
-// Search text blob
-// --------------------------------------------------------
-function buildRecordSearchText(properties) {
-  const monumentTypes = getMonumentTypes(properties);
-  const religions = getReligions(properties);
-  const culturalPeriods = getCulturalPeriods(properties);
-
-  const fields = [
-    properties["Primary Name"],
-    properties["Primary Name (English)"],
-    properties["Other Names"],
-    properties["CAAL_ID"],
-    properties["Internal Reference"],
-    properties["External Reference"],
-    properties["Classification"],
-    properties["Designation"],
-    properties["Country"],
-    properties["Region"],
-    properties["Descriptive Date"],
-    properties["Primary Description"],
-    properties["Primary Description (English)"],
-    properties["Additional Notes"],
-    properties["Location Notes"],
-    properties["Primary Address"],
-    properties["Administrative Subdivision Name1"],
-    properties["Administrative Subdivision Name2"],
-    properties["Administrative Subdivision Name3"],
-    properties["Administrative Subdivision Name4"],
-    properties["World Heritage Site Name"],
-    properties["Monument is part of"],
-    properties["Monument contains"],
-    properties["Monument is associated with"],
-    ...monumentTypes,
-    ...religions,
-    ...culturalPeriods
-  ];
-
-  return fields.map(normalizeSearchText).join(" ");
-}
-
-// --------------------------------------------------------
-// Filter options from data
-// --------------------------------------------------------
-function collectFilterOptions(features) {
-  const monumentTypes = [];
-  const classifications = [];
-  const designations = [];
-  const religions = [];
-  const culturalPeriods = [];
-  const countries = [];
-
-  features.forEach((feature) => {
-    const p = feature.properties;
-    monumentTypes.push(...getMonumentTypes(p));
-    classifications.push(p["Classification"]);
-    designations.push(p["Designation"]);
-    religions.push(...getReligions(p));
-    culturalPeriods.push(...getCulturalPeriods(p));
-    countries.push(p["Country"]);
-  });
-
-  return {
-    monumentTypes: uniqueSorted(monumentTypes),
-    classifications: uniqueSorted(classifications),
-    designations: uniqueSorted(designations),
-    religions: uniqueSorted(religions),
-    culturalPeriods: uniqueSorted(culturalPeriods),
-    countries: uniqueSorted(countries)
-  };
-}
-
-// --------------------------------------------------------
-// Record matching
-// OR within category, AND across categories
-// --------------------------------------------------------
-function recordMatchesFilters(properties, filters) {
-  const monumentTypes = getMonumentTypes(properties);
-  const religions = getReligions(properties);
-  const culturalPeriods = getCulturalPeriods(properties);
-
-  const matchesText =
-    !filters.text ||
-    buildRecordSearchText(properties).includes(filters.text.toLowerCase());
-
-  const matchesMonumentType =
-    filters.monumentTypes.length === 0 ||
-    monumentTypes.some((value) => filters.monumentTypes.includes(value));
-
-  const matchesClassification =
-    filters.classifications.length === 0 ||
-    filters.classifications.includes(properties["Classification"]);
-
-  const matchesDesignation =
-    filters.designations.length === 0 ||
-    filters.designations.includes(properties["Designation"]);
-
-  const matchesReligion =
-    filters.religions.length === 0 ||
-    religions.some((value) => filters.religions.includes(value));
-
-  const matchesCulturalPeriod =
-    filters.culturalPeriods.length === 0 ||
-    culturalPeriods.some((value) => filters.culturalPeriods.includes(value));
-
-  const matchesCountry =
-    filters.countries.length === 0 ||
-    filters.countries.includes(properties["Country"]);
-
-  return (
-    matchesText &&
-    matchesMonumentType &&
-    matchesClassification &&
-    matchesDesignation &&
-    matchesReligion &&
-    matchesCulturalPeriod &&
-    matchesCountry
-  );
-}
-
-// --------------------------------------------------------
-// Map drawing
-// --------------------------------------------------------
-
-function drawFeatures(features) {
+function drawMonumentRecords(records) {
   if (!map || !mapLoaded) return;
 
-  const drawableFeatures = features.filter(
-    (feature) =>
-      feature.geometry &&
-      feature.geometry.type === "Point" &&
-      Array.isArray(feature.geometry.coordinates)
-  );
+  const features = records
+    .map(monumentRecordToFeature)
+    .filter(Boolean);
 
   const geojson = {
     type: "FeatureCollection",
-    features: drawableFeatures
+    features
   };
 
   if (map.getLayer("monuments-layer")) {
@@ -343,657 +1153,452 @@ function drawFeatures(features) {
     type: "circle",
     source: "monuments",
     paint: {
-      "circle-radius": 7,
-      "circle-color": "#c62828",
-      "circle-opacity": 0.9,
-      "circle-stroke-width": 1.5,
-      "circle-stroke-color": "#ffffff"
+      "circle-radius": [
+        "interpolate",
+        ["linear"],
+        ["zoom"],
+        4, 3,
+        8, 4.5,
+        12, 6
+      ],
+      "circle-color": "#c95a4a",
+      "circle-opacity": 0.8,
+      "circle-stroke-width": 1,
+      "circle-stroke-color": "rgba(255,255,255,0.9)"
     }
   });
 
   bindMonumentLayerEvents();
 
-  if (drawableFeatures.length > 0) {
+  if (features.length > 0) {
     const bounds = new maplibregl.LngLatBounds();
-    drawableFeatures.forEach((f) => {
+    features.forEach((f) => {
       const [lng, lat] = f.geometry.coordinates;
       bounds.extend([lng, lat]);
     });
-    map.fitBounds(bounds, { padding: 40 });
+    map.fitBounds(bounds, { padding: 50, duration: 700 });
   }
 }
+
 
 // --------------------------------------------------------
 // Results list
 // --------------------------------------------------------
-function renderResultsList(features) {
+function renderMonumentResultsList(records) {
   if (!resultsList) return;
 
   if (resultsCount) {
-    resultsCount.textContent = `${features.length} record${features.length === 1 ? "" : "s"}`;
+    const start = monumentTotalCount === 0 ? 0 : monumentPageOffset + 1;
+    const end = monumentPageOffset + records.length;
+    resultsCount.textContent = `${start}-${end} (${monumentTotalCount} total)`;
   }
 
-  if (features.length === 0) {
+  if (records.length === 0) {
     resultsList.innerHTML = `
       <div class="results-empty">
-        <p>No matching records.</p>
+        <p>${mLabel("No matching records.", "No matching records.")}</p>
       </div>
     `;
     return;
   }
 
-  resultsList.innerHTML = features
-    .map((feature, index) => {
-      const p = feature.properties;
-      const types = getMonumentTypes(p).join(", ");
-
-      return `
-        <div class="result-card" data-result-index="${index}">
-          <div class="result-card-header">
-            <strong>${safeValue(p["Primary Name"])}</strong>
-          </div>
-          <div class="result-card-meta">${safeValue(p["CAAL_ID"])}</div>
-          <div class="result-card-meta">${safeValue(p["Classification"])}</div>
-          <div class="result-card-meta">${safeValue(types)}</div>
+  resultsList.innerHTML = records
+  .map((record, index) => {
+    return `
+      <div class="result-card" data-result-index="${index}">
+        <div class="result-card-header">
+          <strong>${mSafeValue(mSummary(record, "primary_name"))}</strong>
         </div>
-      `;
-    })
-    .join("");
+        <div class="result-card-meta">${mSafeValue(mIdentity(record, "caal_id"))}</div>
+        <div class="result-card-meta">${mSafeValue(mSummary(record, "classification"))}</div>
+        <div class="result-card-meta">${mSafeValue(mSummary(record, "monument_type1"))}</div>
+        <div class="result-card-meta">${mSafeValue(monumentScopeLabel(record.source?.scope))}</div>
+
+        <div class="result-card-actions">
+          <button
+            type="button"
+            class="action-btn result-preview-btn"
+            data-preview-index="${index}"
+          >
+            ${mLabel("Preview", "Preview")}
+          </button>
+        </div>
+      </div>
+    `;
+  })
+  .join("");
 
   Array.from(resultsList.querySelectorAll(".result-card")).forEach((card) => {
     card.addEventListener("click", () => {
+      if (!monumentConfirmLoseChanges()) return;
+
       const idx = Number(card.dataset.resultIndex);
-      const feature = features[idx];
-      if (!feature) return;
+      const record = records[idx];
+      if (!record) return;
 
-      isEditMode = false;
-      renderRecordDetails(feature.properties);
+      monumentIsEditMode = false;
+      monumentSyncModeVisualState();
+      monumentPendingNewRecord = null;
+      renderMonumentRecordDetails(record);
 
-      if (map && feature.geometry && Array.isArray(feature.geometry.coordinates)) {
-        const [lng, lat] = feature.geometry.coordinates;
-        map.flyTo({
-          center: [lng, lat],
-          zoom: Math.max(map.getZoom(), 12)
-        });
+      if (map && record.geometry?.coordinates) {
+        drawSelectedMonumentHighlight(record);
+        ensureRecordVisibleOnMap(record);
       }
+    });
+  });
+  Array.from(resultsList.querySelectorAll(".result-preview-btn")).forEach((btn) => {
+    btn.addEventListener("click", (event) => {
+      event.stopPropagation();
+
+      const idx = Number(btn.dataset.previewIndex);
+      const record = records[idx];
+      if (!record) return;
+
+      renderMonumentPreviewModal(record);
     });
   });
 }
 
 // --------------------------------------------------------
-// Filter application
+// Empty state
 // --------------------------------------------------------
-function applyMonumentsFilters() {
-  const filters = {
-    text: siteSearch ? siteSearch.value.trim() : "",
-    monumentTypes: getSelectedValues(filterMonumentType),
-    classifications: getSelectedValues(filterClassification),
-    designations: getSelectedValues(filterDesignation),
-    religions: getSelectedValues(filterReligion),
-    culturalPeriods: getSelectedValues(filterCulturalPeriod),
-    countries: getSelectedValues(filterCountry)
-  };
+function renderMonumentEmptyState() {
+  if (!recordDetails) return;
 
-  visibleFeatures = allFeatures.filter((feature) =>
-    recordMatchesFilters(feature.properties, filters)
-  );
+  recordDetails.innerHTML = `
+    <div class="empty-state">
+      <p>${mLabel("No record selected yet.", "No record selected yet.")}</p>
+    </div>
+  `;
 
-  renderResultsList(visibleFeatures);
-  drawFeatures(visibleFeatures);
+  updateMonumentActionBar();
+  clearPendingPickPoint();
+  updateAddModeUI();
 }
 
-function clearAllFilters() {
-  if (siteSearch) siteSearch.value = "";
+// --------------------------------------------------------
+// Display mode
+// --------------------------------------------------------
+function renderMonumentRecordDetails(record) {
+  monumentSelectedRecord = record;
 
-  [
-    filterMonumentType,
-    filterClassification,
-    filterDesignation,
-    filterReligion,
-    filterCulturalPeriod,
-    filterCountry
-  ].forEach((selectEl) => {
-    if (!selectEl) return;
-    Array.from(selectEl.options).forEach((option) => {
-      option.selected = false;
+  if (monumentIsEditMode) {
+    renderMonumentEditMode(record);
+  } else {
+    renderMonumentDisplayMode(record);
+  }
+
+  updateMonumentActionBar();
+  updateAddModeUI();
+}
+
+function renderMonumentDisplayMode(record) {
+  const canEditThisRecord = record.source?.is_editable === true;
+  const basicHtml = [
+    mRenderDetailItem(mLabel("Primary Name", "Primary Name"), mSummary(record, "primary_name"), true),
+    mRenderDetailItem(mLabel("Primary Name (English)", "Primary Name (English)"), mSummary(record, "primary_name_english"), true),
+    mRenderDetailItem(mLabel("Other Names", "Other Names"), mRaw(record, "Other Names"), true),
+    mRenderDetailItem(mLabel("Country", "Country"), mSummary(record, "country")),
+    mRenderDetailItem(mLabel("Region", "Region"), mSummary(record, "region")),
+    mRenderDetailItem(mLabel("Classification", "Classification"), mSummary(record, "classification")),
+    mRenderDetailItem(mLabel("CAAL_ID", "CAAL_ID"), mIdentity(record, "caal_id")),
+    mRenderDetailItem(mLabel("Internal Reference", "Internal Reference"), mRaw(record, "Internal Reference")),
+    mRenderDetailItem(mLabel("External Reference", "External Reference"), mRaw(record, "External Reference")),
+    mRenderDetailItem(mLabel("Designation", "Designation"), mSummary(record, "designation")),
+    mRenderDetailItem(mLabel("World Heritage Site Name", "World Heritage Site Name"), mRaw(record, "World Heritage Site Name"))
+  ].join("");
+
+  const monumentHtml = [
+    mRenderDetailItem(mLabel("Monument Passport", "Monument Passport"), mRaw(record, "Monument Passport"), true),
+    mRenderDetailItem(mLabel("Monument Type1", "Monument Type1"), mLookupLabel("monument_type", mRaw(record, "Monument Type1"))),
+    mRenderDetailItem(mLabel("Monument Type2", "Monument Type2"), mLookupLabel("monument_type", mRaw(record, "Monument Type2"))),
+    mRenderDetailItem(mLabel("Monument Type3", "Monument Type3"), mLookupLabel("monument_type", mRaw(record, "Monument Type3"))),
+    mRenderDetailItem(mLabel("Monument Type4", "Monument Type4"), mLookupLabel("monument_type", mRaw(record, "Monument Type4"))),
+    mRenderDetailItem(mLabel("Monument Type5", "Monument Type5"), mLookupLabel("monument_type", mRaw(record, "Monument Type5"))),
+    mRenderDetailItem(mLabel("Monument Type6", "Monument Type6"), mLookupLabel("monument_type", mRaw(record, "Monument Type6"))),
+    mRenderDetailItem(mLabel("Religion1", "Religion1"), mLookupLabel("religion", mRaw(record, "Religion1"))),
+    mRenderDetailItem(mLabel("Religion2", "Religion2"), mLookupLabel("religion", mRaw(record, "Religion2"))),
+    mRenderDetailItem(mLabel("Religion3", "Religion3"), mLookupLabel("religion", mRaw(record, "Religion3"))),
+    mRenderDetailItem(mLabel("Descriptive Date", "Descriptive Date"), mRaw(record, "Descriptive Date"), true),
+    mRenderDetailItem(mLabel("Cultural Period1", "Cultural Period1"), mLookupLabel("cultural_period", mRaw(record, "Cultural Period1"))),
+    mRenderDetailItem(mLabel("Cultural Period2", "Cultural Period2"), mLookupLabel("cultural_period", mRaw(record, "Cultural Period2"))),
+    mRenderDetailItem(mLabel("Cultural Period3", "Cultural Period3"), mLookupLabel("cultural_period", mRaw(record, "Cultural Period3"))),
+    mRenderDetailItem(mLabel("Cultural Period4", "Cultural Period4"), mLookupLabel("cultural_period", mRaw(record, "Cultural Period4"))),
+    mRenderDetailItem(mLabel("Cultural Period5", "Cultural Period5"), mLookupLabel("cultural_period", mRaw(record, "Cultural Period5"))),
+    mRenderDetailItem(mLabel("Cultural Period6", "Cultural Period6"), mLookupLabel("cultural_period", mRaw(record, "Cultural Period6"))),
+    mRenderDetailItem(mLabel("Start Date", "Start Date"), mRaw(record, "Start Date")),
+    mRenderDetailItem(mLabel("End Date", "End Date"), mRaw(record, "End Date")),
+    mRenderDetailItem(mLabel("Primary Description", "Primary Description"), mRaw(record, "Primary Description"), true),
+    mRenderDetailItem(mLabel("Primary Description (English)", "Primary Description (English)"), mRaw(record, "Primary Description (English)"), true),
+    mRenderDetailItem(mLabel("Additional Notes", "Additional Notes"), mRaw(record, "Additional Notes"), true)
+  ].join("");
+
+  const adminHtml = [
+    mRenderDetailItem(mLabel("Primary Address", "Primary Address"), mRaw(record, "Primary Address"), true),
+    mRenderDetailItem(mLabel("Longitude", "Longitude"), mSummary(record, "longitude")),
+    mRenderDetailItem(mLabel("Latitude", "Latitude"), mSummary(record, "latitude")),
+    mRenderDetailItem(mLabel("Altitude", "Altitude"), mRaw(record, "Altitude")),
+    mRenderDetailItem(mLabel("Location Confidence", "Location Confidence"), mLookupLabel("location_confidence", mRaw(record, "Location Confidence"))),
+    mRenderDetailItem(mLabel("Location Notes", "Location Notes"), mRaw(record, "Location Notes"), true),
+    mRenderDetailItem(mLabel("Administrative Subdivision Name1", "Administrative Subdivision Name1"), mRaw(record, "Administrative Subdivision Name1")),
+    mRenderDetailItem(mLabel("Administrative Subdivision Type1", "Administrative Subdivision Type1"), mLookupLabel("admin_subdivision_type", mRaw(record, "Administrative Subdivision Type1"))),
+    mRenderDetailItem(mLabel("Administrative Subdivision Name2", "Administrative Subdivision Name2"), mRaw(record, "Administrative Subdivision Name2")),
+    mRenderDetailItem(mLabel("Administrative Subdivision Type2", "Administrative Subdivision Type2"), mLookupLabel("admin_subdivision_type", mRaw(record, "Administrative Subdivision Type2"))),
+    mRenderDetailItem(mLabel("Administrative Subdivision Name3", "Administrative Subdivision Name3"), mRaw(record, "Administrative Subdivision Name3")),
+    mRenderDetailItem(mLabel("Administrative Subdivision Type3", "Administrative Subdivision Type3"), mLookupLabel("admin_subdivision_type", mRaw(record, "Administrative Subdivision Type3"))),
+    mRenderDetailItem(mLabel("Administrative Subdivision Name4", "Administrative Subdivision Name4"), mRaw(record, "Administrative Subdivision Name4")),
+    mRenderDetailItem(mLabel("Administrative Subdivision Type4", "Administrative Subdivision Type4"), mLookupLabel("admin_subdivision_type", mRaw(record, "Administrative Subdivision Type4")))
+  ].join("");
+
+  const measurementsHtml = [
+    mRenderDetailItem(mLabel("Measurement Value1", "Measurement Value1"), mRaw(record, "Measurement Value1")),
+    mRenderDetailItem(mLabel("Measurement Unit1", "Measurement Unit1"), mLookupLabel("measurement_unit", mRaw(record, "Measurement Unit1"))),
+    mRenderDetailItem(mLabel("Measurement Type1", "Measurement Type1"), mLookupLabel("measurement_type", mRaw(record, "Measurement Type1"))),
+    mRenderDetailItem(mLabel("Measurement Value2", "Measurement Value2"), mRaw(record, "Measurement Value2")),
+    mRenderDetailItem(mLabel("Measurement Unit2", "Measurement Unit2"), mLookupLabel("measurement_unit", mRaw(record, "Measurement Unit2"))),
+    mRenderDetailItem(mLabel("Measurement Type2", "Measurement Type2"), mLookupLabel("measurement_type", mRaw(record, "Measurement Type2"))),
+    mRenderDetailItem(mLabel("Measurement Value3", "Measurement Value3"), mRaw(record, "Measurement Value3")),
+    mRenderDetailItem(mLabel("Measurement Unit3", "Measurement Unit3"), mLookupLabel("measurement_unit", mRaw(record, "Measurement Unit3"))),
+    mRenderDetailItem(mLabel("Measurement Type3", "Measurement Type3"), mLookupLabel("measurement_type", mRaw(record, "Measurement Type3"))),
+    mRenderDetailItem(mLabel("Measurement Value4", "Measurement Value4"), mRaw(record, "Measurement Value4")),
+    mRenderDetailItem(mLabel("Measurement Unit4", "Measurement Unit4"), mLookupLabel("measurement_unit", mRaw(record, "Measurement Unit4"))),
+    mRenderDetailItem(mLabel("Measurement Type4", "Measurement Type4"), mLookupLabel("measurement_type", mRaw(record, "Measurement Type4")))
+  ].join("");
+
+  const metadataHtml = [
+    mRenderDetailItem(mLabel("Preferred Language", "Preferred Language"), mRaw(record, "Preferred Language")),
+    mRenderDetailItem(mLabel("Recorder", "Recorder"), mSummary(record, "recorder")),
+    mRenderDetailItem(mLabel("Date of Recording", "Date of Recording"), mSummary(record, "date_of_recording")),
+    mRenderDetailItem(mLabel("Tstamp", "Tstamp"), mRaw(record, "Tstamp")),
+    mRenderDetailItem(mLabel("MasterID", "MasterID"), mRaw(record, "MasterID"))
+  ].join("");
+
+  const relatedHtml = [
+    mRenderDetailItem(mLabel("Monument is part of", "Monument is part of"), mRaw(record, "Monument is part of"), true),
+    mRenderDetailItem(mLabel("Monument contains", "Monument contains"), mRaw(record, "Monument contains"), true),
+    mRenderDetailItem(mLabel("Monument is associated with", "Monument is associated with"), mRaw(record, "Monument is associated with"), true)
+  ].join("");
+
+  recordDetails.innerHTML = `
+    <div class="record-title">
+      <h3>${mSafeValue(mSummary(record, "primary_name"))}</h3>
+      <p>${mSafeValue(mIdentity(record, "caal_id"))}</p>
+    </div>
+
+    <div class="group-stack">
+      ${mRenderGroupBlock(mLabel("Basic", "Basic"), basicHtml, true)}
+      ${mRenderGroupBlock(mLabel("Monument", "Monument"), monumentHtml, true)}
+      ${mRenderGroupBlock(mLabel("Administration", "Administration"), adminHtml, true)}
+      ${mRenderGroupBlock(mLabel("Measurements", "Measurements"), measurementsHtml, true)}
+      ${mRenderGroupBlock(mLabel("Metadata", "Metadata"), metadataHtml, true)}
+      ${mRenderGroupBlock(mLabel("Related resources", "Related resources"), relatedHtml, true)}
+    </div>
+  `;
+}
+
+// --------------------------------------------------------
+// Edit mode
+// --------------------------------------------------------
+function renderMonumentEditMode(record) {
+  recordDetails.innerHTML = `
+    <div class="record-title">
+      <h3>${mSafeValue(mSummary(record, "primary_name"))}</h3>
+      <p>${mSafeValue(mIdentity(record, "caal_id"))}</p>
+    </div>
+
+    <div class="group-stack">
+      <div class="group-block">
+        <div class="group-grid">
+          <div class="detail-item full-width section-header">
+            <span class="detail-section-title">${mLabel("Basic", "Basic")}</span>
+          </div>
+
+          ${mRenderTextInput("Primary Name", mLabel("Primary Name", "Primary Name"), mRaw(record, "Primary Name"), true)}
+          ${mRenderTextInput("Primary Name (English)", mLabel("Primary Name (English)", "Primary Name (English)"), mRaw(record, "Primary Name (English)"), true)}
+          ${mRenderTextInput("Other Names", mLabel("Other Names", "Other Names"), mRaw(record, "Other Names"), true)}
+
+          ${mRenderSelect("Country", mLabel("Country", "Country"), "country", mRaw(record, "Country"))}
+          ${mRenderTextInput("Region", mLabel("Region", "Region"), mRaw(record, "Region"))}
+
+          ${mRenderSelect("Classification", mLabel("Classification", "Classification"), "classification", mRaw(record, "Classification"))}
+          ${mRenderReadOnlyItem(mLabel("CAAL_ID", "CAAL_ID"), mIdentity(record, "caal_id"))}
+
+          ${mRenderTextInput("Internal Reference", mLabel("Internal Reference", "Internal Reference"), mRaw(record, "Internal Reference"))}
+          ${mRenderTextInput("External Reference", mLabel("External Reference", "External Reference"), mRaw(record, "External Reference"))}
+
+          ${mRenderSelect("Designation", mLabel("Designation", "Designation"), "designation", mRaw(record, "Designation"))}
+          ${mRenderTextInput("World Heritage Site Name", mLabel("World Heritage Site Name", "World Heritage Site Name"), mRaw(record, "World Heritage Site Name"))}
+        </div>
+      </div>
+
+      <div class="group-block">
+        <div class="group-grid">
+          <div class="detail-item full-width section-header">
+            <span class="detail-section-title">${mLabel("Monument", "Monument")}</span>
+          </div>
+
+          ${mRenderTextInput("Monument Passport", mLabel("Monument Passport", "Monument Passport"), mRaw(record, "Monument Passport"), true)}
+
+          ${mRenderSelect("Monument Type1", mLabel("Monument Type1", "Monument Type1"), "monument_type", mRaw(record, "Monument Type1"))}
+          ${mRenderSelect("Monument Type2", mLabel("Monument Type2", "Monument Type2"), "monument_type", mRaw(record, "Monument Type2"))}
+          ${mRenderSelect("Monument Type3", mLabel("Monument Type3", "Monument Type3"), "monument_type", mRaw(record, "Monument Type3"))}
+          ${mRenderSelect("Monument Type4", mLabel("Monument Type4", "Monument Type4"), "monument_type", mRaw(record, "Monument Type4"))}
+          ${mRenderSelect("Monument Type5", mLabel("Monument Type5", "Monument Type5"), "monument_type", mRaw(record, "Monument Type5"))}
+          ${mRenderSelect("Monument Type6", mLabel("Monument Type6", "Monument Type6"), "monument_type", mRaw(record, "Monument Type6"))}
+
+          ${mRenderSelect("Religion1", mLabel("Religion1", "Religion1"), "religion", mRaw(record, "Religion1"))}
+          ${mRenderSelect("Religion2", mLabel("Religion2", "Religion2"), "religion", mRaw(record, "Religion2"))}
+          ${mRenderSelect("Religion3", mLabel("Religion3", "Religion3"), "religion", mRaw(record, "Religion3"))}
+
+          ${mRenderTextInput("Descriptive Date", mLabel("Descriptive Date", "Descriptive Date"), mRaw(record, "Descriptive Date"), true)}
+
+          ${mRenderSelect("Cultural Period1", mLabel("Cultural Period1", "Cultural Period1"), "cultural_period", mRaw(record, "Cultural Period1"))}
+          ${mRenderSelect("Cultural Period2", mLabel("Cultural Period2", "Cultural Period2"), "cultural_period", mRaw(record, "Cultural Period2"))}
+          ${mRenderSelect("Cultural Period3", mLabel("Cultural Period3", "Cultural Period3"), "cultural_period", mRaw(record, "Cultural Period3"))}
+          ${mRenderSelect("Cultural Period4", mLabel("Cultural Period4", "Cultural Period4"), "cultural_period", mRaw(record, "Cultural Period4"))}
+          ${mRenderSelect("Cultural Period5", mLabel("Cultural Period5", "Cultural Period5"), "cultural_period", mRaw(record, "Cultural Period5"))}
+          ${mRenderSelect("Cultural Period6", mLabel("Cultural Period6", "Cultural Period6"), "cultural_period", mRaw(record, "Cultural Period6"))}
+
+          ${mRenderReadOnlyItem(mLabel("Start Date", "Start Date"), mRaw(record, "Start Date"))}
+          ${mRenderReadOnlyItem(mLabel("End Date", "End Date"), mRaw(record, "End Date"))}
+
+          ${mRenderTextarea("Primary Description", mLabel("Primary Description", "Primary Description"), mRaw(record, "Primary Description"), true)}
+          ${mRenderTextarea("Primary Description (English)", mLabel("Primary Description (English)", "Primary Description (English)"), mRaw(record, "Primary Description (English)"), true)}
+          ${mRenderTextarea("Additional Notes", mLabel("Additional Notes", "Additional Notes"), mRaw(record, "Additional Notes"), true)}
+        </div>
+      </div>
+
+      <div class="group-block">
+        <div class="group-grid">
+          <div class="detail-item full-width section-header">
+            <span class="detail-section-title">${mLabel("Administration", "Administration")}</span>
+          </div>
+
+          ${mRenderTextInput("Primary Address", mLabel("Primary Address", "Primary Address"), mRaw(record, "Primary Address"), true)}
+          ${mRenderNumberInput("Longitude", mLabel("Longitude", "Longitude"), mRaw(record, "Longitude"), "0.000001")}
+          ${mRenderNumberInput("Latitude", mLabel("Latitude", "Latitude"), mRaw(record, "Latitude"), "0.000001")}
+          ${mRenderNumberInput("Altitude", mLabel("Altitude", "Altitude"), mRaw(record, "Altitude"), "any")}
+          ${mRenderSelect("Location Confidence", mLabel("Location Confidence", "Location Confidence"), "location_confidence", mRaw(record, "Location Confidence"))}
+
+          ${mRenderTextarea("Location Notes", mLabel("Location Notes", "Location Notes"), mRaw(record, "Location Notes"), true)}
+
+          ${mRenderTextInput("Administrative Subdivision Name1", mLabel("Administrative Subdivision Name1", "Administrative Subdivision Name1"), mRaw(record, "Administrative Subdivision Name1"))}
+          ${mRenderSelect("Administrative Subdivision Type1", mLabel("Administrative Subdivision Type1", "Administrative Subdivision Type1"), "admin_subdivision_type", mRaw(record, "Administrative Subdivision Type1"))}
+          ${mRenderTextInput("Administrative Subdivision Name2", mLabel("Administrative Subdivision Name2", "Administrative Subdivision Name2"), mRaw(record, "Administrative Subdivision Name2"))}
+          ${mRenderSelect("Administrative Subdivision Type2", mLabel("Administrative Subdivision Type2", "Administrative Subdivision Type2"), "admin_subdivision_type", mRaw(record, "Administrative Subdivision Type2"))}
+          ${mRenderTextInput("Administrative Subdivision Name3", mLabel("Administrative Subdivision Name3", "Administrative Subdivision Name3"), mRaw(record, "Administrative Subdivision Name3"))}
+          ${mRenderSelect("Administrative Subdivision Type3", mLabel("Administrative Subdivision Type3", "Administrative Subdivision Type3"), "admin_subdivision_type", mRaw(record, "Administrative Subdivision Type3"))}
+          ${mRenderTextInput("Administrative Subdivision Name4", mLabel("Administrative Subdivision Name4", "Administrative Subdivision Name4"), mRaw(record, "Administrative Subdivision Name4"))}
+          ${mRenderSelect("Administrative Subdivision Type4", mLabel("Administrative Subdivision Type4", "Administrative Subdivision Type4"), "admin_subdivision_type", mRaw(record, "Administrative Subdivision Type4"))}
+        </div>
+      </div>
+
+      <div class="group-block">
+        <div class="group-grid">
+          <div class="detail-item full-width section-header">
+            <span class="detail-section-title">${mLabel("Measurements", "Measurements")}</span>
+          </div>
+
+          ${mRenderNumberInput("Measurement Value1", mLabel("Measurement Value1", "Measurement Value1"), mRaw(record, "Measurement Value1"))}
+          ${mRenderSelect("Measurement Unit1", mLabel("Measurement Unit1", "Measurement Unit1"), "measurement_unit", mRaw(record, "Measurement Unit1"))}
+          ${mRenderSelect("Measurement Type1", mLabel("Measurement Type1", "Measurement Type1"), "measurement_type", mRaw(record, "Measurement Type1"))}
+
+          ${mRenderNumberInput("Measurement Value2", mLabel("Measurement Value2", "Measurement Value2"), mRaw(record, "Measurement Value2"))}
+          ${mRenderSelect("Measurement Unit2", mLabel("Measurement Unit2", "Measurement Unit2"), "measurement_unit", mRaw(record, "Measurement Unit2"))}
+          ${mRenderSelect("Measurement Type2", mLabel("Measurement Type2", "Measurement Type2"), "measurement_type", mRaw(record, "Measurement Type2"))}
+
+          ${mRenderNumberInput("Measurement Value3", mLabel("Measurement Value3", "Measurement Value3"), mRaw(record, "Measurement Value3"))}
+          ${mRenderSelect("Measurement Unit3", mLabel("Measurement Unit3", "Measurement Unit3"), "measurement_unit", mRaw(record, "Measurement Unit3"))}
+          ${mRenderSelect("Measurement Type3", mLabel("Measurement Type3", "Measurement Type3"), "measurement_type", mRaw(record, "Measurement Type3"))}
+
+          ${mRenderNumberInput("Measurement Value4", mLabel("Measurement Value4", "Measurement Value4"), mRaw(record, "Measurement Value4"))}
+          ${mRenderSelect("Measurement Unit4", mLabel("Measurement Unit4", "Measurement Unit4"), "measurement_unit", mRaw(record, "Measurement Unit4"))}
+          ${mRenderSelect("Measurement Type4", mLabel("Measurement Type4", "Measurement Type4"), "measurement_type", mRaw(record, "Measurement Type4"))}
+        </div>
+      </div>
+
+      <div class="group-block">
+        <div class="group-grid">
+          <div class="detail-item full-width section-header">
+            <span class="detail-section-title">${mLabel("Metadata", "Metadata")}</span>
+          </div>
+
+          ${mRenderReadOnlyItem(mLabel("Preferred Language", "Preferred Language"), mRaw(record, "Preferred Language"))}
+          ${mRenderReadOnlyItem(mLabel("Recorder", "Recorder"), mRaw(record, "Recorder"))}
+          ${mRenderReadOnlyItem(mLabel("Date of Recording", "Date of Recording"), mRaw(record, "Date of Recording") || mLabel("Set automatically on save", "Set automatically on save"))}
+          ${mRenderReadOnlyItem(mLabel("Tstamp", "Tstamp"), mRaw(record, "Tstamp"))}
+          ${mRenderTextInput("MasterID", mLabel("MasterID", "MasterID"), mRaw(record, "MasterID"))}
+        </div>
+      </div>
+
+      <div class="group-block">
+        <div class="group-grid">
+          <div class="detail-item full-width section-header">
+            <span class="detail-section-title">${mLabel("Related resources", "Related resources")}</span>
+          </div>
+
+          ${mRenderTextInput("Monument is part of", mLabel("Monument is part of", "Monument is part of"), mRaw(record, "Monument is part of"), true)}
+          ${mRenderTextInput("Monument contains", mLabel("Monument contains", "Monument contains"), mRaw(record, "Monument contains"), true)}
+          ${mRenderTextInput("Monument is associated with", mLabel("Monument is associated with", "Monument is associated with"), mRaw(record, "Monument is associated with"), true)}
+        </div>
+      </div>
+    </div>
+  `;
+
+}
+
+Array.from(document.querySelectorAll("#monumentDetailPane input, #monumentDetailPane textarea, #monumentDetailPane select"))
+  .forEach((el) => {
+    el.addEventListener("input", () => {
+      monumentIsDirty = true;
+    });
+    el.addEventListener("change", () => {
+      monumentIsDirty = true;
     });
   });
 
-  applyMonumentsFilters();
-}
-
 // --------------------------------------------------------
-// Expand/collapse advanced filters
+// Add mode
 // --------------------------------------------------------
-if (toggleFiltersBtn && filtersPanel) {
-  toggleFiltersBtn.addEventListener("click", () => {
-    const isHidden = filtersPanel.hidden;
-    filtersPanel.hidden = !isHidden;
-    toggleFiltersBtn.textContent = isHidden ? "Hide advanced filters" : "Advanced filters";
-  });
-}
+function makeNewBlankMonumentRecord() {
+  const lang =
+    (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
+    window.appSession?.profile?.preferred_language ||
+    "en";
+
+  const sessionCountry = window.appSession?.profile?.country || "";
+  const sessionUsername = window.appSession?.user?.username || "";
+  const today = new Date().toISOString().slice(0, 10);
 
-if (clearFiltersBtn) {
-  clearFiltersBtn.addEventListener("click", clearAllFilters);
-}
-
-// --------------------------------------------------------
-// Record panel helpers
-// --------------------------------------------------------
-function renderRecordDetails(properties) {
-  selectedProperties = properties;
-
-  if (isEditMode) {
-    renderEditMode(properties);
-  } else {
-    renderDisplayMode(properties);
-  }
-}
-
-function renderDisplayMode(properties) {
-  let basicHtml = "";
-  basicHtml += renderDetailItem("Primary Name", properties["Primary Name"], true);
-  basicHtml += renderDetailItem(t("primary_name_en"), properties["Primary Name (English)"], true);
-  basicHtml += renderDetailItem(t("other_names"), properties["Other Names"], true);
-  basicHtml += renderDetailItem(t("country"), properties["Country"]);
-  basicHtml += renderDetailItem(t("region"), properties["Region"]);
-  basicHtml += renderDetailItem(t("classification"), properties["Classification"]);
-  basicHtml += renderDetailItem(t("caal_id"), properties["CAAL_ID"]);
-  basicHtml += renderDetailItem(t("internal_reference"), properties["Internal Reference"]);
-  basicHtml += renderDetailItem(t("external_reference"), properties["External Reference"]);
-  basicHtml += renderDetailItem(t("designation"), properties["Designation"]);
-  basicHtml += renderDetailItem(t("world_heritage_site_name"), properties["World Heritage Site Name"]);
-
-  let monumentHtml = "";
-  monumentHtml += renderDetailItem(t("monument_passport"), properties["Monument Passport"], true);
-  monumentHtml += renderDetailItem(t("monument_type1"), properties["Monument Type1"]);
-  monumentHtml += renderDetailItem(t("monument_type2"), properties["Monument Type2"]);
-  monumentHtml += renderDetailItem(t("monument_type3"), properties["Monument Type3"]);
-  monumentHtml += renderDetailItem(t("monument_type4"), properties["Monument Type4"]);
-  monumentHtml += renderDetailItem(t("monument_type5"), properties["Monument Type5"]);
-  monumentHtml += renderDetailItem(t("monument_type6"), properties["Monument Type6"]);
-  monumentHtml += renderDetailItem(t("religion1"), properties["Religion1"]);
-  monumentHtml += renderDetailItem(t("religion2"), properties["Religion2"]);
-  monumentHtml += renderDetailItem(t("religion3"), properties["Religion3"]);
-  monumentHtml += renderDetailItem(t("descriptive_date"), properties["Descriptive Date"], true);
-  monumentHtml += renderDetailItem(t("cultural_period1"), properties["Cultural Period1"]);
-  monumentHtml += renderDetailItem(t("cultural_period2"), properties["Cultural Period2"]);
-  monumentHtml += renderDetailItem(t("cultural_period3"), properties["Cultural Period3"]);
-  monumentHtml += renderDetailItem(t("cultural_period4"), properties["Cultural Period4"]);
-  monumentHtml += renderDetailItem(t("cultural_period5"), properties["Cultural Period5"]);
-  monumentHtml += renderDetailItem(t("cultural_period6"), properties["Cultural Period6"]);
-  monumentHtml += renderDetailItem(t("start_date"), properties["Start Date"]);
-  monumentHtml += renderDetailItem(t("end_date"), properties["End Date"]);
-  monumentHtml += renderDetailItem(t("primary_description"), properties["Primary Description"], true);
-  monumentHtml += renderDetailItem(t("primary_description_en"), properties["Primary Description (English)"], true);
-  monumentHtml += renderDetailItem(t("additional_notes"), properties["Additional Notes"], true);
-
-  let adminHtml = "";
-  adminHtml += renderDetailItem(t("primary_address"), properties["Primary Address"], true);
-  adminHtml += renderDetailItem(t("longitude"), formatValue(properties["Longitude"], 6));
-  adminHtml += renderDetailItem(t("latitude"), formatValue(properties["Latitude"], 6));
-  adminHtml += renderDetailItem(t("altitude"), formatValue(properties["Altitude"]));
-  adminHtml += renderDetailItem(t("location_confidence"), properties["Location Confidence"]);
-  adminHtml += renderDetailItem(t("location_notes"), properties["Location Notes"], true);
-  adminHtml += renderDetailItem(t("admin_subdivision_name1"), properties["Administrative Subdivision Name1"]);
-  adminHtml += renderDetailItem(t("admin_subdivision_type1"), properties["Administrative Subdivision Type1"]);
-  adminHtml += renderDetailItem(t("admin_subdivision_name2"), properties["Administrative Subdivision Name2"]);
-  adminHtml += renderDetailItem(t("admin_subdivision_type2"), properties["Administrative Subdivision Type2"]);
-  adminHtml += renderDetailItem(t("admin_subdivision_name3"), properties["Administrative Subdivision Name3"]);
-  adminHtml += renderDetailItem(t("admin_subdivision_type3"), properties["Administrative Subdivision Type3"]);
-  adminHtml += renderDetailItem(t("admin_subdivision_name4"), properties["Administrative Subdivision Name4"]);
-  adminHtml += renderDetailItem(t("admin_subdivision_type4"), properties["Administrative Subdivision Type4"]);
-
-  let measurementsHtml = "";
-  measurementsHtml += renderDetailItem(t("measurement_value1"), properties["Measurement Value1"]);
-  measurementsHtml += renderDetailItem(t("measurement_unit1"), properties["Measurement Unit1"]);
-  measurementsHtml += renderDetailItem(t("measurement_type1"), properties["Measurement Type1"]);
-  measurementsHtml += renderDetailItem(t("measurement_value2"), properties["Measurement Value2"]);
-  measurementsHtml += renderDetailItem(t("measurement_unit2"), properties["Measurement Unit2"]);
-  measurementsHtml += renderDetailItem(t("measurement_type2"), properties["Measurement Type2"]);
-  measurementsHtml += renderDetailItem(t("measurement_value3"), properties["Measurement Value3"]);
-  measurementsHtml += renderDetailItem(t("measurement_unit3"), properties["Measurement Unit3"]);
-  measurementsHtml += renderDetailItem(t("measurement_type3"), properties["Measurement Type3"]);
-  measurementsHtml += renderDetailItem(t("measurement_value4"), properties["Measurement Value4"]);
-  measurementsHtml += renderDetailItem(t("measurement_unit4"), properties["Measurement Unit4"]);
-  measurementsHtml += renderDetailItem(t("measurement_type4"), properties["Measurement Type4"]);
-
-  let metadataHtml = "";
-  metadataHtml += renderDetailItem(t("preferred_language"), properties["Preferred Language"]);
-  metadataHtml += renderDetailItem(t("recorder"), properties["Recorder"]);
-  metadataHtml += renderDetailItem(t("date_of_recording"), properties["Date of Recording"]);
-  metadataHtml += renderDetailItem(t("tstamp"), properties["Tstamp"]);
-  metadataHtml += renderDetailItem(t("master_id"), properties["MasterID"]);
-
-  let relatedHtml = "";
-  relatedHtml += renderDetailItem(t("monument_is_part_of"), properties["Monument is part of"], true);
-  relatedHtml += renderDetailItem(t("monument_contains"), properties["Monument contains"], true);
-  relatedHtml += renderDetailItem(t("monument_is_associated_with"), properties["Monument is associated with"], true);
-
-  function sectionHasValues(fieldNames) {
-    return fieldNames.some((fieldName) => hasValue(properties[fieldName]));
-  }
-
-  const basicHasValues = sectionHasValues([
-    "Primary Name", "Primary Name (English)", "Other Names", "Country", "Region",
-    "Classification", "CAAL_ID", "Internal Reference", "External Reference",
-    "Designation", "World Heritage Site Name"
-  ]);
-
-  const monumentHasValues = sectionHasValues([
-    "Monument Passport", "Monument Type1", "Monument Type2", "Monument Type3",
-    "Monument Type4", "Monument Type5", "Monument Type6", "Religion1", "Religion2",
-    "Religion3", "Descriptive Date", "Cultural Period1", "Cultural Period2",
-    "Cultural Period3", "Cultural Period4", "Cultural Period5", "Cultural Period6",
-    "Start Date", "End Date", "Primary Description",
-    "Primary Description (English)", "Additional Notes"
-  ]);
-
-  const adminHasValues = sectionHasValues([
-    "Primary Address", "Longitude", "Latitude", "Altitude", "Location Confidence",
-    "Location Notes", "Administrative Subdivision Name1", "Administrative Subdivision Type1",
-    "Administrative Subdivision Name2", "Administrative Subdivision Type2",
-    "Administrative Subdivision Name3", "Administrative Subdivision Type3",
-    "Administrative Subdivision Name4", "Administrative Subdivision Type4"
-  ]);
-
-  const measurementsHasValues = sectionHasValues([
-    "Measurement Value1", "Measurement Unit1", "Measurement Type1",
-    "Measurement Value2", "Measurement Unit2", "Measurement Type2",
-    "Measurement Value3", "Measurement Unit3", "Measurement Type3",
-    "Measurement Value4", "Measurement Unit4", "Measurement Type4"
-  ]);
-
-  const metadataHasValues = sectionHasValues([
-    "Preferred Language", "Recorder", "Date of Recording", "Tstamp", "MasterID"
-  ]);
-
-  const relatedHasValues = sectionHasValues([
-    "Monument is part of", "Monument contains", "Monument is associated with"
-  ]);
-
-  recordDetails.innerHTML = `
-    <div class="record-title">
-      <h3>${safeValue(properties["Primary Name"])}</h3>
-      <p>${safeValue(properties["CAAL_ID"])}</p>
-    </div>
-
-    <div class="panel-actions">
-      <button type="button" class="action-btn" id="editRecordBtn">
-        ${t("edit_record")}
-      </button>
-    </div>
-
-    <div class="group-stack">
-      ${renderGroupBlock(t("basic_group"), basicHtml, basicHasValues)}
-      ${renderGroupBlock(t("monument_group"), monumentHtml, monumentHasValues)}
-      ${renderGroupBlock(t("administration_group"), adminHtml, adminHasValues)}
-      ${renderGroupBlock(t("measurements_group"), measurementsHtml, measurementsHasValues)}
-      ${renderGroupBlock(t("metadata_group"), metadataHtml, metadataHasValues)}
-      ${renderGroupBlock(t("related_resources_group"), relatedHtml, relatedHasValues)}
-    </div>
-  `;
-
-  document.getElementById("editRecordBtn").addEventListener("click", () => {
-    isEditMode = true;
-    renderRecordDetails(selectedProperties);
-  });
-}
-
-function updateSelectedFeatureGeometryFromCoordinates() {
-  if (!selectedProperties) {
-    return false;
-  }
-
-  const lng = Number(getInputValue("Longitude"));
-  const lat = Number(getInputValue("Latitude"));
-
-  if (isNaN(lng) || isNaN(lat)) {
-    alert("Please enter valid longitude and latitude values.");
-    return false;
-  }
-
-  selectedProperties["Longitude"] = lng;
-  selectedProperties["Latitude"] = lat;
-
-  if (pendingNewFeature && pendingNewFeature.properties === selectedProperties) {
-    pendingNewFeature.geometry = {
-      type: "Point",
-      coordinates: [lng, lat]
-    };
-    return true;
-  }
-
-  const matchingFeature = allFeatures.find(
-    (feature) => feature.properties === selectedProperties
-  );
-
-  if (matchingFeature) {
-    matchingFeature.geometry = {
-      type: "Point",
-      coordinates: [lng, lat]
-    };
-    drawFeatures(allFeatures);
-  }
-
-  return true;
-}
-
-function renderEditMode(properties) {
-  recordDetails.innerHTML = `
-    <div class="record-title">
-      <h3>${safeValue(properties["Primary Name"])}</h3>
-      <p>${safeValue(properties["CAAL_ID"])}</p>
-    </div>
-
-    <div class="panel-actions">
-      <button type="button" class="action-btn primary" id="saveRecordBtn">${t("save")}</button>
-      <button type="button" class="action-btn" id="cancelEditBtn">${t("cancel")}</button>
-    </div>
-
-    <div class="group-stack">
-
-      <div class="group-block">
-        <div class="group-grid">
-          <div class="detail-item full-width section-header">
-            <span class="detail-section-title">${t("basic_group")}</span>
-          </div>
-
-          ${renderTextInput("Primary Name", "Primary Name", properties["Primary Name"], true)}
-          ${renderTextInput("Primary Name (English)", t("primary_name_en"), properties["Primary Name (English)"], true)}
-          ${renderTextInput("Other Names", t("other_names"), properties["Other Names"], true)}
-
-          ${renderSelectInput("Country", t("country"), "country", properties["Country"])}
-          ${renderTextInput("Region", t("region"), properties["Region"])}
-
-          ${renderTextInput("Classification", t("classification"), properties["Classification"])}
-          ${renderReadOnlyItem(t("caal_id"), properties["CAAL_ID"])}
-
-          ${renderTextInput("Internal Reference", t("internal_reference"), properties["Internal Reference"])}
-          ${renderTextInput("External Reference", t("external_reference"), properties["External Reference"])}
-
-          ${renderTextInput("Designation", t("designation"), properties["Designation"])}
-          ${renderTextInput("World Heritage Site Name", t("world_heritage_site_name"), properties["World Heritage Site Name"])}
-        </div>
-      </div>
-
-      <div class="group-block">
-        <div class="group-grid">
-          <div class="detail-item full-width section-header">
-            <span class="detail-section-title">${t("monument_group")}</span>
-          </div>
-
-          ${renderTextInput("Monument Passport", t("monument_passport"), properties["Monument Passport"], true)}
-
-          ${renderSelectInput("Monument Type1", t("monument_type1"), "monument_type1", properties["Monument Type1"])}
-          ${renderTextInput("Monument Type2", t("monument_type2"), properties["Monument Type2"])}
-          ${renderTextInput("Monument Type3", t("monument_type3"), properties["Monument Type3"])}
-          ${renderTextInput("Monument Type4", t("monument_type4"), properties["Monument Type4"])}
-          ${renderTextInput("Monument Type5", t("monument_type5"), properties["Monument Type5"])}
-          ${renderTextInput("Monument Type6", t("monument_type6"), properties["Monument Type6"])}
-
-          ${renderTextInput("Religion1", t("religion1"), properties["Religion1"])}
-          ${renderTextInput("Religion2", t("religion2"), properties["Religion2"])}
-          ${renderTextInput("Religion3", t("religion3"), properties["Religion3"])}
-
-          ${renderTextInput("Descriptive Date", t("descriptive_date"), properties["Descriptive Date"], true)}
-
-          ${renderSelectInput("Cultural Period1", t("cultural_period1"), "cultural_period1", properties["Cultural Period1"])}
-          ${renderTextInput("Cultural Period2", t("cultural_period2"), properties["Cultural Period2"])}
-          ${renderTextInput("Cultural Period3", t("cultural_period3"), properties["Cultural Period3"])}
-          ${renderTextInput("Cultural Period4", t("cultural_period4"), properties["Cultural Period4"])}
-          ${renderTextInput("Cultural Period5", t("cultural_period5"), properties["Cultural Period5"])}
-          ${renderTextInput("Cultural Period6", t("cultural_period6"), properties["Cultural Period6"])}
-
-          ${renderReadOnlyItem(t("start_date"), properties["Start Date"])}
-          ${renderReadOnlyItem(t("end_date"), properties["End Date"])}
-
-          ${renderTextarea("Primary Description", t("primary_description"), properties["Primary Description"], true)}
-          ${renderTextarea("Primary Description (English)", t("primary_description_en"), properties["Primary Description (English)"], true)}
-          ${renderTextarea("Additional Notes", t("additional_notes"), properties["Additional Notes"], true)}
-        </div>
-      </div>
-
-      <div class="group-block">
-        <div class="group-grid">
-          <div class="detail-item full-width section-header">
-            <span class="detail-section-title">${t("administration_group")}</span>
-          </div>
-
-          ${renderTextInput("Primary Address", t("primary_address"), properties["Primary Address"], true)}
-
-          ${renderNumberInput("Longitude", t("longitude"), properties["Longitude"], "0.000001")}
-          ${renderNumberInput("Latitude", t("latitude"), properties["Latitude"], "0.000001")}
-          ${renderNumberInput("Altitude", t("altitude"), properties["Altitude"], "any")}
-          ${renderTextInput("Location Confidence", t("location_confidence"), properties["Location Confidence"])}
-
-          <div class="detail-item full-width">
-            <div class="panel-actions">
-              <button type="button" class="action-btn" id="setLocationBtn">${t("set_location_from_coordinates")}</button>
-              <button type="button" class="action-btn" id="pickLocationBtn">Pick location on map</button>
-            </div>
-          </div>
-
-          ${renderTextarea("Location Notes", t("location_notes"), properties["Location Notes"], true)}
-
-          ${renderTextInput("Administrative Subdivision Name1", t("admin_subdivision_name1"), properties["Administrative Subdivision Name1"])}
-          ${renderTextInput("Administrative Subdivision Type1", t("admin_subdivision_type1"), properties["Administrative Subdivision Type1"])}
-          ${renderTextInput("Administrative Subdivision Name2", t("admin_subdivision_name2"), properties["Administrative Subdivision Name2"])}
-          ${renderTextInput("Administrative Subdivision Type2", t("admin_subdivision_type2"), properties["Administrative Subdivision Type2"])}
-          ${renderTextInput("Administrative Subdivision Name3", t("admin_subdivision_name3"), properties["Administrative Subdivision Name3"])}
-          ${renderTextInput("Administrative Subdivision Type3", t("admin_subdivision_type3"), properties["Administrative Subdivision Type3"])}
-          ${renderTextInput("Administrative Subdivision Name4", t("admin_subdivision_name4"), properties["Administrative Subdivision Name4"])}
-          ${renderTextInput("Administrative Subdivision Type4", t("admin_subdivision_type4"), properties["Administrative Subdivision Type4"])}
-        </div>
-      </div>
-
-      <div class="group-block">
-        <div class="group-grid">
-          <div class="detail-item full-width section-header">
-            <span class="detail-section-title">${t("measurements_group")}</span>
-          </div>
-
-          ${renderNumberInput("Measurement Value1", t("measurement_value1"), properties["Measurement Value1"])}
-          ${renderTextInput("Measurement Unit1", t("measurement_unit1"), properties["Measurement Unit1"])}
-          ${renderTextInput("Measurement Type1", t("measurement_type1"), properties["Measurement Type1"])}
-
-          ${renderNumberInput("Measurement Value2", t("measurement_value2"), properties["Measurement Value2"])}
-          ${renderTextInput("Measurement Unit2", t("measurement_unit2"), properties["Measurement Unit2"])}
-          ${renderTextInput("Measurement Type2", t("measurement_type2"), properties["Measurement Type2"])}
-
-          ${renderNumberInput("Measurement Value3", t("measurement_value3"), properties["Measurement Value3"])}
-          ${renderTextInput("Measurement Unit3", t("measurement_unit3"), properties["Measurement Unit3"])}
-          ${renderTextInput("Measurement Type3", t("measurement_type3"), properties["Measurement Type3"])}
-
-          ${renderNumberInput("Measurement Value4", t("measurement_value4"), properties["Measurement Value4"])}
-          ${renderTextInput("Measurement Unit4", t("measurement_unit4"), properties["Measurement Unit4"])}
-          ${renderTextInput("Measurement Type4", t("measurement_type4"), properties["Measurement Type4"])}
-        </div>
-      </div>
-
-      <div class="group-block">
-        <div class="group-grid">
-          <div class="detail-item full-width section-header">
-            <span class="detail-section-title">${t("metadata_group")}</span>
-          </div>
-
-          ${renderReadOnlyItem(t("preferred_language"), properties["Preferred Language"])}
-          ${renderReadOnlyItem(t("recorder"), properties["Recorder"])}
-          ${renderTextInput("Date of Recording", t("date_of_recording"), properties["Date of Recording"])}
-          ${renderReadOnlyItem(t("tstamp"), properties["Tstamp"])}
-          ${renderTextInput("MasterID", t("master_id"), properties["MasterID"])}
-        </div>
-      </div>
-
-      <div class="group-block">
-        <div class="group-grid">
-          <div class="detail-item full-width section-header">
-            <span class="detail-section-title">${t("related_resources_group")}</span>
-          </div>
-
-          ${renderTextInput("Monument is part of", t("monument_is_part_of"), properties["Monument is part of"], true)}
-          ${renderTextInput("Monument contains", t("monument_contains"), properties["Monument contains"], true)}
-          ${renderTextInput("Monument is associated with", t("monument_is_associated_with"), properties["Monument is associated with"], true)}
-        </div>
-      </div>
-    </div>
-  `;
-
-  document.getElementById("saveRecordBtn").addEventListener("click", () => {
-    selectedProperties["Primary Name"] = getInputValue("Primary Name");
-    selectedProperties["Primary Name (English)"] = getInputValue("Primary Name (English)");
-    selectedProperties["Other Names"] = getInputValue("Other Names");
-    selectedProperties["Country"] = getInputValue("Country");
-    selectedProperties["Region"] = getInputValue("Region");
-    selectedProperties["Classification"] = getInputValue("Classification");
-    selectedProperties["Internal Reference"] = getInputValue("Internal Reference");
-    selectedProperties["External Reference"] = getInputValue("External Reference");
-    selectedProperties["Designation"] = getInputValue("Designation");
-    selectedProperties["World Heritage Site Name"] = getInputValue("World Heritage Site Name");
-
-    selectedProperties["Monument Passport"] = getInputValue("Monument Passport");
-    selectedProperties["Monument Type1"] = getInputValue("Monument Type1");
-    selectedProperties["Monument Type2"] = getInputValue("Monument Type2");
-    selectedProperties["Monument Type3"] = getInputValue("Monument Type3");
-    selectedProperties["Monument Type4"] = getInputValue("Monument Type4");
-    selectedProperties["Monument Type5"] = getInputValue("Monument Type5");
-    selectedProperties["Monument Type6"] = getInputValue("Monument Type6");
-
-    selectedProperties["Religion1"] = getInputValue("Religion1");
-    selectedProperties["Religion2"] = getInputValue("Religion2");
-    selectedProperties["Religion3"] = getInputValue("Religion3");
-    selectedProperties["Descriptive Date"] = getInputValue("Descriptive Date");
-
-    selectedProperties["Cultural Period1"] = getInputValue("Cultural Period1");
-    selectedProperties["Cultural Period2"] = getInputValue("Cultural Period2");
-    selectedProperties["Cultural Period3"] = getInputValue("Cultural Period3");
-    selectedProperties["Cultural Period4"] = getInputValue("Cultural Period4");
-    selectedProperties["Cultural Period5"] = getInputValue("Cultural Period5");
-    selectedProperties["Cultural Period6"] = getInputValue("Cultural Period6");
-
-    selectedProperties["Primary Description"] = getInputValue("Primary Description");
-    selectedProperties["Primary Description (English)"] = getInputValue("Primary Description (English)");
-    selectedProperties["Additional Notes"] = getInputValue("Additional Notes");
-
-    selectedProperties["Primary Address"] = getInputValue("Primary Address");
-    selectedProperties["Longitude"] = getInputValue("Longitude");
-    selectedProperties["Latitude"] = getInputValue("Latitude");
-    selectedProperties["Altitude"] = getInputValue("Altitude");
-    selectedProperties["Location Confidence"] = getInputValue("Location Confidence");
-    selectedProperties["Location Notes"] = getInputValue("Location Notes");
-
-    selectedProperties["Administrative Subdivision Name1"] = getInputValue("Administrative Subdivision Name1");
-    selectedProperties["Administrative Subdivision Type1"] = getInputValue("Administrative Subdivision Type1");
-    selectedProperties["Administrative Subdivision Name2"] = getInputValue("Administrative Subdivision Name2");
-    selectedProperties["Administrative Subdivision Type2"] = getInputValue("Administrative Subdivision Type2");
-    selectedProperties["Administrative Subdivision Name3"] = getInputValue("Administrative Subdivision Name3");
-    selectedProperties["Administrative Subdivision Type3"] = getInputValue("Administrative Subdivision Type3");
-    selectedProperties["Administrative Subdivision Name4"] = getInputValue("Administrative Subdivision Name4");
-    selectedProperties["Administrative Subdivision Type4"] = getInputValue("Administrative Subdivision Type4");
-
-    selectedProperties["Measurement Value1"] = getInputValue("Measurement Value1");
-    selectedProperties["Measurement Unit1"] = getInputValue("Measurement Unit1");
-    selectedProperties["Measurement Type1"] = getInputValue("Measurement Type1");
-    selectedProperties["Measurement Value2"] = getInputValue("Measurement Value2");
-    selectedProperties["Measurement Unit2"] = getInputValue("Measurement Unit2");
-    selectedProperties["Measurement Type2"] = getInputValue("Measurement Type2");
-    selectedProperties["Measurement Value3"] = getInputValue("Measurement Value3");
-    selectedProperties["Measurement Unit3"] = getInputValue("Measurement Unit3");
-    selectedProperties["Measurement Type3"] = getInputValue("Measurement Type3");
-    selectedProperties["Measurement Value4"] = getInputValue("Measurement Value4");
-    selectedProperties["Measurement Unit4"] = getInputValue("Measurement Unit4");
-    selectedProperties["Measurement Type4"] = getInputValue("Measurement Type4");
-
-    selectedProperties["Date of Recording"] = getInputValue("Date of Recording");
-    selectedProperties["MasterID"] = getInputValue("MasterID");
-
-    selectedProperties["Monument is part of"] = getInputValue("Monument is part of");
-    selectedProperties["Monument contains"] = getInputValue("Monument contains");
-    selectedProperties["Monument is associated with"] = getInputValue("Monument is associated with");
-
-    if (pendingNewFeature && pendingNewFeature.properties === selectedProperties) {
-      allFeatures.push(pendingNewFeature);
-      visibleFeatures = allFeatures;
-      pendingNewFeature = null;
-      drawFeatures(visibleFeatures);
-      renderResultsList(visibleFeatures);
-    }
-
-    isEditMode = false;
-    renderRecordDetails(selectedProperties);
-  });
-
-  document.getElementById("cancelEditBtn").addEventListener("click", () => {
-    if (pendingNewFeature && pendingNewFeature.properties === selectedProperties) {
-      pendingNewFeature = null;
-      selectedProperties = null;
-      isEditMode = false;
-      exitAddMode();
-
-      if (recordDetails) {
-        recordDetails.innerHTML = `
-          <div class="empty-state">
-            <p>${t("no_record_selected")}</p>
-          </div>
-        `;
-      }
-      return;
-    }
-
-    isEditMode = false;
-    renderRecordDetails(selectedProperties);
-  });
-
-  document.getElementById("setLocationBtn").addEventListener("click", () => {
-    const ok = updateSelectedFeatureGeometryFromCoordinates();
-    if (ok) {
-      alert("Location updated on map.");
-    }
-  });
-
-  document.getElementById("pickLocationBtn").addEventListener("click", () => {
-    enterAddMode();
-  });
-}
-
-// --------------------------------------------------------
-// Add-record helpers
-// --------------------------------------------------------
-function updateAddModeUI() {
-  if (!addPointBtn || !cancelAddBtn || !map) return;
-
-  if (isAddMode) {
-    addPointBtn.textContent = "Place record on map";
-    cancelAddBtn.hidden = false;
-    map.getContainer().style.cursor = "crosshair";
-  } else {
-    addPointBtn.textContent = "Add record";
-    cancelAddBtn.hidden = true;
-    map.getContainer().style.cursor = "";
-  }
-}
-
-function enterAddMode() {
-  isAddMode = true;
-  updateAddModeUI();
-}
-
-function exitAddMode() {
-  isAddMode = false;
-  updateAddModeUI();
-}
-
-function makeNewBlankFeature() {
   return {
-    type: "Feature",
-    properties: {
+    identity: {
+      id: null,
+      caal_id: "[new record - unsaved]"
+    },
+    summary: {
+      primary_name: "",
+      primary_name_english: "",
+      country: sessionCountry,
+      region: "",
+      classification: "",
+      designation: "",
+      monument_type1: "",
+      cultural_period1: "",
+      religion1: "",
+      longitude: "",
+      latitude: "",
+      recorder: sessionUsername,
+      date_of_recording: today
+    },
+    raw: {
       "Primary Name": "",
       "Primary Name (English)": "",
       "Other Names": "",
-      "Country": "kazakhstan",
+      "Country": sessionCountry,
       "Region": "",
       "Classification": "",
-      "CAAL_ID": "[new record - unsaved]",
+      "CAAL_ID": "",
       "Internal Reference": "",
       "External Reference": "",
       "Monument Passport": "",
@@ -1047,53 +1652,201 @@ function makeNewBlankFeature() {
       "Monument is part of": "",
       "Monument contains": "",
       "Monument is associated with": "",
-      "Preferred Language": currentLang,
-      "Recorder": "[session user]",
+      "Preferred Language": lang,
+      "Recorder": sessionUsername,
       "MasterID": "",
       "Tstamp": "",
-      "Date of Recording": "",
+      "Date of Recording": today,
       "Start Date": "",
       "End Date": ""
     },
-    geometry: null
+    geometry: null,
+    source: {
+      scope: "workspace",
+      is_editable: true,
+      is_new: true
+    },
+    filter_values: {
+      monument_types: [],
+      religions: [],
+      cultural_periods: [],
+      classification: "",
+      designation: "",
+      country: sessionCountry
+    }
   };
 }
 
+function updateAddModeUI() {
+  if (map) {
+    map.getContainer().style.cursor = monumentIsAddMode ? "crosshair" : "";
+  }
+
+  const showMapActions = monumentIsEditMode || !!monumentPendingNewRecord;
+
+  if (monumentMapActionBar) {
+    monumentMapActionBar.hidden = !showMapActions;
+  }
+
+  if (monumentPickPointBtn) {
+    monumentPickPointBtn.hidden = monumentIsAddMode || !showMapActions;
+  }
+
+  if (monumentCancelPickPointBtn) {
+    monumentCancelPickPointBtn.hidden = !monumentIsAddMode || !showMapActions;
+  }
+}
+
 function applyMapClickToSelectedRecord(latlng) {
-  if (!selectedProperties) return;
+  if (!monumentSelectedRecord) return;
 
   const lng = Number(latlng.lng.toFixed(6));
   const lat = Number(latlng.lat.toFixed(6));
 
-  selectedProperties["Longitude"] = lng;
-  selectedProperties["Latitude"] = lat;
+  monumentSelectedRecord.raw["Longitude"] = lng;
+  monumentSelectedRecord.raw["Latitude"] = lat;
+  monumentSelectedRecord.summary.longitude = lng;
+  monumentSelectedRecord.summary.latitude = lat;
+  monumentSelectedRecord.geometry = {
+    type: "Point",
+    coordinates: [lng, lat]
+  };
+}
 
-  if (pendingNewFeature && pendingNewFeature.properties === selectedProperties) {
-    pendingNewFeature.geometry = {
-      type: "Point",
-      coordinates: [lng, lat]
-    };
+window.monumentCanChangeLanguage = function () {
+  if (!monumentIsEditMode || !monumentIsDirty) {
+    return true;
+  }
+
+  const confirmed = window.confirm(
+    mLabel(
+      "Language change cancels editing",
+      "Changing language will cancel the current edit. Continue?"
+    )
+  );
+
+  if (!confirmed) {
+    return false;
+  }
+
+  monumentIsEditMode = false;
+  monumentSyncModeVisualState();
+  monumentIsDirty = false;
+  monumentPendingNewRecord = null;
+  monumentIsAddMode = false;
+  updateAddModeUI();
+
+  if (monumentSelectedRecord) {
+    renderMonumentRecordDetails(monumentSelectedRecord);
+  } else {
+    renderMonumentEmptyState();
+  }
+
+  return true;
+};
+
+// button logic 
+async function saveCurrentMonumentRecord() {
+  if (!monumentSelectedRecord) return;
+
+  setMonumentsLoading(true, "Saving record...");
+
+  try {
+    const payload = mBuildSavePayload();
+    const lang =
+      (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
+      window.appSession?.profile?.preferred_language ||
+      "en";
+
+    const record = monumentSelectedRecord;
+    const isNewRecord = !record?.identity?.id;
+
+    const url = isNewRecord
+      ? `/api/monuments?lang=${encodeURIComponent(lang)}`
+      : `/api/monuments/${record.identity.id}?lang=${encodeURIComponent(lang)}`;
+
+    const method = isNewRecord ? "POST" : "PATCH";
+
+    const response = await fetch(url, {
+      method,
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify(payload)
+    });
+
+    const data = await response.json();
+
+    if (!response.ok || !data.ok) {
+      alert(data.detail || data.error || "Monument save failed");
+      return;
+    }
+
+    monumentPendingNewRecord = null;
+    monumentIsEditMode = false;
+    monumentSyncModeVisualState();
+    clearPendingPickPoint();
+    monumentIsDirty = false;
+    monumentIsAddMode = false;
+    updateAddModeUI();
+
+    await loadMonumentMapRecords();
+    await loadMonumentListRecords();
+
+    const refreshed =
+      monumentListRecords.find((item) => item?.identity?.id === data.record?.identity?.id) ||
+      monumentMapRecords.find((item) => item?.identity?.id === data.record?.identity?.id);
+
+    if (refreshed) {
+      renderMonumentRecordDetails(refreshed);
+    } else {
+      renderMonumentEmptyState();
+    }
+  } catch (error) {
+    console.error("Monument save failed:", error);
+    alert(error.message || "Monument save failed");
+  } finally {
+    setMonumentsLoading(false);
+  }
+}
+
+function cancelCurrentMonumentEdit() {
+  if (monumentPendingNewRecord && monumentSelectedRecord === monumentPendingNewRecord) {
+    monumentPendingNewRecord = null;
+    clearPendingPickPoint();
+    monumentSelectedRecord = null;
+    monumentIsEditMode = false;
+    monumentSyncModeVisualState();
+    monumentIsDirty = false;
+    monumentIsAddMode = false;
+    updateAddModeUI();
+    renderMonumentEmptyState();
     return;
   }
 
-  const matchingFeature = allFeatures.find(
-    (feature) => feature.properties === selectedProperties
-  );
+  monumentIsEditMode = false;
+  monumentSyncModeVisualState();
+  monumentIsDirty = false;
+  monumentIsAddMode = false;
+  updateAddModeUI();
 
-  if (matchingFeature) {
-    matchingFeature.geometry = {
-      type: "Point",
-      coordinates: [lng, lat]
-    };
-    drawFeatures(visibleFeatures);
+  if (monumentSelectedRecord) {
+    renderMonumentRecordDetails(monumentSelectedRecord);
+  } else {
+    renderMonumentEmptyState();
   }
 }
 
 // --------------------------------------------------------
 // Events
 // --------------------------------------------------------
+if (monumentPreviewCloseBtn) {
+  monumentPreviewCloseBtn.addEventListener("click", () => {
+    closeMonumentPreviewModal();
+  });
+}
+
 if (siteSearch) {
-  siteSearch.addEventListener("input", applyMonumentsFilters);
+  siteSearch.addEventListener("input", applyMonumentFilters);
 }
 
 [
@@ -1105,132 +1858,308 @@ if (siteSearch) {
   filterCountry
 ].forEach((selectEl) => {
   if (selectEl) {
-    selectEl.addEventListener("change", applyMonumentsFilters);
+    selectEl.addEventListener("change", applyMonumentFilters);
   }
 });
 
-if (addPointBtn) {
-  addPointBtn.addEventListener("click", () => {
-    const newFeature = makeNewBlankFeature();
-    pendingNewFeature = newFeature;
-    selectedProperties = newFeature.properties;
-    isEditMode = true;
-    exitAddMode();
-    renderRecordDetails(selectedProperties);
+if (toggleFiltersBtn && filtersPanel) {
+  toggleFiltersBtn.addEventListener("click", () => {
+    const isHidden = filtersPanel.hidden;
+    filtersPanel.hidden = !isHidden;
+    toggleFiltersBtn.textContent = isHidden
+      ? mLabel("Hide advanced filters", "Hide advanced filters")
+      : mLabel("Advanced filters", "Advanced filters");
   });
 }
 
-if (cancelAddBtn) {
-  cancelAddBtn.addEventListener("click", () => {
-    exitAddMode();
+if (monumentPrevBtn) {
+  monumentPrevBtn.addEventListener("click", async () => {
+    if (monumentPageOffset === 0) return;
+    if (!monumentConfirmLoseChanges()) return;
+
+    monumentPageOffset = Math.max(0, monumentPageOffset - monumentPageLimit);
+
+    setMonumentsLoading(true, "Loading page...");
+    try {
+      await loadMonumentListRecords();
+    } catch (error) {
+      console.error("Failed to load previous monuments page:", error);
+    } finally {
+      setMonumentsLoading(false);
+    }
+  });
+}
+
+if (monumentNextBtn) {
+  monumentNextBtn.addEventListener("click", async () => {
+    if (monumentPageOffset + monumentPageLimit >= monumentTotalCount) return;
+    if (!monumentConfirmLoseChanges()) return;
+
+    monumentPageOffset += monumentPageLimit;
+
+    setMonumentsLoading(true, "Loading page...");
+    try {
+      await loadMonumentListRecords();
+    } catch (error) {
+      console.error("Failed to load previous monuments page:", error);
+    } finally {
+      setMonumentsLoading(false);
+    }
+  });
+}
+
+if (clearFiltersBtn) {
+  clearFiltersBtn.addEventListener("click", async () => {
+    await clearMonumentFilters();
+  });
+}
+
+if (addMonumentBtn) {
+  addMonumentBtn.addEventListener("click", () => {
+    if (!monumentConfirmLoseChanges()) return;
+
+    const newRecord = makeNewBlankMonumentRecord();
+    monumentPendingNewRecord = newRecord;
+    monumentSelectedRecord = newRecord;
+    monumentIsEditMode = true;
+    monumentSyncModeVisualState();
+    monumentIsDirty = false;
+    monumentIsAddMode = false;
+    updateAddModeUI();
+    renderMonumentRecordDetails(newRecord);
+  });
+}
+
+if (monumentEditBtn) {
+  monumentEditBtn.addEventListener("click", () => {
+    if (!monumentSelectedRecord) return;
+    if (monumentSelectedRecord?.source?.is_editable !== true) return;
+
+    monumentIsEditMode = true;
+    monumentSyncModeVisualState();
+    monumentIsDirty = false;
+    renderMonumentRecordDetails(monumentSelectedRecord);
+  });
+}
+
+if (monumentPickPointBtn) {
+  monumentPickPointBtn.addEventListener("click", () => {
+    if (!monumentSelectedRecord) return;
+
+    monumentIsAddMode = true;
+    updateAddModeUI();
+  });
+}
+
+if (monumentCancelPickPointBtn) {
+  monumentCancelPickPointBtn.addEventListener("click", () => {
+    monumentIsAddMode = false;
+    updateAddModeUI();
+  });
+}
+
+if (monumentSaveBtn) {
+  monumentSaveBtn.addEventListener("click", async () => {
+    await saveCurrentMonumentRecord();
+  });
+}
+
+if (monumentCancelEditBtn) {
+  monumentCancelEditBtn.addEventListener("click", () => {
+    cancelCurrentMonumentEdit();
   });
 }
 
 document.addEventListener("keydown", (event) => {
-  if (event.key === "Escape" && isAddMode) {
-    exitAddMode();
+  if (event.key !== "Escape") return;
+
+  if (monumentIsAddMode) {
+    monumentIsAddMode = false;
+    clearPendingPickPoint();
+    updateAddModeUI();
+    return;
+  }
+
+  if (monumentPreviewModal && !monumentPreviewModal.hidden) {
+    closeMonumentPreviewModal();
   }
 });
 
-if (map) {
-  map.on("click", (event) => {
-    if (!isAddMode) return;
+document.addEventListener("app:languageChanged", async () => {
+  const selectedId = monumentSelectedRecord?.identity?.id ?? null;
+  const wasEditing = monumentIsEditMode;
+  const pendingNew = monumentPendingNewRecord;
 
-    const lng = event.lngLat.lng;
-    const lat = event.lngLat.lat;
+  setMonumentsLoading(true, "Switching language...");
 
-    applyMapClickToSelectedRecord({ lng, lat });
+  try {
+    await loadMonumentLabels();
+    await loadMonumentLookups();
+    populateMonumentFilterLookups();
+    await loadMonumentMapRecords();
+    await loadMonumentListRecords();
 
-    exitAddMode();
-    isEditMode = true;
-    renderRecordDetails(selectedProperties);
-  });
-}
+    // Preserve an unsaved brand-new local record
+    if (pendingNew && selectedId === null) {
+      monumentPendingNewRecord = pendingNew;
+      monumentSelectedRecord = pendingNew;
+      monumentIsEditMode = wasEditing;
+      renderMonumentRecordDetails(pendingNew);
+      return;
+    }
 
-// language-triggered rerender for this page
-document.addEventListener("app:languageChanged", () => {
-  renderResultsList(visibleFeatures);
+    // Restore the currently open saved record
+    if (selectedId !== null) {
+      const refreshed =
+        monumentListRecords.find((record) => Number(record?.identity?.id) === Number(selectedId)) ||
+        monumentMapRecords.find((record) => Number(record?.identity?.id) === Number(selectedId));
 
-  if (selectedProperties) {
-    renderRecordDetails(selectedProperties);
-  } else if (recordDetails) {
-    recordDetails.innerHTML = `
-      <div class="empty-state">
-        <p>${t("no_record_selected")}</p>
-      </div>
-    `;
+      if (refreshed) {
+        monumentSelectedRecord = refreshed;
+        monumentIsEditMode = wasEditing;
+        renderMonumentRecordDetails(refreshed);
+        return;
+      }
+    }
+
+    monumentSelectedRecord = null;
+    monumentIsEditMode = false;
+    monumentSyncModeVisualState();
+    renderMonumentEmptyState();
+  } catch (error) {
+    console.error("Monuments language refresh failed:", error);
+  } finally {
+    setMonumentsLoading(false);
   }
 });
 
+[showWorkspaceRecords, showNationalRecords, showAllCaalRecords].forEach((el) => {
+  if (el) {
+    el.addEventListener("change", async () => {
+      if (!monumentConfirmLoseChanges()) {
+        el.checked = !el.checked;
+        return;
+      }
+
+      monumentPageOffset = 0;
+      monumentPendingNewRecord = null;
+      monumentIsEditMode = false;
+      monumentSyncModeVisualState();
+      monumentSelectedRecord = null;
+
+      if (map) {
+        if (map.getLayer("monument-selected-ring")) {
+          map.removeLayer("monument-selected-ring");
+        }
+        if (map.getSource("monument-selected")) {
+          map.removeSource("monument-selected");
+        }
+      }
+
+      setMonumentsLoading(true, "Updating scope...");
+      try {
+        await loadMonumentMapRecords();
+        await loadMonumentListRecords();
+        renderMonumentEmptyState();
+      } catch (error) {
+        console.error("Failed to reload monuments after scope change:", error);
+      } finally {
+        setMonumentsLoading(false);
+      }
+    });
+  }
+});
 
 // --------------------------------------------------------
 // Initial load
 // --------------------------------------------------------
-updateAddModeUI();
+document.addEventListener("DOMContentLoaded", async () => {
+  const session = await requireSession();
+  if (!session) return;
 
-if (mapElement && typeof maplibregl !== "undefined") {
-  const initialBasemap = basemapSelect ? basemapSelect.value : "osm";
+  setMonumentsLoading(false);
 
-  map = new maplibregl.Map({
-    container: "map",
-    style: getBasemapStyle(initialBasemap),
-    center: [67.0, 48.0],
-    zoom: 5
-  });
-
-  map.addControl(new maplibregl.NavigationControl(), "top-right");
-
-  map.on("load", () => {
-    mapLoaded = true;
-
-    fetch("./data/monuments_kaz_sample.geojson")
-      .then((response) => {
-        if (!response.ok) {
-          throw new Error(`Failed to load GeoJSON: ${response.status}`);
-        }
-        return response.json();
-      })
-      .then((geojson) => {
-        allFeatures = geojson.features;
-        visibleFeatures = allFeatures;
-
-        const options = collectFilterOptions(allFeatures);
-
-        populateMultiSelect(filterMonumentType, options.monumentTypes);
-        populateMultiSelect(filterClassification, options.classifications);
-        populateMultiSelect(filterDesignation, options.designations);
-        populateMultiSelect(filterReligion, options.religions);
-        populateMultiSelect(filterCulturalPeriod, options.culturalPeriods);
-        populateMultiSelect(filterCountry, options.countries);
-
-        renderResultsList(visibleFeatures);
-        drawFeatures(visibleFeatures);
-        applyLanguage();
-      })
-      .catch((error) => {
-        console.error(error);
-        if (recordDetails) {
-          recordDetails.innerHTML = `
-            <div class="empty-state">
-              <p>Could not load sample data.</p>
-              <p>${error.message}</p>
-            </div>
-          `;
-        }
-      });
-  });
-
-  if (basemapSelect) {
-    basemapSelect.addEventListener("change", () => {
-      mapLoaded = false;
-      monumentsLayerEventsBound = false;
-
-      map.setStyle(getBasemapStyle(basemapSelect.value));
-
-      map.once("style.load", () => {
-        mapLoaded = true;
-        drawFeatures(visibleFeatures);
-      });
-    });
+  if (session.permissions?.can_view_all_caal && allCaalMonumentsToggleWrapper) {
+    allCaalMonumentsToggleWrapper.hidden = false;
   }
-}
+
+  renderMonumentEmptyState();
+
+  if (mapElement && typeof maplibregl !== "undefined") {
+    const initialBasemap = basemapSelect ? basemapSelect.value : "osm";
+
+    map = new maplibregl.Map({
+      container: "map",
+      style: getBasemapStyle(initialBasemap),
+      center: [67.0, 48.0],
+      zoom: 5
+    });
+
+    map.addControl(new maplibregl.NavigationControl(), "top-right");
+
+    // Bind this once
+    map.on("click", (event) => {
+      if (!monumentIsAddMode) return;
+
+      drawPendingPickPoint(event.lngLat);
+      applyMapClickToSelectedRecord(event.lngLat);
+
+      monumentIsAddMode = false;
+      monumentIsEditMode = true;
+      updateAddModeUI();
+      renderMonumentRecordDetails(monumentSelectedRecord);
+    });
+
+    map.on("load", async () => {
+      mapLoaded = true;
+      updateAddModeUI();
+
+      setMonumentsLoading(true, "Loading records...");
+      try {
+        await loadMonumentLabels();
+        await loadMonumentLookups();
+        populateMonumentFilterLookups();
+        await loadMonumentMapRecords();
+        await loadMonumentListRecords();
+      } catch (error) {
+        console.error("Monuments initial load failed:", error);
+        renderMonumentEmptyState();
+      } finally {
+        setMonumentsLoading(false);
+      }
+    });
+
+    if (basemapSelect) {
+      basemapSelect.addEventListener("change", () => {
+        mapLoaded = false;
+        monumentsLayerEventsBound = false;
+
+        map.setStyle(getBasemapStyle(basemapSelect.value));
+
+        map.once("style.load", () => {
+          mapLoaded = true;
+
+          // redraw all current map points
+          drawMonumentRecords(monumentMapRecords);
+
+          // redraw selected point highlight if there is one
+          if (monumentSelectedRecord?.geometry?.coordinates) {
+            drawSelectedMonumentHighlight(monumentSelectedRecord);
+          }
+
+          updateAddModeUI();
+        });
+      });
+    }
+  } else {
+    try {
+      await loadMonumentLabels();
+      await loadMonumentLookups();
+      populateMonumentFilterLookups();
+      await loadMonumentMapRecords();
+      await loadMonumentListRecords();
+    } catch (error) {
+      console.error("Monuments initial load failed:", error);
+    }
+  }
+});

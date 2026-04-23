@@ -185,7 +185,11 @@ const translations = {
     archive_related_religions: "Related Religions",
     archive_related_subjects: "Related Subjects",
     archive_content_type: "Content Type",
-    archive_languages_material: "Languages of Material"
+    archive_languages_material: "Languages of Material",
+    //MONUMENTS PAGE
+    monuments_workspace_records: "Workspace records",
+    monuments_national_records: "National CAAL records",
+    monuments_all_records: "All CAAL records"
   },
 
   ru: {
@@ -219,7 +223,11 @@ const translations = {
     archive_related_religions: "Связанные религии",
     archive_related_subjects: "Связанные темы",
     archive_content_type: "Тип материала",
-    archive_languages_material: "Языки материала"
+    archive_languages_material: "Языки материала",
+    //MONUMENTS PAGE
+    monuments_workspace_records: "Записи рабочего пространства",
+    monuments_national_records: "Национальные записи CAAL",
+    monuments_all_records: "Все записи CAAL"
   },
 
   zh: {
@@ -519,6 +527,20 @@ function applyLanguage() {
 if (languageSelect) {
   languageSelect.addEventListener("change", (event) => {
     const lang = event.target.value;
+
+    if (typeof window.archiveCanChangeLanguage === "function") {
+      if (!window.archiveCanChangeLanguage()) {
+        event.target.value = currentLang;
+        return;
+      }
+    }
+
+    if (typeof window.monumentCanChangeLanguage === "function") {
+      if (!window.monumentCanChangeLanguage()) {
+        event.target.value = currentLang;
+        return;
+      }
+    }
 
     currentLang = lang;
     setStoredLanguage(lang);
