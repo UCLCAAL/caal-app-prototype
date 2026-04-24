@@ -208,6 +208,43 @@ function clearPendingPickPoint() {
 // --------------------------------------------------------
 // Helpers
 // --------------------------------------------------------
+function moveSelection(direction) {
+  if (!monumentListRecords.length) return;
+
+  const currentIndex = monumentListRecords.findIndex(
+    r => r.identity?.id === monumentSelectedRecord?.identity?.id
+  );
+
+  let newIndex = currentIndex + direction;
+
+  if (newIndex < 0) newIndex = 0;
+  if (newIndex >= monumentListRecords.length) newIndex = monumentListRecords.length - 1;
+
+  const record = monumentListRecords[newIndex];
+  if (!record) return;
+
+  monumentSelectedRecord = record;
+  renderMonumentRecordDetails(record);
+  updateSelectedResultCard();
+  drawSelectedMonumentHighlight(record);
+}
+
+function updateSelectedResultCard() {
+  if (!resultsList) return;
+
+  const selectedId = Number(monumentSelectedRecord?.identity?.id);
+
+  Array.from(resultsList.querySelectorAll(".result-card")).forEach((resultCard) => {
+    const idx = Number(resultCard.dataset.resultIndex);
+    const record = monumentListRecords[idx];
+
+    const isSelected =
+      Number(record?.identity?.id) === selectedId;
+
+    resultCard.classList.toggle("is-selected", isSelected);
+  });
+}
+
 const monumentDetailPane = document.getElementById("monumentDetailPane");
 
 function monumentSyncModeVisualState() {
@@ -249,7 +286,7 @@ function mLabel(name, fallback = null) {
 
 function mSafeValue(value) {
   if (value === null || value === undefined || value === "") {
-    return mLabel("Not recorded", "Not recorded");
+    return `<span class="empty-value">${mLabel("Not recorded", "Not recorded")}</span>`;
   }
   return value;
 }
@@ -619,6 +656,24 @@ function buildMonumentQueryParams({ includePaging = true } = {}) {
   return params;
 }
 
+// save feedback
+function showToast(message, type = "success") {
+  let toast = document.createElement("div");
+  toast.className = `toast toast-${type}`;
+  toast.textContent = message;
+
+  document.body.appendChild(toast);
+
+  setTimeout(() => {
+    toast.classList.add("visible");
+  }, 10);
+
+  setTimeout(() => {
+    toast.classList.remove("visible");
+    setTimeout(() => toast.remove(), 300);
+  }, 2500);
+}
+
 // determine dates
 let culturalPeriodLookup = {};
 
@@ -638,6 +693,7 @@ function buildCulturalPeriodLookup() {
 
 function recalculateMonumentDates(record) {
   if (!culturalPeriodLookup || !Object.keys(culturalPeriodLookup).length) return;
+  if (!record?.raw) return;
 
   const cpFields = [
     "Cultural Period1",
@@ -1214,23 +1270,48 @@ function bindMonumentLayerEvents() {
     const record = monumentMapRecords.find((r) => Number(r.identity?.id) === clickedId);
     if (!record) return;
 
-    monumentIsEditMode = false;
-    monumentSyncModeVisualState();
-    renderMonumentRecordDetails(record);
-    drawSelectedMonumentHighlight(record);
-    ensureRecordVisibleOnMap(record);
+//    monumentIsEditMode = false;
+//    monumentSyncModeVisualState();
+//    renderMonumentRecordDetails(record);
+//    drawSelectedMonumentHighlight(record);
+//    ensureRecordVisibleOnMap(record);
 
     new maplibregl.Popup({ closeButton: true, closeOnClick: true })
-      .setLngLat(record.geometry.coordinates)
-      .setHTML(`
-        <div class="map-popup">
-          <strong>${mSafeValue(mSummary(record, "primary_name"))}</strong><br>
-          <span>${mSafeValue(mIdentity(record, "caal_id"))}</span><br>
-          <span>${mSafeValue(mSummary(record, "classification"))}</span><br>
-          <span>${mSafeValue(mSummary(record, "monument_type1"))}</span>
-        </div>
-      `)
-      .addTo(map);
+    .setLngLat(record.geometry.coordinates)
+    .setHTML(`
+      <div class="map-popup">
+        <button
+          type="button"
+          class="map-popup-title-btn"
+          data-monument-id="${record.identity?.id}"
+        >
+          ${mSafeValue(mSummary(record, "primary_name"))}
+        </button><br>
+        <span>${mSafeValue(mIdentity(record, "caal_id"))}</span><br>
+        <span>${mSafeValue(mSummary(record, "classification"))}</span><br>
+        <span>${mSafeValue(mSummary(record, "monument_type1"))}</span>
+      </div>
+    `)
+    .addTo(map);
+
+  setTimeout(() => {
+    const popupTitleBtn = document.querySelector(
+      `.map-popup-title-btn[data-monument-id="${record.identity?.id}"]`
+    );
+
+    if (!popupTitleBtn) return;
+
+    popupTitleBtn.addEventListener("click", () => {
+      if (!monumentConfirmLoseChanges()) return;
+
+      monumentIsEditMode = false;
+      monumentSyncModeVisualState();
+      monumentPendingNewRecord = null;
+      renderMonumentRecordDetails(record);
+      updateSelectedResultCard();
+      drawSelectedMonumentHighlight(record);
+    });
+  }, 0);
   });
 
   map.on("mouseenter", "monuments-layer", () => {
@@ -1390,14 +1471,18 @@ function renderMonumentResultsList(records) {
   resultsList.innerHTML = records
   .map((record, index) => {
     return `
-      <div class="result-card" data-result-index="${index}">
-        <div class="result-card-header">
+      <div
+        class="result-card ${Number(monumentSelectedRecord?.identity?.id) === Number(record.identity?.id) ? "is-selected" : ""}"
+        data-result-index="${index}"
+      >
+        <div class="result-card-topline">
           <strong>${mSafeValue(mSummary(record, "primary_name"))}</strong>
+          <span class="scope-badge">${mSafeValue(monumentScopeLabel(record.source?.scope))}</span>
         </div>
+
         <div class="result-card-meta">${mSafeValue(mIdentity(record, "caal_id"))}</div>
         <div class="result-card-meta">${mSafeValue(mSummary(record, "classification"))}</div>
         <div class="result-card-meta">${mSafeValue(mSummary(record, "monument_type1"))}</div>
-        <div class="result-card-meta">${mSafeValue(monumentScopeLabel(record.source?.scope))}</div>
 
         <div class="result-card-actions">
           <button
@@ -1425,11 +1510,19 @@ function renderMonumentResultsList(records) {
       monumentSyncModeVisualState();
       monumentPendingNewRecord = null;
       renderMonumentRecordDetails(record);
+      updateSelectedResultCard();
 
       if (map && record.geometry?.coordinates) {
         drawSelectedMonumentHighlight(record);
-        ensureRecordVisibleOnMap(record);
       }
+    });
+
+    card.addEventListener("mouseenter", () => {
+      const idx = Number(card.dataset.resultIndex);
+      const record = records[idx];
+      if (!record?.geometry?.coordinates) return;
+
+      drawSelectedMonumentHighlight(record);
     });
   });
   Array.from(resultsList.querySelectorAll(".result-preview-btn")).forEach((btn) => {
@@ -1577,6 +1670,10 @@ function renderMonumentDisplayMode(record) {
         ${statusBadge}
       </div>
       <p>${mSafeValue(mIdentity(record, "caal_id"))}</p>
+      <p></p>
+      <button type="button" class="action-btn" id="zoomToSelectedMonumentBtn">
+        Centre on map
+      </button>
     </div>
 
     <div class="group-stack">
@@ -1588,6 +1685,21 @@ function renderMonumentDisplayMode(record) {
       ${mRenderGroupBlock(mLabel("Related resources", "Related resources"), relatedHtml, true)}
     </div>
   `;
+  const zoomBtn = document.getElementById("zoomToSelectedMonumentBtn");
+
+  if (zoomBtn) {
+    zoomBtn.addEventListener("click", () => {
+      if (!record?.geometry?.coordinates || !map) return;
+
+      drawSelectedMonumentHighlight(record);
+
+      map.easeTo({
+        center: record.geometry.coordinates,
+  //      zoom: Math.max(map.getZoom(), 10),
+        duration: 600
+      });
+    });
+  }
 }
 
 // --------------------------------------------------------
@@ -1989,6 +2101,7 @@ async function saveCurrentMonumentRecord() {
       return;
     }
 
+    showToast("Record saved");
     monumentPendingNewRecord = null;
     monumentIsEditMode = false;
     monumentSyncModeVisualState();
@@ -2007,6 +2120,7 @@ async function saveCurrentMonumentRecord() {
     if (refreshed) {
       monumentSelectedRecord = refreshed;
       renderMonumentRecordDetails(refreshed);
+      updateSelectedResultCard();
 
       if (map && refreshed.geometry?.coordinates) {
         drawSelectedMonumentHighlight(refreshed);
@@ -2046,6 +2160,7 @@ function cancelCurrentMonumentEdit() {
 
   if (monumentSelectedRecord) {
     renderMonumentRecordDetails(monumentSelectedRecord);
+    updateSelectedResultCard();
   } else {
     renderMonumentEmptyState();
   }
@@ -2142,6 +2257,7 @@ if (addMonumentBtn) {
     monumentIsAddMode = false;
     updateAddModeUI();
     renderMonumentRecordDetails(newRecord);
+    updateSelectedResultCard();
   });
 }
 
@@ -2154,6 +2270,7 @@ if (monumentEditBtn) {
     monumentSyncModeVisualState();
     monumentIsDirty = false;
     renderMonumentRecordDetails(monumentSelectedRecord);
+    updateSelectedResultCard();
   });
 }
 
@@ -2186,17 +2303,30 @@ if (monumentCancelEditBtn) {
 }
 
 document.addEventListener("keydown", (event) => {
-  if (event.key !== "Escape") return;
+  if (event.key === "Escape") {
+    if (monumentIsAddMode) {
+      monumentIsAddMode = false;
+      clearPendingPickPoint();
+      updateAddModeUI();
+      return;
+    }
 
-  if (monumentIsAddMode) {
-    monumentIsAddMode = false;
-    clearPendingPickPoint();
-    updateAddModeUI();
-    return;
+    if (monumentPreviewModal && !monumentPreviewModal.hidden) {
+      closeMonumentPreviewModal();
+      return;
+    }
   }
 
-  if (monumentPreviewModal && !monumentPreviewModal.hidden) {
-    closeMonumentPreviewModal();
+  if (monumentIsEditMode) return;
+
+  if (event.key === "ArrowDown") {
+    event.preventDefault();
+    moveSelection(1);
+  }
+
+  if (event.key === "ArrowUp") {
+    event.preventDefault();
+    moveSelection(-1);
   }
 });
 
@@ -2233,6 +2363,7 @@ document.addEventListener("app:languageChanged", async () => {
         monumentSelectedRecord = refreshed;
         monumentIsEditMode = wasEditing;
         renderMonumentRecordDetails(refreshed);
+        updateSelectedResultCard();
         return;
       }
     }
@@ -2323,6 +2454,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       monumentIsEditMode = true;
       updateAddModeUI();
       renderMonumentRecordDetails(monumentSelectedRecord);
+      updateSelectedResultCard();
     });
 
     map.on("load", async () => {
