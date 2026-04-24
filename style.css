@@ -1217,6 +1217,53 @@ Popup preview */
   font-weight: 600;
 }
 
+.related-id-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.related-id-chip {
+  border: 1px solid #d7dee2;
+  background: #f7fafb;
+  color: #1f5f8b;
+  border-radius: 999px;
+  padding: 0.25rem 0.55rem;
+  font-size: 0.9rem;
+  cursor: pointer;
+}
+
+.related-id-chip:hover {
+  background: #eef6fa;
+  text-decoration: underline;
+}
+
+.related-record-type-badge {
+  display: inline-flex;
+  width: fit-content;
+  margin: 0.35rem 0 0.75rem 0;
+  padding: 0.25rem 0.55rem;
+  border-radius: 999px;
+  background: #eef2f3;
+  color: #5f6f78;
+  font-size: 0.8rem;
+  font-weight: 600;
+}
+
+.related-record-title {
+  position: relative;
+}
+
+.related-record-title .related-record-type-badge {
+  position: absolute;
+  top: 1rem;
+  right: 1rem;
+}
+
+.related-record-title .action-btn {
+  margin-top: 0.75rem;
+}
+
 /* =========================================================
     RESPONSIVE LAYOUT */
 @media (max-width: 900px) {

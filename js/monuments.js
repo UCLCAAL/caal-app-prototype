@@ -752,6 +752,99 @@ function wireMonumentCulturalPeriodDateRecalc() {
   });
 }
 
+// related resource helpers
+// ----------------------------------------------
+// split IDS
+function parseRelatedIds(value) {
+  if (!value) return [];
+
+  return String(value)
+    .split(/[,;\n]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+//infer record type
+function inferRelatedRecordType(caalId) {
+  if (!caalId) return "unknown";
+
+  if (caalId.startsWith("Ar_")) return "archive";
+  if (caalId.startsWith("Mon_")) return "monument";
+
+  return "unknown";
+}
+
+// render related as buttons
+function mRenderRelatedIdList(label, value, fullWidth = true) {
+  const ids = parseRelatedIds(value);
+
+  const inner = ids.length
+    ? ids.map((id) => `
+        <button
+          type="button"
+          class="related-id-chip"
+          data-related-id="${id}"
+        >
+          ${id}
+        </button>
+      `).join("")
+    : mSafeValue("");
+
+  return `
+    <div class="detail-item${fullWidth ? " full-width" : ""}">
+      <span class="detail-label">${label}</span>
+      <div class="detail-value related-id-list">
+        ${inner}
+      </div>
+    </div>
+  `;
+}
+
+function wireRelatedRecordChips() {
+  Array.from(document.querySelectorAll(".related-id-chip")).forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const caalId = btn.dataset.relatedId;
+      if (!caalId) return;
+
+      await openRelatedRecordPreview(caalId);
+    });
+  });
+}
+
+  // asks backend to find record
+  async function openRelatedRecordPreview(caalId) {
+    const response = await fetch(
+    `/api/records/resolve?caal_id=${encodeURIComponent(caalId)}`,
+    { method: "GET", credentials: "include" }
+  );
+
+    const data = await response.json();
+
+    if (!response.ok || !data.ok) {
+      alert(data.error || "Could not load related record");
+      return;
+    }
+
+    renderRelatedRecordModal(data.record, data.record_type, caalId);
+  }
+
+  // to open related record in a new tab
+  function getRelatedRecordUrl(caalId, recordType) {
+    if (recordType === "archive") {
+      return `archive.html?caal_id=${encodeURIComponent(caalId)}`;
+    }
+
+    if (recordType === "monument") {
+      return `monuments.html?caal_id=${encodeURIComponent(caalId)}`;
+    }
+
+    return null;
+  }
+
+function getInitialCaalIdFromUrl() {
+  return new URLSearchParams(window.location.search).get("caal_id");
+}
+
 // modal helpers
 // ================================
 //only populated fields
@@ -875,6 +968,225 @@ function renderMonumentPreviewModal(record) {
 
   modal.hidden = false;
   initMonumentPreviewMiniMap(record);
+}
+
+// related record modal 
+function renderRelatedRecordModal(record, recordType, caalId) {
+    if (!monumentPreviewModal || !monumentPreviewTitle || !monumentPreviewBody) return;
+
+  const fullRecordUrl = getRelatedRecordUrl(caalId, recordType);
+
+  if (recordType === "monument") {
+    renderRelatedMonumentModal(record, caalId, fullRecordUrl);
+    return;
+  }
+
+  if (recordType === "archive") {
+    renderRelatedArchiveModal(record, caalId, fullRecordUrl);
+    return;
+  }
+
+  const title =
+    recordType === "archive"
+      ? mRaw(record, "English Title") || mRaw(record, "Original Title") || caalId
+      : mSummary(record, "primary_name") || mRaw(record, "Primary Name") || caalId;
+
+  monumentPreviewTitle.textContent = title;
+
+  monumentPreviewBody.innerHTML = `
+    <div class="record-title">
+      <h3>${mSafeValue(title)}</h3>
+      <p>${mSafeValue(caalId)}</p>
+      <span class="related-record-type-badge">
+        ${recordType === "archive" ? mLabel("Archive", "Archive") : mLabel("Monument", "Monument")}
+      </span>
+
+      ${
+        fullRecordUrl
+          ? `<button type="button" class="action-btn" id="openRelatedFullRecordBtn">
+              ${mLabel("Open full record", "Open full record")}
+            </button>`
+          : ""
+      }
+    </div>
+  `;
+
+  monumentPreviewModal.hidden = false;
+
+  const openBtn = document.getElementById("openRelatedFullRecordBtn");
+
+  if (openBtn && fullRecordUrl) {
+    openBtn.addEventListener("click", () => {
+      window.open(fullRecordUrl, "_blank");
+    });
+  }
+}
+function renderRelatedMonumentModal(record, caalId, fullRecordUrl) {
+  const title = mSummary(record, "primary_name") || mRaw(record, "Primary Name") || caalId;
+
+  monumentPreviewTitle.textContent = title;
+
+  const basicFields = getPopulatedPreviewFields(record, [
+    { label: mLabel("Primary Name", "Primary Name"), value: mSummary(record, "primary_name") },
+    { label: mLabel("Primary Name (English)", "Primary Name (English)"), value: mSummary(record, "primary_name_english") },
+    { label: mLabel("Country", "Country"), value: mSummary(record, "country") },
+    { label: mLabel("Classification", "Classification"), value: mSummary(record, "classification") },
+    { label: mLabel("CAAL_ID", "CAAL_ID"), value: caalId },
+    { label: mLabel("Designation", "Designation"), value: mSummary(record, "designation") }
+  ]);
+
+  const monumentTypes = getSummaryValues(record, [
+    "Monument Type1", "Monument Type2", "Monument Type3",
+    "Monument Type4", "Monument Type5", "Monument Type6"
+  ], "monument_type");
+
+  const culturalPeriods = getSummaryValues(record, [
+    "Cultural Period1", "Cultural Period2", "Cultural Period3",
+    "Cultural Period4", "Cultural Period5", "Cultural Period6"
+  ], "cultural_period");
+
+  monumentPreviewBody.innerHTML = `
+    <div class="record-title related-record-title">
+      <div>
+        <h3>${mSafeValue(title)}</h3>
+        <p>${mSafeValue(caalId)}</p>
+      </div>
+
+      <span class="related-record-type-badge">
+        ${mLabel("Monument", "Monument")}
+      </span>
+
+      ${
+        fullRecordUrl
+          ? `<button type="button" class="action-btn" id="openRelatedFullRecordBtn">
+              ${mLabel("Open full record", "Open full record")}
+            </button>`
+          : ""
+      }
+    </div>
+
+    <div class="group-stack">
+      <div class="group-block">
+        <div class="group-grid">
+          <div class="detail-item full-width section-header">
+            <span class="detail-section-title">${mLabel("Basic", "Basic")}</span>
+          </div>
+          ${renderPreviewRows(basicFields)}
+        </div>
+      </div>
+
+      <div class="group-block">
+        <div class="group-grid">
+          <div class="detail-item full-width section-header">
+            <span class="detail-section-title">${mLabel("Monument type summary", "Monument type summary")}</span>
+          </div>
+          <div class="detail-item full-width">
+            <div class="detail-value">${monumentTypes.length ? monumentTypes.join(", ") : mSafeValue("")}</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="group-block">
+        <div class="group-grid">
+          <div class="detail-item full-width section-header">
+            <span class="detail-section-title">${mLabel("Cultural period summary", "Cultural period summary")}</span>
+          </div>
+          <div class="detail-item full-width">
+            <div class="detail-value">${culturalPeriods.length ? culturalPeriods.join(", ") : mSafeValue("")}</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+
+  monumentPreviewModal.hidden = false;
+  wireOpenRelatedFullRecordButton(fullRecordUrl);
+}
+
+function renderRelatedArchiveModal(record, caalId, fullRecordUrl) {
+  const s = record.summary || {};
+
+  const title =
+    s.english_title ||
+    s.original_title ||
+    mRaw(record, "English Title") ||
+    mRaw(record, "Original Title") ||
+    caalId;
+
+  monumentPreviewTitle.textContent = title;
+
+  monumentPreviewBody.innerHTML = `
+    <div class="record-title related-record-title">
+      <div>
+        <h3>${mSafeValue(title)}</h3>
+        <p>${mSafeValue(caalId)}</p>
+      </div>
+
+      <span class="related-record-type-badge">
+        ${mLabel("Archive", "Archive")}
+      </span>
+
+      ${
+        fullRecordUrl
+          ? `<button type="button" class="action-btn" id="openRelatedFullRecordBtn">
+              ${mLabel("Open full record", "Open full record")}
+            </button>`
+          : ""
+      }
+    </div>
+
+    <div class="group-stack">
+      <div class="group-block">
+        <div class="group-grid">
+          <div class="detail-item full-width section-header">
+            <span class="detail-section-title">${mLabel("Material Details", "Material Details")}</span>
+          </div>
+
+          ${mRenderDetailItem(mLabel("CAAL_ID", "CAAL_ID"), record.identity?.caal_id)}
+          ${mRenderDetailItem(mLabel("Associated CAAL_ID", "Associated CAAL_ID"), record.identity?.associated_caal_id)}
+          ${mRenderDetailItem(mLabel("Original Reference", "Original Reference"), s.original_reference)}
+          ${mRenderDetailItem(mLabel("Content Type", "Content Type"), s.content_type)}
+          ${mRenderDetailItem(mLabel("Country", "Country"), s.country)}
+          ${mRenderDetailItem(mLabel("Level", "Level"), s.level)}
+          ${mRenderDetailItem(mLabel("Original Title", "Original Title"), s.original_title, true)}
+          ${mRenderDetailItem(mLabel("English Title", "English Title"), s.english_title, true)}
+          ${mRenderDetailItem(mLabel("Description", "Description"), mRaw(record, "Description"), true)}
+          ${mRenderDetailItem(
+            mLabel("Languages of Material", "Languages of Material"),
+            parseRelatedIds(mRaw(record, "Languages of Material")).join(", "),
+            true
+          )}
+        </div>
+      </div>
+
+      <div class="group-block">
+        <div class="group-grid">
+          <div class="detail-item full-width section-header">
+            <span class="detail-section-title">${mLabel("Publication Details", "Publication Details")}</span>
+          </div>
+
+          ${mRenderDetailItem(mLabel("Dates of Original Material", "Dates of Original Material"), mRaw(record, "Dates of Original Material"))}
+          ${mRenderDetailItem(mLabel("Author of the Original Material", "Author of the Original Material"), mRaw(record, "Author of the Original Material"), true)}
+          ${mRenderDetailItem(mLabel("Publisher of the Original Material", "Publisher of the Original Material"), mRaw(record, "Publisher of the Original Material"), true)}
+          ${mRenderDetailItem(mLabel("Editor of the Original Material", "Editor of the Original Material"), mRaw(record, "Editor of the Original Material"), true)}
+          ${mRenderDetailItem(mLabel("Volume and Issue Number", "Volume and Issue Number"), mRaw(record, "Volume and Issue Number"))}
+        </div>
+      </div>
+    </div>
+  `;
+
+  monumentPreviewModal.hidden = false;
+  wireOpenRelatedFullRecordButton(fullRecordUrl);
+}
+
+function wireOpenRelatedFullRecordButton(fullRecordUrl) {
+  const openBtn = document.getElementById("openRelatedFullRecordBtn");
+
+  if (openBtn && fullRecordUrl) {
+    openBtn.addEventListener("click", () => {
+      window.open(fullRecordUrl, "_blank");
+    });
+  }
 }
 
 // mini map
@@ -1658,9 +1970,9 @@ function renderMonumentDisplayMode(record) {
   ].join("");
 
   const relatedHtml = [
-    mRenderDetailItem(mLabel("Monument is part of", "Monument is part of"), mRaw(record, "Monument is part of"), true),
-    mRenderDetailItem(mLabel("Monument contains", "Monument contains"), mRaw(record, "Monument contains"), true),
-    mRenderDetailItem(mLabel("Monument is associated with", "Monument is associated with"), mRaw(record, "Monument is associated with"), true)
+    mRenderRelatedIdList(mLabel("Monument is part of", "Monument is part of"), mRaw(record, "Monument is part of"), true),
+    mRenderRelatedIdList(mLabel("Monument contains", "Monument contains"), mRaw(record, "Monument contains"), true),
+    mRenderRelatedIdList(mLabel("Monument is associated with", "Monument is associated with"), mRaw(record, "Monument is associated with"), true)
   ].join("");
 
   recordDetails.innerHTML = `
@@ -1700,6 +2012,7 @@ function renderMonumentDisplayMode(record) {
       });
     });
   }
+  wireRelatedRecordChips();
 }
 
 // --------------------------------------------------------
@@ -2431,6 +2744,12 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   renderMonumentEmptyState();
 
+  const initialCaalId = getInitialCaalIdFromUrl();
+
+  if (initialCaalId && siteSearch) {
+    siteSearch.value = initialCaalId;
+  }
+
   if (mapElement && typeof maplibregl !== "undefined") {
     const initialBasemap = basemapSelect ? basemapSelect.value : "osm";
 
@@ -2443,7 +2762,6 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     map.addControl(new maplibregl.NavigationControl(), "top-right");
 
-    // Bind this once
     map.on("click", (event) => {
       if (!monumentIsAddMode) return;
 
@@ -2489,7 +2807,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         } catch (error) {
           console.error("Failed to reload monuments for bbox:", error);
         }
-      }, 300); // 300ms debounce
+      }, 300);
     });
 
     if (basemapSelect) {
@@ -2501,11 +2819,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         map.once("style.load", () => {
           mapLoaded = true;
-
-          // redraw all current map points
           drawMonumentRecords(monumentMapRecords);
 
-          // redraw selected point highlight if there is one
           if (monumentSelectedRecord?.geometry?.coordinates) {
             drawSelectedMonumentHighlight(monumentSelectedRecord);
           }
@@ -2523,6 +2838,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       await loadMonumentListRecords();
     } catch (error) {
       console.error("Monuments initial load failed:", error);
+      renderMonumentEmptyState();
     }
   }
 });

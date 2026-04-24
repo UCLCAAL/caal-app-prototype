@@ -120,6 +120,10 @@ async function loadArchiveLookups() {
 
 // Generic helpers
 // --------------------------------------------------------
+function getInitialCaalIdFromUrl() {
+  return new URLSearchParams(window.location.search).get("caal_id");
+}
+
 function safeArchiveValue(value) {
   if (value === null || value === undefined || value === "") {
     return archiveLabel("Not recorded", "Not recorded");
@@ -1523,6 +1527,12 @@ document.addEventListener("DOMContentLoaded", async () => {
     allCaalArchiveToggleWrapper.hidden = false;
   }
 
+  const initialCaalId = getInitialCaalIdFromUrl();
+
+  if (initialCaalId && archiveSearch) {
+    archiveSearch.value = initialCaalId;
+  }
+
   try {
     await loadArchiveLabels();
     await loadArchiveLookups();
@@ -1541,26 +1551,3 @@ document.addEventListener("DOMContentLoaded", async () => {
     console.error("Archive records failed to load:", error);
   }
 });
-
-// Pagination
-if (archivePrevBtn) {
-  archivePrevBtn.addEventListener("click", () => {
-    if (!archiveConfirmLoseChanges()) return;
-
-    const newOffset = Math.max(0, archiveOffset - archiveLimit);
-    archivePendingNewRecord = null;
-    archiveIsEditMode = false;
-    loadArchiveRecords(archiveLimit, newOffset);
-  });
-}
-
-if (archiveNextBtn) {
-  archiveNextBtn.addEventListener("click", () => {
-    if (!archiveConfirmLoseChanges()) return;
-
-    const newOffset = archiveOffset + archiveLimit;
-    archivePendingNewRecord = null;
-    archiveIsEditMode = false;
-    loadArchiveRecords(archiveLimit, newOffset);
-  });
-}
