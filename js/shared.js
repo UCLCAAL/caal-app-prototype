@@ -315,6 +315,22 @@ function getCurrentLanguage() {
 
 window.getCurrentLanguage = getCurrentLanguage;
 
+// save feedback
+function showToast(message, type = "success") {
+  const toast = document.createElement("div");
+  toast.className = `toast toast-${type}`;
+  toast.textContent = message;
+
+  document.body.appendChild(toast);
+
+  setTimeout(() => toast.classList.add("visible"), 10);
+
+  setTimeout(() => {
+    toast.classList.remove("visible");
+    setTimeout(() => toast.remove(), 300);
+  }, 2500);
+}
+
 // --------------------------------------------------------
 // Shared text helpers
 // --------------------------------------------------------

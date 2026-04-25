@@ -13,11 +13,14 @@ const toggleArchiveFiltersBtn = document.getElementById("toggleArchiveFiltersBtn
 const archiveFiltersPanel = document.getElementById("archiveFiltersPanel");
 const clearArchiveFiltersBtn = document.getElementById("clearArchiveFiltersBtn");
 
+const archiveFilterCaalId = document.getElementById("archiveFilterCaalId");
 const filterArchiveRelatedCountries = document.getElementById("filterArchiveRelatedCountries");
 const filterArchiveRelatedReligions = document.getElementById("filterArchiveRelatedReligions");
 const filterArchiveRelatedSubjects = document.getElementById("filterArchiveRelatedSubjects");
 const filterArchiveContentType = document.getElementById("filterArchiveContentType");
 const filterArchiveLanguages = document.getElementById("filterArchiveLanguages");
+
+const archiveLoadingIndicator = document.getElementById("archiveLoadingIndicator");
 
 const archiveResultsList = document.getElementById("archiveResultsList");
 const archiveResultsCount = document.getElementById("archiveResultsCount");
@@ -68,6 +71,37 @@ let archiveIsDirty = false;      // when entering edit mode and makign a change,
 let archivePreviewRecord = null;
 let archiveJustSavedRecordId = null;
 
+let archiveMessages = {};
+
+// labels translation loader 
+function archiveText(key, fallback = null) {
+  return archiveMessages[key] || archiveLabels[key] || fallback || key;
+}
+
+// loading indicator helper
+function setArchiveLoading(isLoading, message = "") {
+  const browsePane = document.getElementById("browse-pane");
+  const detailPane = document.getElementById("detail-pane");
+
+  console.log("setArchiveLoading:", isLoading, message);
+
+  if (archiveLoadingIndicator) {
+    archiveLoadingIndicator.hidden = !isLoading;
+    archiveLoadingIndicator.innerHTML = isLoading
+      ? `<span class="spinner"></span><span>${message || archiveLabel("Loading...", "Loading...")}</span>`
+      : "";
+  }
+
+  [browsePane, detailPane].forEach((el) => {
+    if (!el) return;
+
+    if (isLoading) {
+      el.classList.add("is-loading");
+    } else {
+      el.classList.remove("is-loading");
+    }
+  });
+}
 
 // Label helpers
 // --------------------------------------------------------
@@ -126,7 +160,7 @@ function getInitialCaalIdFromUrl() {
 
 function safeArchiveValue(value) {
   if (value === null || value === undefined || value === "") {
-    return archiveLabel("Not recorded", "Not recorded");
+    return `<span class="empty-value">${archiveLabel("Not recorded", "Not recorded")}</span>`;
   }
   return value;
 }
@@ -181,11 +215,10 @@ function archiveSectionHasValues(values) {
 function updatePaginationUI() {
   if (!archivePageInfo) return;
 
-  const start = archiveOffset + 1;
+  const start = archiveTotalCount === 0 ? 0 : archiveOffset + 1;
   const end = archiveOffset + archiveAllRecords.length;
 
   archivePageInfo.textContent = `${start}-${end} shown`;
-  //archivePageInfo.textContent = `${start}-${end} of ${archiveTotalCount}`;
 
   if (archivePrevBtn) {
     archivePrevBtn.disabled = archiveOffset === 0;
@@ -193,7 +226,6 @@ function updatePaginationUI() {
 
   if (archiveNextBtn) {
     archiveNextBtn.disabled = archiveAllRecords.length < archiveLimit;
-    //archiveNextBtn.disabled = archiveOffset + archiveLimit >= archiveTotalCount;
   }
 }
 
@@ -682,19 +714,26 @@ async function loadArchiveRecords(limit = 100, offset = 0) {
     window.appSession?.profile?.preferred_language ||
     "en";
 
-  const response = await fetch(
-    `/api/archive?scopes=${encodeURIComponent(scopes.join(","))}&lang=${encodeURIComponent(lang)}&limit=${limit}&offset=${offset}`,
-    {
-      method: "GET",
-      credentials: "include"
-    }
-  );
+  const params = new URLSearchParams();
+  params.set("scopes", scopes.join(","));
+  params.set("lang", lang);
+  params.set("limit", String(limit));
+  params.set("offset", String(offset));
+
+  if (archiveFilterCaalId?.value.trim()) {
+    params.set("caalId", archiveFilterCaalId.value.trim());
+  }
+
+  const response = await fetch(`/api/archive?${params.toString()}`, {
+    method: "GET",
+    credentials: "include"
+  });
 
   const data = await response.json();
   console.log("Archive response:", data);
 
   if (!response.ok || !data.ok) {
-    throw new Error(data.error || "Failed to load archive records");
+    throw new Error(data.detail || data.error || "Failed to load archive records");
   }
 
   archiveAllRecords = data.records || [];
@@ -702,16 +741,10 @@ async function loadArchiveRecords(limit = 100, offset = 0) {
   archiveLimit = data.limit || limit;
   archiveOffset = data.offset || offset;
 
-  //const options = archiveCollectFilterOptions(archiveAllRecords);
-
-  //archivePopulateMultiSelect(filterArchiveRelatedCountries, options.relatedCountries);
-  //archivePopulateMultiSelect(filterArchiveRelatedReligions, options.relatedReligions);
-  //archivePopulateMultiSelect(filterArchiveRelatedSubjects, options.relatedSubjects);
-  //archivePopulateMultiSelect(filterArchiveContentType, options.contentTypes);
-  //archivePopulateMultiSelect(filterArchiveLanguages, options.languages);
-
   archiveVisibleRecords = archiveAllRecords;
-  renderArchiveResultsList(archiveVisibleRecords);
+  archiveApplyFilters();
+
+  updatePaginationUI();
 }
 
 // Search text
@@ -784,6 +817,7 @@ function archiveCollectFilterOptions(records) {
   });
 
   return {
+    caalId: archiveFilterCaalId ? archiveFilterCaalId.value.trim() : "",
     relatedCountries: archiveUniqueSorted(relatedCountries),
     relatedReligions: archiveUniqueSorted(relatedReligions),
     relatedSubjects: archiveUniqueSorted(relatedSubjects),
@@ -800,6 +834,12 @@ function archiveMatchesFilters(record, filters) {
   const matchesText =
     !filters.text ||
     archiveBuildSearchText(record).includes(filters.text.toLowerCase());
+
+  const matchesCaalId =
+    !filters.caalId ||
+    String(archiveIdentity(record, "caal_id") || "")
+      .toLowerCase()
+      .includes(filters.caalId.toLowerCase());  
 
   const matchesRelatedCountries =
     filters.relatedCountries.length === 0 ||
@@ -823,6 +863,7 @@ function archiveMatchesFilters(record, filters) {
 
   return (
     matchesText &&
+    matchesCaalId &&
     matchesRelatedCountries &&
     matchesRelatedReligions &&
     matchesRelatedSubjects &&
@@ -834,6 +875,7 @@ function archiveMatchesFilters(record, filters) {
 function archiveApplyFilters() {
   const filters = {
     text: archiveSearch ? archiveSearch.value.trim() : "",
+    caalId: archiveFilterCaalId ? archiveFilterCaalId.value.trim() : "",
     relatedCountries: archiveSelectedValues(filterArchiveRelatedCountries),
     relatedReligions: archiveSelectedValues(filterArchiveRelatedReligions),
     relatedSubjects: archiveSelectedValues(filterArchiveRelatedSubjects),
@@ -850,6 +892,7 @@ function archiveApplyFilters() {
 
 function archiveClearFilters() {
   if (archiveSearch) archiveSearch.value = "";
+  if (archiveFilterCaalId) archiveFilterCaalId.value = "";
 
   [
     filterArchiveRelatedCountries,
@@ -899,17 +942,19 @@ function renderArchiveResultsList(records) {
       const s = record.summary || {};
       return `
         <div
-          class="result-card"
+          class="result-card ${archiveSelectedRecord?.identity?.id === record.identity?.id ? "is-selected" : ""}"
           data-archive-result-index="${index}"
           data-archive-record-id="${record.identity?.id ?? ""}"
         >
-          <div class="result-card-header">
+          <div class="result-card-topline">
             <strong>${safeArchiveValue(s.original_title || s.english_title)}</strong>
+            <span class="scope-badge">${safeArchiveValue(archiveScopeLabel(record.source?.scope))}</span>
           </div>
+
           <div class="result-card-meta">${safeArchiveValue(record.identity?.caal_id)}</div>
           <div class="result-card-meta">${safeArchiveValue(s.content_type)}</div>
-          <div class="result-card-meta">${safeArchiveValue(archiveScopeLabel(record.source?.scope))}</div>
-          <div class="panel-actions" style="margin-top: 0.6rem;">
+
+          <div class="result-card-actions">
             <button type="button" class="action-btn archive-preview-btn" data-archive-preview-index="${index}">
               ${archiveLabel("Preview", "Preview")}
             </button>
@@ -975,8 +1020,8 @@ function archiveUpdateSelectedResultCard() {
     const cardId = Number(card.dataset.archiveRecordId);
 
     card.classList.toggle(
-      "result-card-selected",
-      selectedId !== null && selectedId !== undefined && cardId === selectedId
+      "is-selected",
+      selectedId !== null && selectedId !== undefined && cardId === Number(selectedId)
     );
 
     card.classList.toggle(
@@ -1431,6 +1476,10 @@ if (archiveSearch) {
   archiveSearch.addEventListener("input", archiveApplyFilters);
 }
 
+if (archiveFilterCaalId) {
+  archiveFilterCaalId.addEventListener("input", archiveApplyFilters);
+}
+
 [
   filterArchiveRelatedCountries,
   filterArchiveRelatedReligions,
@@ -1454,7 +1503,15 @@ if (archiveSearch) {
       archiveOffset = 0;
       archivePendingNewRecord = null;
       archiveIsEditMode = false;
-      loadArchiveRecords(archiveLimit, 0);
+      setArchiveLoading(true, archiveLabel("Updating records...", "Updating records..."));
+
+      loadArchiveRecords(archiveLimit, 0)
+        .catch((error) => {
+          console.error("Archive scope reload failed:", error);
+        })
+        .finally(() => {
+          setArchiveLoading(false);
+        });
     });
   }
 });
@@ -1517,6 +1574,49 @@ if (addArchiveBtn) {
   });
 }
 
+// Pagination
+if (archivePrevBtn) {
+  archivePrevBtn.addEventListener("click", async () => {
+    if (!archiveConfirmLoseChanges()) return;
+
+    const newOffset = Math.max(0, archiveOffset - archiveLimit);
+
+    archivePendingNewRecord = null;
+    archiveIsEditMode = false;
+
+    setArchiveLoading(true, archiveLabel("Loading page...", "Loading page..."));
+
+    try {
+      await loadArchiveRecords(archiveLimit, newOffset);
+    } catch (error) {
+      console.error("Archive page load failed:", error);
+    } finally {
+      setArchiveLoading(false);
+    }
+  });
+}
+
+if (archiveNextBtn) {
+  archiveNextBtn.addEventListener("click", async () => {
+    if (!archiveConfirmLoseChanges()) return;
+
+    const newOffset = archiveOffset + archiveLimit;
+
+    archivePendingNewRecord = null;
+    archiveIsEditMode = false;
+
+    setArchiveLoading(true, archiveLabel("Loading page...", "Loading page..."));
+
+    try {
+      await loadArchiveRecords(archiveLimit, newOffset);
+    } catch (error) {
+      console.error("Archive page load failed:", error);
+    } finally {
+      setArchiveLoading(false);
+    }
+  });
+}
+
 // Initial load
 // --------------------------------------------------------
 document.addEventListener("DOMContentLoaded", async () => {
@@ -1529,8 +1629,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   const initialCaalId = getInitialCaalIdFromUrl();
 
-  if (initialCaalId && archiveSearch) {
-    archiveSearch.value = initialCaalId;
+  if (initialCaalId && archiveFilterCaalId) {
+    archiveFilterCaalId.value = initialCaalId;
   }
 
   try {
@@ -1545,9 +1645,13 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   renderArchiveEmptyState();
 
+  setArchiveLoading(true, archiveLabel("Loading records...", "Loading records..."));
+
   try {
-    await loadArchiveRecords(10, 0);
+    await loadArchiveRecords(100, 0);
   } catch (error) {
     console.error("Archive records failed to load:", error);
+  } finally {
+    setArchiveLoading(false);
   }
 });

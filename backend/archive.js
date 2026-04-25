@@ -166,15 +166,36 @@ router.get("/", async (req, res) => {
   const offset = Number(req.query.offset) || 0;
   const lang = req.query.lang || currentSession.profile?.preferred_language || "en";
 
+  const caalId = String(req.query.caalId || "").trim();
+
   const unionSql = buildBrowseUnionSql(scopes);
+
+  const whereClauses = [];
+  const values = [];
+
+  if (caalId) {
+    values.push(`%${caalId}%`);
+    whereClauses.push(`coalesce("CAAL_ID", caal_id, '') ILIKE $${values.length}`);
+  }
+
+  const whereSql = whereClauses.length
+    ? `WHERE ${whereClauses.join(" AND ")}`
+    : "";
+
+  values.push(limit);
+  const limitParam = values.length;
+
+  values.push(offset);
+  const offsetParam = values.length;
 
   const dataSql = `
     SELECT *
     FROM (
       ${unionSql}
     ) combined
+    ${whereSql}
     ORDER BY id DESC
-    LIMIT $1 OFFSET $2
+    LIMIT $${limitParam} OFFSET $${offsetParam}
   `;
 
   const countSql = `
@@ -182,12 +203,16 @@ router.get("/", async (req, res) => {
     FROM (
       ${unionSql}
     ) combined
+    ${whereSql}
   `;
 
   try {
+    const dataValues = values;
+    const countValues = values.slice(0, values.length - 2);
+
     const [dataResult, countResult] = await Promise.all([
-      pool.query(dataSql, [limit, offset]),
-      pool.query(countSql)
+      pool.query(dataSql, dataValues),
+      pool.query(countSql, countValues)
     ]);
 
     const records = dataResult.rows.map((row) => buildArchiveRecord(row, lang));

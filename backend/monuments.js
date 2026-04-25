@@ -238,12 +238,19 @@ function buildMonumentFilterWhere(req) {
   let index = 1;
 
   const text = req.query.text?.trim();
+  const caalId = req.query.caalId?.trim();
   const monumentTypes = parseCsvParam(req.query.monumentTypes);
   const classifications = parseCsvParam(req.query.classifications);
   const designations = parseCsvParam(req.query.designations);
   const religions = parseCsvParam(req.query.religions);
   const culturalPeriods = parseCsvParam(req.query.culturalPeriods);
   const countries = parseCsvParam(req.query.countries);
+
+  if (caalId) {
+    clauses.push(`"CAAL_ID" ILIKE $${index}`);
+    values.push(`%${caalId}%`);
+    index += 1;
+  }
 
   if (text) {
     clauses.push(`

@@ -13,6 +13,7 @@ const toggleFiltersBtn = document.getElementById("toggleFiltersBtn");
 const filtersPanel = document.getElementById("filtersPanel");
 const clearFiltersBtn = document.getElementById("clearFiltersBtn");
 
+const filterCaalId = document.getElementById("filterCaalId");
 const filterMonumentType = document.getElementById("filterMonumentType");
 const filterClassification = document.getElementById("filterClassification");
 const filterDesignation = document.getElementById("filterDesignation");
@@ -452,10 +453,10 @@ function mBuildSavePayload() {
     "Measurement Type4": mGetInputValue("Measurement Type4"),
     "Designation": mGetInputValue("Designation"),
     "World Heritage Site Name": mGetInputValue("World Heritage Site Name"),
-    "Monument is part of": mGetInputValue("Monument is part of"),
-    "Monument contains": mGetInputValue("Monument contains"),
-    "Monument is associated with": mGetInputValue("Monument is associated with"),
-    "MasterID": mGetInputValue("MasterID")
+    "Monument is part of": normaliseRelatedIdList(mGetInputValue("Monument is part of")),
+    "Monument contains": normaliseRelatedIdList(mGetInputValue("Monument contains")),
+    "Monument is associated with": normaliseRelatedIdList(mGetInputValue("Monument is associated with")),
+    "MasterID": normaliseRelatedIdList(mGetInputValue("MasterID"))
   };
 }
 
@@ -614,6 +615,7 @@ function monumentScopeLabel(scope) {
 function getMonumentCurrentFilters() {
   return {
     text: siteSearch ? siteSearch.value.trim() : "",
+    caalId: filterCaalId ? filterCaalId.value.trim() : "",
     monumentTypes: mSelectedValues(filterMonumentType),
     classifications: mSelectedValues(filterClassification),
     designations: mSelectedValues(filterDesignation),
@@ -641,6 +643,7 @@ function buildMonumentQueryParams({ includePaging = true } = {}) {
   params.set("lang", lang);
 
   if (filters.text) params.set("text", filters.text);
+  if (filters.caalId) params.set("caalId", filters.caalId);
   if (filters.monumentTypes.length) params.set("monumentTypes", filters.monumentTypes.join(","));
   if (filters.classifications.length) params.set("classifications", filters.classifications.join(","));
   if (filters.designations.length) params.set("designations", filters.designations.join(","));
@@ -656,23 +659,6 @@ function buildMonumentQueryParams({ includePaging = true } = {}) {
   return params;
 }
 
-// save feedback
-function showToast(message, type = "success") {
-  let toast = document.createElement("div");
-  toast.className = `toast toast-${type}`;
-  toast.textContent = message;
-
-  document.body.appendChild(toast);
-
-  setTimeout(() => {
-    toast.classList.add("visible");
-  }, 10);
-
-  setTimeout(() => {
-    toast.classList.remove("visible");
-    setTimeout(() => toast.remove(), 300);
-  }, 2500);
-}
 
 // determine dates
 let culturalPeriodLookup = {};
@@ -752,9 +738,9 @@ function wireMonumentCulturalPeriodDateRecalc() {
   });
 }
 
-// related resource helpers
+/// related resource helpers
 // ----------------------------------------------
-// split IDS
+
 function parseRelatedIds(value) {
   if (!value) return [];
 
@@ -764,17 +750,18 @@ function parseRelatedIds(value) {
     .filter(Boolean);
 }
 
-//infer record type
-function inferRelatedRecordType(caalId) {
-  if (!caalId) return "unknown";
-
-  if (caalId.startsWith("Ar_")) return "archive";
-  if (caalId.startsWith("Mon_")) return "monument";
-
-  return "unknown";
+function normaliseRelatedIdList(value) {
+  return Array.from(new Set(parseRelatedIds(value))).join(", ");
 }
 
-// render related as buttons
+function isLikelyRelatedId(value) {
+  return /^[^\s,;]+-\d+$/.test(String(value).trim());
+}
+
+function getInvalidRelatedIds(value) {
+  return parseRelatedIds(value).filter((id) => !isLikelyRelatedId(id));
+}
+
 function mRenderRelatedIdList(label, value, fullWidth = true) {
   const ids = parseRelatedIds(value);
 
@@ -811,38 +798,76 @@ function wireRelatedRecordChips() {
   });
 }
 
-  // asks backend to find record
-  async function openRelatedRecordPreview(caalId) {
-    const response = await fetch(
+async function openRelatedRecordPreview(caalId) {
+  const response = await fetch(
     `/api/records/resolve?caal_id=${encodeURIComponent(caalId)}`,
     { method: "GET", credentials: "include" }
   );
 
-    const data = await response.json();
+  const data = await response.json();
 
-    if (!response.ok || !data.ok) {
-      alert(data.error || "Could not load related record");
-      return;
-    }
-
-    renderRelatedRecordModal(data.record, data.record_type, caalId);
+  if (!response.ok || !data.ok) {
+    alert(data.error || "Could not load related record");
+    return;
   }
 
-  // to open related record in a new tab
-  function getRelatedRecordUrl(caalId, recordType) {
-    if (recordType === "archive") {
-      return `archive.html?caal_id=${encodeURIComponent(caalId)}`;
-    }
+  renderRelatedRecordModal(data.record, data.record_type, caalId);
+}
 
-    if (recordType === "monument") {
-      return `monuments.html?caal_id=${encodeURIComponent(caalId)}`;
-    }
+function getRelatedRecordUrl(caalId, recordType, sourceScope = null) {
+  const params = new URLSearchParams();
+  params.set("caal_id", caalId);
 
-    return null;
+  if (sourceScope) {
+    params.set("scope", sourceScope);
   }
+
+  if (recordType === "archive") {
+    return `archive.html?${params.toString()}`;
+  }
+
+  if (recordType === "monument") {
+    return `monuments.html?${params.toString()}`;
+  }
+
+  return null;
+}
 
 function getInitialCaalIdFromUrl() {
   return new URLSearchParams(window.location.search).get("caal_id");
+}
+
+function validateRelatedFieldsBeforeSave() {
+  const fields = [
+    "Monument is part of",
+    "Monument contains",
+    "Monument is associated with",
+    "MasterID"
+  ];
+
+  const invalid = [];
+
+  fields.forEach((field) => {
+    const value = mGetInputValue(field);
+    getInvalidRelatedIds(value).forEach((id) => {
+      invalid.push(`${field}: ${id}`);
+    });
+  });
+
+  if (invalid.length) {
+    alert(
+      "Some related IDs do not look valid:\n\n" +
+      invalid.join("\n") +
+      "\n\nPlease use comma-separated CAAL IDs."
+    );
+    return false;
+  }
+
+  return true;
+}
+
+function getInitialScopeFromUrl() {
+  return new URLSearchParams(window.location.search).get("scope");
 }
 
 // modal helpers
@@ -974,7 +999,11 @@ function renderMonumentPreviewModal(record) {
 function renderRelatedRecordModal(record, recordType, caalId) {
     if (!monumentPreviewModal || !monumentPreviewTitle || !monumentPreviewBody) return;
 
-  const fullRecordUrl = getRelatedRecordUrl(caalId, recordType);
+  const fullRecordUrl = getRelatedRecordUrl(
+    caalId,
+    recordType,
+    record?.source?.scope
+  );
 
   if (recordType === "monument") {
     renderRelatedMonumentModal(record, caalId, fullRecordUrl);
@@ -2381,6 +2410,7 @@ window.monumentCanChangeLanguage = function () {
 // button logic 
 async function saveCurrentMonumentRecord() {
   if (!monumentSelectedRecord) return;
+  if (!validateRelatedFieldsBeforeSave()) return;
 
   setMonumentsLoading(true, "Saving record...");
 
@@ -2490,6 +2520,10 @@ if (monumentPreviewCloseBtn) {
 
 if (siteSearch) {
   siteSearch.addEventListener("input", applyMonumentFilters);
+}
+
+if (filterCaalId) {
+  filterCaalId.addEventListener("input", applyMonumentFilters);
 }
 
 [
@@ -2746,8 +2780,22 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   const initialCaalId = getInitialCaalIdFromUrl();
 
-  if (initialCaalId && siteSearch) {
-    siteSearch.value = initialCaalId;
+  if (initialCaalId && filterCaalId) {
+    filterCaalId.value = initialCaalId;
+  }
+
+  const initialScope = getInitialScopeFromUrl();
+
+  if (initialScope === "all_caal" && showAllCaalRecords) {
+    showAllCaalRecords.checked = true;
+  }
+
+  if (initialScope === "national_ref" && showNationalRecords) {
+    showNationalRecords.checked = true;
+  }
+
+  if (initialScope === "workspace" && showWorkspaceRecords) {
+    showWorkspaceRecords.checked = true;
   }
 
   if (mapElement && typeof maplibregl !== "undefined") {
@@ -2802,12 +2850,18 @@ document.addEventListener("DOMContentLoaded", async () => {
       monumentMoveDebounceTimer = setTimeout(async () => {
         if (monumentsIsLoading) return;
 
+        const filters = getMonumentCurrentFilters();
+
+        if (filters.text || filters.caalId) {
+          return;
+        }
+
         try {
           await loadMonumentMapRecords();
         } catch (error) {
           console.error("Failed to reload monuments for bbox:", error);
         }
-      }, 300);
+      }, 1000);
     });
 
     if (basemapSelect) {

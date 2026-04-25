@@ -1264,6 +1264,24 @@ Popup preview */
   margin-top: 0.75rem;
 }
 
+.caal-id-filter-input {
+  width: 100%;
+  box-sizing: border-box;
+  padding: 0.65rem 0.85rem;
+  border: 1px solid #d5dde1;
+  border-radius: 0.55rem;
+  font-size: 1rem;
+  line-height: 1.3;
+  background: #fff;
+  color: #1f2a30;
+}
+
+.caal-id-filter-input:focus {
+  outline: none;
+  border-color: #5f8fc9;
+  box-shadow: 0 0 0 2px rgba(95, 143, 201, 0.18);
+}
+
 /* =========================================================
     RESPONSIVE LAYOUT */
 @media (max-width: 900px) {

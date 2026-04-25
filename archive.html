@@ -51,6 +51,9 @@
       </div>
 
       <div class="pane-body">
+
+        <div id="archiveLoadingIndicator" class="loading-indicator" hidden></div>
+
         <div class="search-box search-box-stacked">
           <label for="archiveSearch" data-i18n="archive_search">Search</label>
           <input
@@ -88,6 +91,16 @@
               <button type="button" class="action-btn" id="clearArchiveFiltersBtn" data-i18n="archive_clear_filters">Clear filters</button>
             </div>
 
+            <div class="filter-group">
+              <label for="archiveFilterCaalId">CAAL_ID</label>
+              <input
+                type="text"
+                id="archiveFilterCaalId"
+                class="filter-input caal-id-filter-input"
+                placeholder="Search CAAL_ID"
+              />
+            </div>
+            
             <div class="filter-group">
               <label for="filterArchiveRelatedCountries" data-i18n="archive_related_countries">Related Countries</label>
               <select id="filterArchiveRelatedCountries" class="form-control" multiple></select>
