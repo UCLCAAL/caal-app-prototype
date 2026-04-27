@@ -1282,6 +1282,36 @@ Popup preview */
   box-shadow: 0 0 0 2px rgba(95, 143, 201, 0.18);
 }
 
+.browse-header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.admin-cache-btn {
+  margin-top: 0.15rem;
+  padding: 0.32rem 0.65rem;
+  border: 1px solid #d4dbe1;
+  border-radius: 999px;
+  background: #f7f9fa;
+  color: #52636d;
+  font-size: 0.78rem;
+  line-height: 1.1;
+  white-space: nowrap;
+  box-shadow: none;
+}
+
+.admin-cache-btn:hover {
+  background: #eef3f1;
+  border-color: #b9c8c1;
+  color: #385f52;
+}
+
+.admin-cache-btn:disabled {
+  opacity: 0.6;
+  cursor: wait;
+}
 /* =========================================================
     RESPONSIVE LAYOUT */
 @media (max-width: 900px) {

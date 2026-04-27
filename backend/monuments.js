@@ -7,7 +7,8 @@ const router = express.Router();
 // CONFIG
 // ========================================================
 
-const MONUMENTS_TABLE = 'kz."CAAL_Monuments"';
+const MONUMENTS_WORKSPACE_TABLE = 'kz."CAAL_Monuments"';
+const MONUMENTS_CAAL_TABLE = 'public."CAAL_Monuments"';
 const MONUMENTS_VIEW = 'kz.v_monuments_grid_base';
 const GEOM_COLUMN_SQL = `"geom"`;
 
@@ -658,8 +659,21 @@ router.get("/monuments", async (req, res) => {
   }
 });
 
+function getAccessLevel(session) {
+  return Number(
+    session?.user?.access_level ??
+    session?.profile?.access_level ??
+    session?.permissions?.access_level ??
+    session?.access_level ??
+    0
+  );
+}
+
 function canEditCaalMonuments(session) {
-  return !!session?.permissions?.can_edit_caal;
+  return (
+    session?.permissions?.can_edit_caal === true ||
+    getAccessLevel(session) === 9
+  );
 }
 
 // ========================================================
@@ -762,6 +776,14 @@ async function fetchMonumentRowById(id) {
   return result.rows[0] || null;
 }
 
+async function fetchPublicMonumentRowById(id) {
+  const result = await pool.query(
+    `SELECT *, 'all_caal'::text AS source_scope FROM ui.mv_monuments_caal WHERE id = $1`,
+    [id]
+  );
+  return result.rows[0] || null;
+}
+
 // ========================================================
 // CREATE
 // ========================================================
@@ -773,10 +795,10 @@ router.post("/monuments", async (req, res) => {
     return res.status(401).json({ ok: false, error: "No active session" });
   }
 
-  if (!canEditMonuments(currentSession)) {
+  if (!canEditMonuments(currentSession) && !canEditCaalMonuments(currentSession)) {
     return res.status(403).json({
       ok: false,
-      error: "You do not have permission to create workspace monuments"
+      error: "You do not have permission to edit monument records"
     });
   }
 
@@ -820,7 +842,7 @@ router.post("/monuments", async (req, res) => {
     const queryValues = geomSql ? [...values, Number(lng), Number(lat)] : values;
 
     const insertSql = `
-      INSERT INTO ${MONUMENTS_TABLE} (${columnSql}${geomSql})
+      INSERT INTO ${MONUMENTS_WORKSPACE_TABLE} (${columnSql}${geomSql})
       VALUES (${fields.map((_, i) => `$${i + 1}`).join(", ")}${geomValueSql})
       RETURNING id
     `;
@@ -834,11 +856,11 @@ router.post("/monuments", async (req, res) => {
     return res.status(201).json({
       ok: true,
       record: buildMonumentRecord(
-        freshRow,
-        lang,
-        userId,
-        canEditCaalMonuments(currentSession)
-      )
+      freshRow,
+      lang,
+      appUserId,
+      canEditCaalMonuments(currentSession)
+    )
     });
   } catch (error) {
     console.error("Monument create failed:");
@@ -847,6 +869,29 @@ router.post("/monuments", async (req, res) => {
     return res.status(500).json({
       ok: false,
       error: "Monument create failed",
+      detail: error.message
+    });
+  }
+});
+
+// cache update for super user
+router.post("/monuments/admin/refresh-caal-cache", async (req, res) => {
+  const currentSession = req.session?.appSession || null;
+
+  if (!currentSession?.permissions?.can_edit_caal) {
+    return res.status(403).json({
+      ok: false,
+      error: "Admin only"
+    });
+  }
+
+  try {
+    await pool.query(`REFRESH MATERIALIZED VIEW CONCURRENTLY ui.mv_monuments_caal`);
+    return res.json({ ok: true });
+  } catch (error) {
+    return res.status(500).json({
+      ok: false,
+      error: "CAAL cache refresh failed",
       detail: error.message
     });
   }
@@ -863,10 +908,10 @@ router.patch("/monuments/:id", async (req, res) => {
     return res.status(401).json({ ok: false, error: "No active session" });
   }
 
-  if (!canEditMonuments(currentSession)) {
+  if (!canEditMonuments(currentSession) && !canEditCaalMonuments(currentSession)) {
     return res.status(403).json({
       ok: false,
-      error: "You do not have permission to edit workspace monuments"
+      error: "You do not have permission to edit monument records"
     });
   }
 
@@ -907,38 +952,93 @@ router.patch("/monuments/:id", async (req, res) => {
     const userId = currentSession?.user?.user_id ?? null;
     const canEditCaal = canEditCaalMonuments(currentSession);
 
-    let updateSql;
-    let updateValues;
+    console.log("Monument PATCH permissions:", {
+      userId,
+      accessLevel: getAccessLevel(currentSession),
+      canEditWorkspace: canEditMonuments(currentSession),
+      canEditCaal,
+      permissions: currentSession?.permissions,
+      user: currentSession?.user,
+      profile: currentSession?.profile
+    });
+
+    let updateResult;
+    let updatedScope = "workspace";
 
     if (canEditCaal) {
+      console.log("Trying workspace monument update:", {
+        table: MONUMENTS_WORKSPACE_TABLE,
+        id,
+        canEditCaal
+      });
+
       updateSql = `
-        UPDATE ${MONUMENTS_TABLE}
+        UPDATE ${MONUMENTS_WORKSPACE_TABLE}
         SET ${setParts.join(", ")}
         WHERE id = $${values.length + 1}
         RETURNING id
       `;
       updateValues = [...values, id];
+
+      updateResult = await pool.query(updateSql, updateValues);
+
+      console.log("Workspace update row count:", updateResult.rows.length);
+
+      if (updateResult.rows.length === 0) {
+        console.log("Trying public CAAL monument update:", {
+          table: MONUMENTS_CAAL_TABLE,
+          id,
+          canEditCaal
+        });
+
+        updateSql = `
+          UPDATE ${MONUMENTS_CAAL_TABLE}
+          SET ${setParts.join(", ")}
+          WHERE id = $${values.length + 1}
+          RETURNING id
+        `;
+        updateValues = [...values, id];
+
+        updateResult = await pool.query(updateSql, updateValues);
+
+        console.log("Public CAAL update row count:", updateResult.rows.length);
+
+        updatedScope = "all_caal";
+      }
     } else {
+      // Normal editor: own workspace records only.
       updateSql = `
-        UPDATE ${MONUMENTS_TABLE}
+        UPDATE ${MONUMENTS_WORKSPACE_TABLE}
         SET ${setParts.join(", ")}
         WHERE id = $${values.length + 1}
           AND created_by_app_user_id = $${values.length + 2}
         RETURNING id
       `;
       updateValues = [...values, id, userId];
-    }
 
-    const updateResult = await pool.query(updateSql, updateValues);
+      updateResult = await pool.query(updateSql, updateValues);
+    }
 
     if (updateResult.rows.length === 0) {
       return res.status(403).json({
         ok: false,
-        error: "You can only edit your own records"
+        error: canEditCaal
+        ? "Monument record not found in workspace or public CAAL tables"
+        : "You can only edit your own workspace records"
       });
     }
 
-    const freshRow = await fetchMonumentRowById(id);
+    const freshRow =
+      updatedScope === "workspace"
+        ? await fetchMonumentRowById(id)
+        : await fetchPublicMonumentRowById(id);
+
+    if (!freshRow) {
+      return res.status(500).json({
+        ok: false,
+        error: "Monument updated but refreshed record could not be loaded"
+      });
+    }
     const lang = req.query.lang || currentSession.profile?.preferred_language || "en";
 
     return res.json({

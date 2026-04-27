@@ -65,11 +65,23 @@
          Placeholder, but wired with the existing siteSearch input id
          ===================================== -->
     <aside class="workspace-pane browse-pane">
-      <div class="pane-header">
-        <h2>Browse</h2>
-        <p>Search and consult records</p>
+      <div class="pane-header pane-header-inline">
+        <div>
+          <h2>Browse</h2>
+          <p>Search and consult records</p>
+        </div>
+
+        <button
+          type="button"
+          id="refreshMonumentsCacheBtn"
+          class="admin-cache-btn"
+          title="Admin only: refreshes the CAAL browse cache"
+          hidden
+        >
+          Refresh cache
+        </button>
       </div>
-    
+      
       <div class="pane-body">
         <div id="monumentsLoadingIndicator" class="loading-indicator" hidden>
           <span class="spinner"></span>

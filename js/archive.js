@@ -1187,14 +1187,33 @@ function archiveRenderDisplayMode(record) {
     record?.summary?.archive_recorder ||
     record?.raw?.["Archive Recorder"];
 
+  const appSession = window.appSession || null;
+  const accessLevel =
+    Number(
+      window.appSession?.user?.access_level ??
+      window.appSession?.profile?.access_level ??
+      0
+    );
+
+  const currentAppUserId = window.appSession?.user?.user_id ?? null;
+  const recordAppUserId = record?.raw?.created_by_app_user_id ?? null;
+
   const isOwner =
-    currentUsername != null &&
-    recordRecorder != null &&
-    String(currentUsername) === String(recordRecorder);
+    currentAppUserId !== null &&
+    recordAppUserId !== null &&
+    Number(currentAppUserId) === Number(recordAppUserId);
+
+  const isSuperUser =
+    window.appSession?.permissions?.can_edit_caal === true;
+
+  const isWorkspaceRecord = record.source?.scope === "workspace";
+  const isCaalRecord =
+    record.source?.scope === "national_ref" ||
+    record.source?.scope === "all_caal";
 
   const canEditThisRecord =
-    record.source?.is_editable &&
-    isOwner;
+    (isWorkspaceRecord && isOwner) ||
+    (isCaalRecord && isSuperUser);
 
   const statusBadge = canEditThisRecord
   ? `<span class="record-status-badge record-status-editable">${archiveLabel("Editable", "Editable")}</span>`

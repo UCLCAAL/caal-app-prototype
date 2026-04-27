@@ -237,7 +237,8 @@ router.get("/", async (req, res) => {
   }
 });
 
-const ARCHIVE_TABLE = 'kz."CAAL_Archive"';
+const ARCHIVE_WORKSPACE_TABLE = 'kz."CAAL_Archive"';
+const ARCHIVE_CAAL_TABLE = 'public."CAAL_Archive"';
 
 const ARCHIVE_EDITABLE_FIELDS = [
   "Level",
@@ -281,6 +282,10 @@ const ARCHIVE_EDITABLE_FIELDS = [
 
 function canEditArchive(session) {
   return !!session?.permissions?.can_edit_workspace;
+}
+
+function canEditCaalArchive(session) {
+  return !!session?.permissions?.can_edit_caal;
 }
 
 function normaliseArchivePayload(input = {}) {
@@ -375,33 +380,74 @@ router.patch("/:id", async (req, res) => {
     console.log("Archive PATCH setSql:", setSql);
 
     const userId = currentSession?.user?.user_id ?? null;
-    
-    const result = await pool.query(
-      `
-      UPDATE ${ARCHIVE_TABLE}
-      SET
-        ${setSql},
-        "Tstamp" = NOW()
-      WHERE id = $${fields.length + 1}
-        AND created_by_app_user_id = $${fields.length + 2}
-      RETURNING *
-      `,
-      [...values, id, userId]
-    );
+    const canEditCaal = canEditCaalArchive(currentSession);
+
+    let result;
+    let returnedScope = "workspace";
+    let returnedEditable = true;
+
+    if (canEditCaal) {
+      // Super user can update either workspace or public CAAL.
+      // Try workspace first, then public CAAL.
+      result = await pool.query(
+        `
+        UPDATE ${ARCHIVE_WORKSPACE_TABLE}
+        SET
+          ${setSql},
+          "Tstamp" = NOW()
+        WHERE id = $${fields.length + 1}
+        RETURNING *
+        `,
+        [...values, id]
+      );
+
+      if (result.rows.length === 0) {
+        result = await pool.query(
+          `
+          UPDATE ${ARCHIVE_CAAL_TABLE}
+          SET
+            ${setSql},
+            "Tstamp" = NOW()
+          WHERE id = $${fields.length + 1}
+          RETURNING *
+          `,
+          [...values, id]
+        );
+
+        returnedScope = "all_caal";
+        returnedEditable = true;
+      }
+    } else {
+      // Normal workspace editor can only update own workspace records.
+      result = await pool.query(
+        `
+        UPDATE ${ARCHIVE_WORKSPACE_TABLE}
+        SET
+          ${setSql},
+          "Tstamp" = NOW()
+        WHERE id = $${fields.length + 1}
+          AND created_by_app_user_id = $${fields.length + 2}
+        RETURNING *
+        `,
+        [...values, id, userId]
+      );
+    }
 
     if (result.rows.length === 0) {
       return res.status(403).json({
         ok: false,
-        error: "You can only edit your own records"
+        error: canEditCaal
+          ? "Archive record not found in workspace or public CAAL tables"
+          : "You can only edit your own workspace archive records"
       });
     }
-
+  
     const lang = req.query.lang || currentSession.profile?.preferred_language || "en";
     const record = buildArchiveRecord(
       {
         ...result.rows[0],
-        source_scope: "workspace",
-        is_editable: true
+        source_scope: returnedScope,
+        is_editable: returnedEditable
       },
       lang
     );
@@ -433,10 +479,10 @@ router.post("/", async (req, res) => {
     });
   }
 
-  if (!canEditArchive(currentSession)) {
+  if (!canEditArchive(currentSession) && !canEditCaalArchive(currentSession)) {
     return res.status(403).json({
       ok: false,
-      error: "You do not have permission to create workspace archive records"
+      error: "You do not have permission to edit archive records"
     });
   }
 
@@ -470,7 +516,7 @@ router.post("/", async (req, res) => {
   try {
     const result = await pool.query(
       `
-      INSERT INTO ${ARCHIVE_TABLE} (${columnSql})
+      INSERT INTO ${ARCHIVE_WORKSPACE_TABLE} (${columnSql})
       VALUES (${valueSql})
       RETURNING *
       `,

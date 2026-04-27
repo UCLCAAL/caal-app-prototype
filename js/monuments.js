@@ -566,19 +566,43 @@ function monumentConfirmLoseChanges() {
 
 // switches add/edit with save/cancel
 function updateMonumentActionBar() {
-  const hasSelectedRecord = !!monumentSelectedRecord;
-  const canEditThisRecord = monumentSelectedRecord?.source?.is_editable === true;
+  const record = monumentSelectedRecord;
+
+  const hasSelectedRecord = !!record;
+
+  const currentAppUserId = window.appSession?.user?.user_id ?? null;
+  const recordAppUserId = record?.raw?.created_by_app_user_id ?? null;
+
+  const isOwner =
+    currentAppUserId !== null &&
+    recordAppUserId !== null &&
+    Number(currentAppUserId) === Number(recordAppUserId);
+
+  const isSuperUser =
+    window.appSession?.permissions?.can_edit_caal === true;
+
+  const isWorkspaceRecord = record?.source?.scope === "workspace";
+  const isCaalRecord =
+    record?.source?.scope === "national_ref" ||
+    record?.source?.scope === "all_caal";
+
+  const canEditThisRecord =
+    !!record &&
+    (
+      (isWorkspaceRecord && (isOwner || isSuperUser)) ||
+      (isCaalRecord && isSuperUser)
+    );
 
   if (addMonumentBtn) {
     addMonumentBtn.hidden = monumentIsEditMode;
   }
 
   if (monumentEditBtn) {
-  monumentEditBtn.hidden = monumentIsEditMode || !hasSelectedRecord;
-  monumentEditBtn.disabled = !canEditThisRecord;
-  monumentEditBtn.title = canEditThisRecord ? "" : mLabel("Read only", "Read only");
-  monumentEditBtn.classList.toggle("is-disabled", !canEditThisRecord);
-}
+    monumentEditBtn.hidden = monumentIsEditMode || !hasSelectedRecord;
+    monumentEditBtn.disabled = !canEditThisRecord;
+    monumentEditBtn.title = canEditThisRecord ? "" : mLabel("Read only", "Read only");
+    monumentEditBtn.classList.toggle("is-disabled", !canEditThisRecord);
+  }
 
   if (monumentSaveBtn) {
     monumentSaveBtn.hidden = !monumentIsEditMode;
@@ -735,6 +759,46 @@ function wireMonumentCulturalPeriodDateRecalc() {
       monumentSelectedRecord.raw[fieldName] = e.target.value || "";
       recalculateMonumentDates(monumentSelectedRecord);
     });
+  });
+}
+
+// super user cache button
+// -------------------------------------
+const refreshMonumentsCacheBtn = document.getElementById("refreshMonumentsCacheBtn");
+
+if (window.appSession?.permissions?.can_edit_caal && refreshMonumentsCacheBtn) {
+  refreshMonumentsCacheBtn.hidden = false;
+
+  refreshMonumentsCacheBtn.addEventListener("click", async () => {
+    refreshMonumentsCacheBtn.disabled = true;
+    refreshMonumentsCacheBtn.textContent = "Refreshing...";
+    setMonumentsLoading(true, "Refreshing CAAL cache...");
+
+    try {
+      const response = await fetch("/api/monuments/admin/refresh-caal-cache", {
+        method: "POST",
+        credentials: "include"
+      });
+
+      const data = await response.json();
+
+      if (!response.ok || !data.ok) {
+        alert(data.detail || data.error || "Cache refresh failed");
+        return;
+      }
+
+      showToast("CAAL cache refreshed");
+
+      await loadMonumentMapRecords();
+      await loadMonumentListRecords();
+    } catch (error) {
+      console.error("Cache refresh failed:", error);
+      alert(error.message || "Cache refresh failed");
+    } finally {
+      refreshMonumentsCacheBtn.disabled = false;
+      refreshMonumentsCacheBtn.textContent = "Refresh cache";
+      setMonumentsLoading(false);
+    }
   });
 }
 
@@ -1889,7 +1953,33 @@ function renderMonumentRecordDetails(record) {
 }
 
 function renderMonumentDisplayMode(record) {
-  const canEditThisRecord = record.source?.is_editable === true;
+  const appSession = window.appSession || null;
+  const accessLevel =
+    Number(
+      window.appSession?.user?.access_level ??
+      window.appSession?.profile?.access_level ??
+      0
+    );
+
+  const currentAppUserId = window.appSession?.user?.user_id ?? null;
+  const recordAppUserId = record?.raw?.created_by_app_user_id ?? null;
+
+  const isOwner =
+    currentAppUserId !== null &&
+    recordAppUserId !== null &&
+    Number(currentAppUserId) === Number(recordAppUserId);
+
+  const isSuperUser =
+    window.appSession?.permissions?.can_edit_caal === true;
+
+  const isWorkspaceRecord = record.source?.scope === "workspace";
+  const isCaalRecord =
+    record.source?.scope === "national_ref" ||
+    record.source?.scope === "all_caal";
+
+  const canEditThisRecord =
+  (isWorkspaceRecord && (isOwner || isSuperUser)) ||
+  (isCaalRecord && isSuperUser);
 
   const statusBadge = canEditThisRecord
     ? `<span class="record-status-badge record-status-editable">${mLabel("Editable", "Editable")}</span>`
@@ -2745,6 +2835,12 @@ document.addEventListener("app:languageChanged", async () => {
 document.addEventListener("DOMContentLoaded", async () => {
   const session = await requireSession();
   if (!session) return;
+
+  const refreshMonumentsCacheBtn = document.getElementById("refreshMonumentsCacheBtn");
+
+  if (refreshMonumentsCacheBtn) {
+    refreshMonumentsCacheBtn.hidden = !session.permissions?.can_edit_caal;
+  }
 
   setMonumentsLoading(false);
 
