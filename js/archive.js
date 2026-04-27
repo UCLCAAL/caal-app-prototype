@@ -724,6 +724,8 @@ async function loadArchiveRecords(limit = 100, offset = 0) {
     params.set("caalId", archiveFilterCaalId.value.trim());
   }
 
+  console.log("Archive fetch URL:", `/api/archive?${params.toString()}`);
+
   const response = await fetch(`/api/archive?${params.toString()}`, {
     method: "GET",
     credentials: "include"
@@ -890,7 +892,7 @@ function archiveApplyFilters() {
   renderArchiveResultsList(archiveVisibleRecords);
 }
 
-function archiveClearFilters() {
+async function archiveClearFilters() {
   if (archiveSearch) archiveSearch.value = "";
   if (archiveFilterCaalId) archiveFilterCaalId.value = "";
 
@@ -907,7 +909,21 @@ function archiveClearFilters() {
     });
   });
 
-  archiveApplyFilters();
+  // Remove deep-link params so the page no longer behaves as a targeted record view
+  const cleanUrl = window.location.pathname;
+  window.history.replaceState({}, "", cleanUrl);
+
+  archiveOffset = 0;
+
+  setArchiveLoading(true, archiveLabel("Updating records...", "Updating records..."));
+
+  try {
+    await loadArchiveRecords(archiveLimit, 0);
+  } catch (error) {
+    console.error("Archive clear filters failed:", error);
+  } finally {
+    setArchiveLoading(false);
+  }
 }
 
 // Results rendering
@@ -1469,7 +1485,9 @@ if (toggleArchiveFiltersBtn && archiveFiltersPanel) {
 }
 
 if (clearArchiveFiltersBtn) {
-  clearArchiveFiltersBtn.addEventListener("click", archiveClearFilters);
+  clearArchiveFiltersBtn.addEventListener("click", async () => {
+    await archiveClearFilters();
+  });
 }
 
 if (archiveSearch) {
@@ -1477,7 +1495,19 @@ if (archiveSearch) {
 }
 
 if (archiveFilterCaalId) {
-  archiveFilterCaalId.addEventListener("input", archiveApplyFilters);
+  archiveFilterCaalId.addEventListener("input", async () => {
+    archiveOffset = 0;
+
+    setArchiveLoading(true, archiveLabel("Updating records...", "Updating records..."));
+
+    try {
+      await loadArchiveRecords(archiveLimit, 0);
+    } catch (error) {
+      console.error("Archive CAAL_ID search failed:", error);
+    } finally {
+      setArchiveLoading(false);
+    }
+  });
 }
 
 [
@@ -1628,29 +1658,89 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   const initialCaalId = getInitialCaalIdFromUrl();
+  const initialScope = getInitialScopeFromUrl();
+
+  let directLinkedRecord = null;
 
   if (initialCaalId && archiveFilterCaalId) {
     archiveFilterCaalId.value = initialCaalId;
   }
 
+  renderArchiveEmptyState();
+
+  setArchiveLoading(
+    true,
+    initialCaalId
+      ? archiveLabel("Loading linked record...", "Loading linked record...")
+      : archiveLabel("Loading records...", "Loading records...")
+  );
+
   try {
     await loadArchiveLabels();
     await loadArchiveLookups();
     archivePopulateFilterLookups();
-  } catch (error) {
-    console.error("Archive labels/lookups failed to load:", error);
-    archiveLabels = {};
-    archiveLookups = {};
-  }
 
-  renderArchiveEmptyState();
+    if (initialCaalId) {
+      const resolved = await loadDirectLinkedRecord(initialCaalId);
 
-  setArchiveLoading(true, archiveLabel("Loading records...", "Loading records..."));
+      if (resolved?.record_type === "archive" && resolved.record) {
+        directLinkedRecord = resolved.record;
 
-  try {
+        const resolvedScope = resolved.record.source?.scope || initialScope;
+
+        if (resolvedScope) {
+          if (showArchiveWorkspace) showArchiveWorkspace.checked = false;
+          if (showArchiveNationalRef) showArchiveNationalRef.checked = false;
+          if (showArchiveAllCaal) showArchiveAllCaal.checked = false;
+
+          if (resolvedScope === "workspace" && showArchiveWorkspace) {
+            showArchiveWorkspace.checked = true;
+          }
+
+          if (resolvedScope === "national_ref" && showArchiveNationalRef) {
+            showArchiveNationalRef.checked = true;
+          }
+
+          if (resolvedScope === "all_caal" && showArchiveAllCaal) {
+            showArchiveAllCaal.checked = true;
+          }
+        }
+
+        archiveSelectedRecord = directLinkedRecord;
+        archiveRenderRecordDetails(directLinkedRecord);
+        archiveUpdateSelectedResultCard();
+      }
+    } else if (initialScope) {
+      if (showArchiveWorkspace) showArchiveWorkspace.checked = false;
+      if (showArchiveNationalRef) showArchiveNationalRef.checked = false;
+      if (showArchiveAllCaal) showArchiveAllCaal.checked = false;
+
+      if (initialScope === "workspace" && showArchiveWorkspace) {
+        showArchiveWorkspace.checked = true;
+      }
+
+      if (initialScope === "national_ref" && showArchiveNationalRef) {
+        showArchiveNationalRef.checked = true;
+      }
+
+      if (initialScope === "all_caal" && showArchiveAllCaal) {
+        showArchiveAllCaal.checked = true;
+      }
+    }
+
     await loadArchiveRecords(100, 0);
+
+    if (directLinkedRecord) {
+      archiveSelectedRecord = directLinkedRecord;
+      archiveRenderRecordDetails(directLinkedRecord);
+      archiveUpdateSelectedResultCard();
+    }
   } catch (error) {
-    console.error("Archive records failed to load:", error);
+    console.error("Archive initial load failed:", error);
+
+    if (!directLinkedRecord) {
+      renderArchiveEmptyState();
+    }
   } finally {
     setArchiveLoading(false);
   }

@@ -814,28 +814,6 @@ async function openRelatedRecordPreview(caalId) {
   renderRelatedRecordModal(data.record, data.record_type, caalId);
 }
 
-function getRelatedRecordUrl(caalId, recordType, sourceScope = null) {
-  const params = new URLSearchParams();
-  params.set("caal_id", caalId);
-
-  if (sourceScope) {
-    params.set("scope", sourceScope);
-  }
-
-  if (recordType === "archive") {
-    return `archive.html?${params.toString()}`;
-  }
-
-  if (recordType === "monument") {
-    return `monuments.html?${params.toString()}`;
-  }
-
-  return null;
-}
-
-function getInitialCaalIdFromUrl() {
-  return new URLSearchParams(window.location.search).get("caal_id");
-}
 
 function validateRelatedFieldsBeforeSave() {
   const fields = [
@@ -866,9 +844,7 @@ function validateRelatedFieldsBeforeSave() {
   return true;
 }
 
-function getInitialScopeFromUrl() {
-  return new URLSearchParams(window.location.search).get("scope");
-}
+
 
 // modal helpers
 // ================================
@@ -2779,23 +2755,72 @@ document.addEventListener("DOMContentLoaded", async () => {
   renderMonumentEmptyState();
 
   const initialCaalId = getInitialCaalIdFromUrl();
+  const initialScope = getInitialScopeFromUrl();
+
+  let directLinkedRecord = null;
 
   if (initialCaalId && filterCaalId) {
     filterCaalId.value = initialCaalId;
   }
 
-  const initialScope = getInitialScopeFromUrl();
+  setMonumentsLoading(true, initialCaalId ? "Loading linked record..." : "Loading records...");
 
-  if (initialScope === "all_caal" && showAllCaalRecords) {
-    showAllCaalRecords.checked = true;
-  }
+  try {
+    await loadMonumentLabels();
+    await loadMonumentLookups();
+    populateMonumentFilterLookups();
 
-  if (initialScope === "national_ref" && showNationalRecords) {
-    showNationalRecords.checked = true;
-  }
+    if (initialCaalId) {
+      const resolved = await loadDirectLinkedRecord(initialCaalId);
 
-  if (initialScope === "workspace" && showWorkspaceRecords) {
-    showWorkspaceRecords.checked = true;
+      if (resolved?.record_type === "monument" && resolved.record) {
+        directLinkedRecord = resolved.record;
+
+        const resolvedScope = resolved.record.source?.scope || initialScope;
+
+        if (resolvedScope) {
+          if (showWorkspaceRecords) showWorkspaceRecords.checked = false;
+          if (showNationalRecords) showNationalRecords.checked = false;
+          if (showAllCaalRecords) showAllCaalRecords.checked = false;
+
+          if (resolvedScope === "workspace" && showWorkspaceRecords) {
+            showWorkspaceRecords.checked = true;
+          }
+
+          if (resolvedScope === "national_ref" && showNationalRecords) {
+            showNationalRecords.checked = true;
+          }
+
+          if (resolvedScope === "all_caal" && showAllCaalRecords) {
+            showAllCaalRecords.checked = true;
+          }
+        }
+
+        monumentSelectedRecord = directLinkedRecord;
+        renderMonumentRecordDetails(directLinkedRecord);
+        updateSelectedResultCard();
+      }
+    } else if (initialScope) {
+      if (showWorkspaceRecords) showWorkspaceRecords.checked = false;
+      if (showNationalRecords) showNationalRecords.checked = false;
+      if (showAllCaalRecords) showAllCaalRecords.checked = false;
+
+      if (initialScope === "workspace" && showWorkspaceRecords) {
+        showWorkspaceRecords.checked = true;
+      }
+
+      if (initialScope === "national_ref" && showNationalRecords) {
+        showNationalRecords.checked = true;
+      }
+
+      if (initialScope === "all_caal" && showAllCaalRecords) {
+        showAllCaalRecords.checked = true;
+      }
+    }
+  } catch (error) {
+    console.error("Monuments linked-record setup failed:", error);
+  } finally {
+    setMonumentsLoading(false);
   }
 
   if (mapElement && typeof maplibregl !== "undefined") {
@@ -2804,8 +2829,8 @@ document.addEventListener("DOMContentLoaded", async () => {
     map = new maplibregl.Map({
       container: "map",
       style: getBasemapStyle(initialBasemap),
-      center: [66.9, 48.2],
-      zoom: 4.2
+      center: directLinkedRecord?.geometry?.coordinates || [66.9, 48.2],
+      zoom: directLinkedRecord?.geometry?.coordinates ? 8 : 4.2
     });
 
     map.addControl(new maplibregl.NavigationControl(), "top-right");
@@ -2828,15 +2853,24 @@ document.addEventListener("DOMContentLoaded", async () => {
       updateAddModeUI();
 
       setMonumentsLoading(true, "Loading records...");
+
       try {
-        await loadMonumentLabels();
-        await loadMonumentLookups();
-        populateMonumentFilterLookups();
         await loadMonumentMapRecords();
         await loadMonumentListRecords();
+
+        if (directLinkedRecord) {
+          monumentSelectedRecord = directLinkedRecord;
+          renderMonumentRecordDetails(directLinkedRecord);
+          updateSelectedResultCard();
+
+          if (directLinkedRecord.geometry?.coordinates) {
+            drawSelectedMonumentHighlight(directLinkedRecord);
+            ensureRecordVisibleOnMap(directLinkedRecord);
+          }
+        }
       } catch (error) {
         console.error("Monuments initial load failed:", error);
-        renderMonumentEmptyState();
+        if (!directLinkedRecord) renderMonumentEmptyState();
       } finally {
         setMonumentsLoading(false);
       }
@@ -2884,15 +2918,22 @@ document.addEventListener("DOMContentLoaded", async () => {
       });
     }
   } else {
+    setMonumentsLoading(true, "Loading records...");
+
     try {
-      await loadMonumentLabels();
-      await loadMonumentLookups();
-      populateMonumentFilterLookups();
       await loadMonumentMapRecords();
       await loadMonumentListRecords();
+
+      if (directLinkedRecord) {
+        monumentSelectedRecord = directLinkedRecord;
+        renderMonumentRecordDetails(directLinkedRecord);
+        updateSelectedResultCard();
+      }
     } catch (error) {
       console.error("Monuments initial load failed:", error);
-      renderMonumentEmptyState();
+      if (!directLinkedRecord) renderMonumentEmptyState();
+    } finally {
+      setMonumentsLoading(false);
     }
   }
 });

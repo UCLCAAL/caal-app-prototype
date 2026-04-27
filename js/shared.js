@@ -316,6 +316,7 @@ function getCurrentLanguage() {
 window.getCurrentLanguage = getCurrentLanguage;
 
 // save feedback
+// ----------------------------------------------
 function showToast(message, type = "success") {
   const toast = document.createElement("div");
   toast.className = `toast toast-${type}`;
@@ -329,6 +330,63 @@ function showToast(message, type = "success") {
     toast.classList.remove("visible");
     setTimeout(() => toast.remove(), 300);
   }, 2500);
+}
+
+// load full record from related
+// ------------------------------------
+function getInitialCaalIdFromUrl() {
+  return new URLSearchParams(window.location.search).get("caal_id");
+}
+
+function getInitialScopeFromUrl() {
+  return new URLSearchParams(window.location.search).get("scope");
+}
+
+function buildRecordUrl(pageName, caalId, scope = null) {
+  const params = new URLSearchParams();
+
+  if (caalId) {
+    params.set("caal_id", caalId);
+  }
+
+  if (scope) {
+    params.set("scope", scope);
+  }
+
+  return `${pageName}?${params.toString()}`;
+}
+
+function getRelatedRecordUrl(caalId, recordType, sourceScope = null) {
+  if (recordType === "archive") {
+    return buildRecordUrl("archive.html", caalId, sourceScope);
+  }
+
+  if (recordType === "monument") {
+    return buildRecordUrl("monuments.html", caalId, sourceScope);
+  }
+
+  return null;
+}
+
+async function loadDirectLinkedRecord(caalId) {
+  if (!caalId) return null;
+
+  const response = await fetch(
+    `/api/records/resolve?caal_id=${encodeURIComponent(caalId)}`,
+    {
+      method: "GET",
+      credentials: "include"
+    }
+  );
+
+  const data = await response.json();
+
+  if (!response.ok || !data.ok) {
+    console.error("Direct linked record resolve failed:", data);
+    return null;
+  }
+
+  return data;
 }
 
 // --------------------------------------------------------

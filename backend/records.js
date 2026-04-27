@@ -269,6 +269,13 @@ router.get("/resolve", async (req, res) => {
         FROM kz.mv_archive_combined
         WHERE "CAAL_ID" = $1
           AND source_scope = ANY($2)
+        ORDER BY
+          CASE source_scope
+            WHEN 'workspace' THEN 1
+            WHEN 'national_ref' THEN 2
+            WHEN 'all_caal' THEN 3
+            ELSE 99
+          END
         LIMIT 1
         `,
         [caalId, scopes]

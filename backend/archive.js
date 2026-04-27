@@ -175,7 +175,7 @@ router.get("/", async (req, res) => {
 
   if (caalId) {
     values.push(`%${caalId}%`);
-    whereClauses.push(`coalesce("CAAL_ID", caal_id, '') ILIKE $${values.length}`);
+    whereClauses.push(`coalesce("CAAL_ID", '') ILIKE $${values.length}`);
   }
 
   const whereSql = whereClauses.length
