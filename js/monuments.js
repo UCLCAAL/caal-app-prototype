@@ -73,6 +73,13 @@ let monumentPageOffset = 0;
 let monumentsIsLoading = false;
 
 let monumentMoveDebounceTimer = null;
+let monumentFilterDebounceTimer = null;
+
+let monumentListRequestSeq = 0;
+let monumentMapRequestSeq = 0;
+
+let monumentTotalIsExact = true;
+let monumentMapIsStale = false;
 
 // --------------------------------------------------------
 // MapLibre map
@@ -279,6 +286,49 @@ function setMonumentsLoading(isLoading, message = "") {
       }
     }
   });
+}
+
+function setResultsCountLoading(message = null) {
+  if (!resultsCount) return;
+
+  const label = message || mLabel("Searching...", "Searching...");
+  resultsCount.innerHTML = `<span class="mini-spinner"></span>${label}`;
+}
+
+function setMapStaleState(isStale, message = null) {
+  monumentMapIsStale = isStale;
+
+  const mapPane = document.getElementById("map-pane");
+  if (!mapPane) return;
+
+  mapPane.classList.toggle("map-is-stale", isStale);
+
+  let notice = document.getElementById("mapStatusNotice");
+
+  if (!notice) {
+    notice = document.createElement("div");
+    notice.id = "mapStatusNotice";
+    notice.className = "map-status-notice";
+    mapPane.appendChild(notice);
+  }
+
+  notice.hidden = !isStale;
+  notice.innerHTML = isStale
+    ? `<span class="mini-spinner"></span>${message || mLabel("Redrawing map...", "Redrawing map...")}`
+    : "";
+}
+
+function scheduleMonumentSearchAndMapRedraw() {
+  if (monumentFilterDebounceTimer) {
+    clearTimeout(monumentFilterDebounceTimer);
+  }
+
+  setResultsCountLoading();
+  setMapStaleState(true, mLabel("Map will update after search...", "Map will update after search..."));
+
+  monumentFilterDebounceTimer = setTimeout(async () => {
+    await applyMonumentFilters({ includeMap: true, listFirst: true });
+  }, 500);
 }
 
 function mLabel(name, fallback = null) {
@@ -1389,6 +1439,128 @@ function populateMonumentFilterLookups() {
   mPopulateMultiSelect(filterReligion, mLookupOptions("religion"));
   mPopulateMultiSelect(filterCulturalPeriod, mLookupOptions("cultural_period"));
   mPopulateMultiSelect(filterCountry, mLookupOptions("country"));
+
+  wireClickToggleMultiSelects();
+  renderAllFilterChips();
+}
+
+const monumentChipFilterConfigs = [
+  {
+    select: filterMonumentType,
+    chipsId: "filterMonumentTypeChips"
+  },
+  {
+    select: filterClassification,
+    chipsId: "filterClassificationChips"
+  },
+  {
+    select: filterDesignation,
+    chipsId: "filterDesignationChips"
+  },
+  {
+    select: filterReligion,
+    chipsId: "filterReligionChips"
+  },
+  {
+    select: filterCulturalPeriod,
+    chipsId: "filterCulturalPeriodChips"
+  },
+  {
+    select: filterCountry,
+    chipsId: "filterCountryChips"
+  }
+];
+
+function getSelectedOptionData(selectEl) {
+  if (!selectEl) return [];
+
+  return Array.from(selectEl.options)
+    .filter((option) => option.selected)
+    .map((option) => ({
+      value: option.value,
+      label: option.textContent || option.value
+    }));
+}
+
+function renderFilterChipsForSelect(selectEl, chipsId) {
+  const chipsEl = document.getElementById(chipsId);
+  if (!selectEl || !chipsEl) return;
+
+  const selected = getSelectedOptionData(selectEl);
+
+  chipsEl.innerHTML = "";
+
+  if (!selected.length) {
+    const empty = document.createElement("span");
+    empty.className = "filter-chip-empty";
+    empty.textContent = "No values selected";
+    chipsEl.appendChild(empty);
+    return;
+  }
+
+  selected.forEach((item) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "filter-chip";
+    chip.dataset.value = item.value;
+    chip.innerHTML = `
+      <span>${item.label}</span>
+      <span class="filter-chip-remove" aria-hidden="true">×</span>
+    `;
+
+    chip.addEventListener("click", async () => {
+      const option = Array.from(selectEl.options).find(
+        (opt) => opt.value === item.value
+      );
+
+      if (option) {
+        option.selected = false;
+      }
+
+      renderAllFilterChips();
+      await applyMonumentFilters({ includeMap: true, listFirst: true });
+    });
+
+    chipsEl.appendChild(chip);
+  });
+}
+
+function renderAllFilterChips() {
+  monumentChipFilterConfigs.forEach(({ select, chipsId }) => {
+    renderFilterChipsForSelect(select, chipsId);
+  });
+}
+
+function wireClickToggleMultiSelects() {
+  monumentChipFilterConfigs.forEach(({ select, chipsId }) => {
+    if (!select || select.dataset.clickToggleWired === "true") return;
+
+    select.addEventListener("mousedown", (event) => {
+      const option = event.target;
+
+      if (!option || option.tagName !== "OPTION") return;
+
+      event.preventDefault();
+
+      option.selected = !option.selected;
+
+      renderFilterChipsForSelect(select, chipsId);
+
+      select.dispatchEvent(
+        new Event("change", {
+          bubbles: true
+        })
+      );
+    });
+
+    select.addEventListener("change", () => {
+      renderFilterChipsForSelect(select, chipsId);
+    });
+
+    select.dataset.clickToggleWired = "true";
+  });
+
+  renderAllFilterChips();
 }
 
 function getMapBboxParam() {
@@ -1407,11 +1579,13 @@ function getMapBboxParam() {
 // Records API
 // --------------------------------------------------------
 async function loadMonumentMapRecords() {
+  const requestSeq = ++monumentMapRequestSeq;
   const scopes = getMonumentEnabledScopes();
 
   if (!scopes.length) {
     monumentMapRecords = [];
     drawMonumentRecords([]);
+    setMapStaleState(false);
     return;
   }
 
@@ -1422,31 +1596,47 @@ async function loadMonumentMapRecords() {
     params.set("bbox", bbox);
   }
 
-  const response = await fetch(`/api/monuments/map?${params.toString()}`, {
-    method: "GET",
-    credentials: "include"
-  });
+  setMapStaleState(true, mLabel("Redrawing map...", "Redrawing map..."));
 
-  const data = await response.json();
+  try {
+    const response = await fetch(`/api/monuments/map?${params.toString()}`, {
+      method: "GET",
+      credentials: "include"
+    });
 
-  if (!response.ok || !data.ok) {
-    throw new Error(data.error || "Failed to load monument map records");
+    const data = await response.json();
+
+    if (requestSeq !== monumentMapRequestSeq) {
+      return;
+    }
+
+    if (!response.ok || !data.ok) {
+      throw new Error(data.detail || data.error || "Failed to load monument map records");
+    }
+
+    monumentMapRecords = data.records || [];
+    drawMonumentRecords(monumentMapRecords);
+  } finally {
+    if (requestSeq === monumentMapRequestSeq) {
+      setMapStaleState(false);
+    }
   }
-
-  monumentMapRecords = data.records || [];
-  drawMonumentRecords(monumentMapRecords);
 }
 
 async function loadMonumentListRecords() {
+  const requestSeq = ++monumentListRequestSeq;
   const scopes = getMonumentEnabledScopes();
 
   if (!scopes.length) {
     monumentListRecords = [];
     monumentTotalCount = 0;
+    monumentTotalIsExact = true;
     renderMonumentResultsList([]);
     renderMonumentEmptyState();
     return;
   }
+
+  setResultsCountLoading();
 
   const params = buildMonumentQueryParams({ includePaging: true });
 
@@ -1457,15 +1647,48 @@ async function loadMonumentListRecords() {
 
   const data = await response.json();
 
+  if (requestSeq !== monumentListRequestSeq) {
+    return;
+  }
+
   if (!response.ok || !data.ok) {
-    throw new Error(data.error || "Failed to load monument list records");
+    throw new Error(data.detail || data.error || "Failed to load monument list records");
   }
 
   monumentListRecords = data.records || [];
   monumentTotalCount = data.total || 0;
+  monumentTotalIsExact = data.total_is_exact !== false;
 
   renderMonumentResultsList(monumentListRecords);
   renderMonumentPageInfo();
+}
+
+async function loadFullMonumentRecordForMapClick(mapRecord) {
+  const caalId = mapRecord?.identity?.caal_id;
+
+  if (!caalId) {
+    return mapRecord;
+  }
+
+  const response = await fetch(
+    `/api/records/resolve?caal_id=${encodeURIComponent(caalId)}`,
+    {
+      method: "GET",
+      credentials: "include"
+    }
+  );
+
+  const data = await response.json();
+
+  if (!response.ok || !data.ok) {
+    throw new Error(data.detail || data.error || "Could not load full monument record");
+  }
+
+  if (data.record_type !== "monument" || !data.record) {
+    throw new Error("Resolved record is not a monument");
+  }
+
+  return data.record;
 }
 
 function renderMonumentPageInfo() {
@@ -1475,7 +1698,39 @@ function renderMonumentPageInfo() {
   const totalPages = Math.max(1, Math.ceil(monumentTotalCount / monumentPageLimit));
   const pageNumber = Math.floor(monumentPageOffset / monumentPageLimit) + 1;
 
-  pageInfo.textContent = `Page ${pageNumber} of ${totalPages}`;
+  if (monumentTotalIsExact) {
+    pageInfo.textContent = `Page ${pageNumber} of ${totalPages}`;
+  } else {
+    pageInfo.textContent = `Page ${pageNumber}`;
+  }
+}
+
+async function loadFullMonumentRecordForMapClick(mapRecord) {
+  const caalId = mapRecord?.identity?.caal_id;
+
+  if (!caalId) {
+    return mapRecord;
+  }
+
+  const response = await fetch(
+    `/api/records/resolve?caal_id=${encodeURIComponent(caalId)}`,
+    {
+      method: "GET",
+      credentials: "include"
+    }
+  );
+
+  const data = await response.json();
+
+  if (!response.ok || !data.ok) {
+    throw new Error(data.detail || data.error || "Could not load full monument record");
+  }
+
+  if (data.record_type !== "monument" || !data.record) {
+    throw new Error("Resolved record is not a monument");
+  }
+
+  return data.record;
 }
 
 // --------------------------------------------------------
@@ -1523,7 +1778,7 @@ function monumentMatchesFilters(record, filters) {
   );
 }
 
-async function applyMonumentFilters() {
+async function applyMonumentFilters({ includeMap = true, listFirst = true } = {}) {
   monumentPageOffset = 0;
   monumentSelectedRecord = null;
   monumentPendingNewRecord = null;
@@ -1539,14 +1794,27 @@ async function applyMonumentFilters() {
     }
   }
 
-  setMonumentsLoading(true, mLabel("Updating records...", "Updating records..."));
+  setMonumentsLoading(true, mLabel("Updating results...", "Updating results..."));
 
   try {
-    await loadMonumentMapRecords();
-    await loadMonumentListRecords();
+    if (listFirst) {
+      await loadMonumentListRecords();
+
+      if (includeMap) {
+        setMonumentsLoading(true, mLabel("Redrawing map...", "Redrawing map..."));
+        await loadMonumentMapRecords();
+      }
+    } else {
+      if (includeMap) {
+        await loadMonumentMapRecords();
+      }
+
+      await loadMonumentListRecords();
+    }
+
     renderMonumentEmptyState();
   } catch (error) {
-    console.error("Failed to reload monuments after scope change:", error);
+    console.error("Failed to reload monuments after filter change:", error);
   } finally {
     setMonumentsLoading(false);
   }
@@ -1554,6 +1822,7 @@ async function applyMonumentFilters() {
 
 async function clearMonumentFilters() {
   if (siteSearch) siteSearch.value = "";
+  if (filterCaalId) filterCaalId.value = "";
 
   [
     filterMonumentType,
@@ -1569,7 +1838,7 @@ async function clearMonumentFilters() {
     });
   });
 
-  await applyMonumentFilters();
+  await applyMonumentFilters({ includeMap: true, listFirst: true });
 }
 
 // --------------------------------------------------------
@@ -1625,15 +1894,15 @@ function monumentRecordToFeature(record) {
 function bindMonumentLayerEvents() {
   if (!map || monumentsLayerEventsBound) return;
 
-  map.on("click", "monument-clusters", (e) => {
+  map.on("click", "monument-ref-clusters", (e) => {
     const features = map.queryRenderedFeatures(e.point, {
-      layers: ["monument-clusters"]
+      layers: ["monument-ref-clusters"]
     });
 
     const clusterId = features[0]?.properties?.cluster_id;
     if (clusterId == null) return;
 
-    map.getSource("monuments").getClusterExpansionZoom(clusterId, (err, zoom) => {
+    map.getSource("monuments-ref").getClusterExpansionZoom(clusterId, (err, zoom) => {
       if (err) return;
 
       map.easeTo({
@@ -1643,64 +1912,84 @@ function bindMonumentLayerEvents() {
     });
   });
 
-  map.on("click", "monuments-layer", (e) => {
+  function handleMonumentPointClick(e) {
     const feature = e.features?.[0];
     if (!feature) return;
 
     const clickedId = Number(feature.properties?.id);
-    const record = monumentMapRecords.find((r) => Number(r.identity?.id) === clickedId);
-    if (!record) return;
-
-//    monumentIsEditMode = false;
-//    monumentSyncModeVisualState();
-//    renderMonumentRecordDetails(record);
-//    drawSelectedMonumentHighlight(record);
-//    ensureRecordVisibleOnMap(record);
-
-    new maplibregl.Popup({ closeButton: true, closeOnClick: true })
-    .setLngLat(record.geometry.coordinates)
-    .setHTML(`
-      <div class="map-popup">
-        <button
-          type="button"
-          class="map-popup-title-btn"
-          data-monument-id="${record.identity?.id}"
-        >
-          ${mSafeValue(mSummary(record, "primary_name"))}
-        </button><br>
-        <span>${mSafeValue(mIdentity(record, "caal_id"))}</span><br>
-        <span>${mSafeValue(mSummary(record, "classification"))}</span><br>
-        <span>${mSafeValue(mSummary(record, "monument_type1"))}</span>
-      </div>
-    `)
-    .addTo(map);
-
-  setTimeout(() => {
-    const popupTitleBtn = document.querySelector(
-      `.map-popup-title-btn[data-monument-id="${record.identity?.id}"]`
+    const record = monumentMapRecords.find(
+      (r) => Number(r.identity?.id) === clickedId
     );
 
-    if (!popupTitleBtn) return;
+    if (!record?.geometry?.coordinates) return;
 
-    popupTitleBtn.addEventListener("click", () => {
-      if (!monumentConfirmLoseChanges()) return;
+    new maplibregl.Popup({ closeButton: true, closeOnClick: true })
+      .setLngLat(record.geometry.coordinates)
+      .setHTML(`
+        <div class="map-popup">
+          <button
+            type="button"
+            class="map-popup-title-btn"
+            data-monument-id="${record.identity?.id}"
+          >
+            ${mSafeValue(mSummary(record, "primary_name"))}
+          </button><br>
+          <span>${mSafeValue(mIdentity(record, "caal_id"))}</span><br>
+          <span>${mSafeValue(mSummary(record, "classification"))}</span><br>
+          <span>${mSafeValue(mSummary(record, "monument_type1"))}</span>
+        </div>
+      `)
+      .addTo(map);
 
-      monumentIsEditMode = false;
-      monumentSyncModeVisualState();
-      monumentPendingNewRecord = null;
-      renderMonumentRecordDetails(record);
-      updateSelectedResultCard();
-      drawSelectedMonumentHighlight(record);
+    setTimeout(() => {
+      const popupTitleBtn = document.querySelector(
+        `.map-popup-title-btn[data-monument-id="${record.identity?.id}"]`
+      );
+
+      if (!popupTitleBtn) return;
+
+      popupTitleBtn.addEventListener("click", async () => {
+        if (!monumentConfirmLoseChanges()) return;
+
+        setMonumentsLoading(true, mLabel("Loading full record...", "Loading full record..."));
+
+        try {
+          const fullRecord = await loadFullMonumentRecordForMapClick(record);
+
+          monumentIsEditMode = false;
+          monumentSyncModeVisualState();
+          monumentPendingNewRecord = null;
+          monumentSelectedRecord = fullRecord;
+
+          renderMonumentRecordDetails(fullRecord);
+          updateSelectedResultCard();
+
+          if (fullRecord.geometry?.coordinates) {
+            drawSelectedMonumentHighlight(fullRecord);
+          } else if (record.geometry?.coordinates) {
+            drawSelectedMonumentHighlight(record);
+          }
+        } catch (error) {
+          console.error("Failed to load full monument record from map click:", error);
+          alert(error.message || "Could not load full monument record");
+        } finally {
+          setMonumentsLoading(false);
+        }
+      });
+    }, 0);
+  }
+
+  map.on("click", "monuments-ref-layer", handleMonumentPointClick);
+  map.on("click", "monuments-workspace-layer", handleMonumentPointClick);
+
+  ["monuments-ref-layer", "monuments-workspace-layer"].forEach((layerId) => {
+    map.on("mouseenter", layerId, () => {
+      map.getCanvas().style.cursor = "pointer";
     });
-  }, 0);
-  });
 
-  map.on("mouseenter", "monuments-layer", () => {
-    map.getCanvas().style.cursor = "pointer";
-  });
-
-  map.on("mouseleave", "monuments-layer", () => {
-    map.getCanvas().style.cursor = "";
+    map.on("mouseleave", layerId, () => {
+      map.getCanvas().style.cursor = "";
+    });
   });
 
   monumentsLayerEventsBound = true;
@@ -1709,42 +1998,73 @@ function bindMonumentLayerEvents() {
 function drawMonumentRecords(records) {
   if (!map || !mapLoaded) return;
 
-  const features = records
-    .map(monumentRecordToFeature)
-    .filter(Boolean);
+  const workspaceRecords = records.filter(
+    (r) => r.source?.scope === "workspace"
+  );
 
-  const geojson = {
-    type: "FeatureCollection",
-    features
-  };
-
-  // clear old
-  ["monument-clusters", "monument-cluster-count", "monuments-layer"].forEach((layer) => {
-    if (map.getLayer(layer)) map.removeLayer(layer);
-  });
-
-  if (map.getSource("monuments")) {
-    map.removeSource("monuments");
-  }
-
-  // add clustered source
-  const hasNonWorkspace = records.some(
+  const referenceRecords = records.filter(
     (r) => r.source?.scope !== "workspace"
   );
 
-  map.addSource("monuments", {
+  const workspaceGeojson = {
+    type: "FeatureCollection",
+    features: workspaceRecords
+      .map(monumentRecordToFeature)
+      .filter(Boolean)
+  };
+
+  const referenceGeojson = {
+    type: "FeatureCollection",
+    features: referenceRecords
+      .map(monumentRecordToFeature)
+      .filter(Boolean)
+  };
+
+  const existingRefSource = map.getSource("monuments-ref");
+  const existingWorkspaceSource = map.getSource("monuments-workspace");
+
+  if (
+    existingRefSource &&
+    typeof existingRefSource.setData === "function" &&
+    existingWorkspaceSource &&
+    typeof existingWorkspaceSource.setData === "function"
+  ) {
+    existingRefSource.setData(referenceGeojson);
+    existingWorkspaceSource.setData(workspaceGeojson);
+    return;
+  }
+
+  [
+    "monument-ref-clusters",
+    "monument-ref-cluster-count",
+    "monuments-ref-layer",
+    "monuments-workspace-layer"
+  ].forEach((layer) => {
+    if (map.getLayer(layer)) map.removeLayer(layer);
+  });
+
+  ["monuments-ref", "monuments-workspace"].forEach((source) => {
+    if (map.getSource(source)) map.removeSource(source);
+  });
+
+  map.addSource("monuments-ref", {
     type: "geojson",
-    data: geojson,
-    cluster: hasNonWorkspace,
-    clusterMaxZoom: 10,
+    data: referenceGeojson,
+    cluster: true,
+    clusterMaxZoom: 9,
     clusterRadius: 40
   });
 
-  // cluster circles
+  map.addSource("monuments-workspace", {
+    type: "geojson",
+    data: workspaceGeojson,
+    cluster: false
+  });
+
   map.addLayer({
-    id: "monument-clusters",
+    id: "monument-ref-clusters",
     type: "circle",
-    source: "monuments",
+    source: "monuments-ref",
     filter: ["has", "point_count"],
     paint: {
       "circle-radius": [
@@ -1759,11 +2079,10 @@ function drawMonumentRecords(records) {
     }
   });
 
-  // cluster labels
   map.addLayer({
-    id: "monument-cluster-count",
+    id: "monument-ref-cluster-count",
     type: "symbol",
-    source: "monuments",
+    source: "monuments-ref",
     filter: ["has", "point_count"],
     layout: {
       "text-field": ["get", "point_count_abbreviated"],
@@ -1774,54 +2093,45 @@ function drawMonumentRecords(records) {
     }
   });
 
-  // individual points
   map.addLayer({
-    id: "monuments-layer",
+    id: "monuments-ref-layer",
     type: "circle",
-    source: "monuments",
+    source: "monuments-ref",
     filter: ["!", ["has", "point_count"]],
     paint: {
-    "circle-radius": [
-      "interpolate",
-      ["linear"],
-      ["zoom"],
-
-      4,
-      [
-        "case",
-        ["==", ["get", "source_scope"], "workspace"],
-        5,
-        4.5
+      "circle-radius": [
+        "interpolate",
+        ["linear"],
+        ["zoom"],
+        4, 4.5,
+        8, 6,
+        12, 8
       ],
+      "circle-color": "#c95a4a",
+      "circle-opacity": 0.85,
+      "circle-stroke-width": 1.2,
+      "circle-stroke-color": "rgba(255,255,255,0.9)"
+    }
+  });
 
-      8,
-      [
-        "case",
-        ["==", ["get", "source_scope"], "workspace"],
-        7,
-        6
+  map.addLayer({
+    id: "monuments-workspace-layer",
+    type: "circle",
+    source: "monuments-workspace",
+    paint: {
+      "circle-radius": [
+        "interpolate",
+        ["linear"],
+        ["zoom"],
+        4, 5,
+        8, 7,
+        12, 9
       ],
-
-      12,
-      [
-        "case",
-        ["==", ["get", "source_scope"], "workspace"],
-        9,
-        8
-      ]
-    ],
-
-    "circle-color": [
-      "match",
-      ["get", "source_scope"],
-      "workspace", "#2e7d32",   // green for editable
-      "#c95a4a"                // default for CAAL
-    ],
-
-    "circle-opacity": 0.85,
-    "circle-stroke-width": 1.2,
-    "circle-stroke-color": "rgba(255,255,255,0.9)"
-  }
+      "circle-color": "#2e7d32",
+      "circle-opacity": 0.95,
+      "circle-stroke-width": 1.6,
+      "circle-stroke-color": "rgba(255,255,255,0.95)"
+    }
   });
 
   bindMonumentLayerEvents();
@@ -1835,9 +2145,14 @@ function renderMonumentResultsList(records) {
   if (!resultsList) return;
 
   if (resultsCount) {
-    const start = monumentTotalCount === 0 ? 0 : monumentPageOffset + 1;
+    const start = records.length === 0 ? 0 : monumentPageOffset + 1;
     const end = monumentPageOffset + records.length;
-    resultsCount.textContent = `${start}-${end} (${monumentTotalCount} total)`;
+
+    if (monumentTotalIsExact) {
+      resultsCount.textContent = `${start}-${end} (${monumentTotalCount} total)`;
+    } else {
+      resultsCount.textContent = `${start}-${end} matching records`;
+    }
   }
 
   if (records.length === 0) {
@@ -2585,11 +2900,11 @@ if (monumentPreviewCloseBtn) {
 }
 
 if (siteSearch) {
-  siteSearch.addEventListener("input", applyMonumentFilters);
+  siteSearch.addEventListener("input", scheduleMonumentSearchAndMapRedraw);
 }
 
 if (filterCaalId) {
-  filterCaalId.addEventListener("input", applyMonumentFilters);
+  filterCaalId.addEventListener("input", scheduleMonumentSearchAndMapRedraw);
 }
 
 [
@@ -2601,7 +2916,9 @@ if (filterCaalId) {
   filterCountry
 ].forEach((selectEl) => {
   if (selectEl) {
-    selectEl.addEventListener("change", applyMonumentFilters);
+    selectEl.addEventListener("change", () => {
+      applyMonumentFilters({ includeMap: true, listFirst: true });
+    });
   }
 });
 
@@ -2817,8 +3134,19 @@ document.addEventListener("app:languageChanged", async () => {
 
       setMonumentsLoading(true, "Updating scope...");
       try {
-        await loadMonumentMapRecords();
-        await loadMonumentListRecords();
+        setMonumentsLoading(true, "Updating scope...");
+        try {
+          await loadMonumentListRecords();
+
+          setMonumentsLoading(true, "Redrawing map...");
+          await loadMonumentMapRecords();
+
+          renderMonumentEmptyState();
+        } catch (error) {
+          console.error("Failed to reload monuments after scope change:", error);
+        } finally {
+          setMonumentsLoading(false);
+        }
         renderMonumentEmptyState();
       } catch (error) {
         console.error("Failed to reload monuments after scope change:", error);

@@ -112,16 +112,19 @@
           </label>
         </div>
     
-        <button type="button" class="action-btn filters-toggle" id="toggleFiltersBtn">
-          Advanced filters
-        </button>
-    
+        <div class="filter-action-row">
+          <button type="button" class="action-btn filters-toggle" id="toggleFiltersBtn">
+            Advanced filters
+          </button>
+
+          <button type="button" class="action-btn clear-filters-btn" id="clearFiltersBtn">
+            Clear filters
+          </button>
+        </div>
+
         <div class="filters-panel" id="filtersPanel" hidden>
           <div class="filters-grid">
-              <div class="filters-actions">
-                <button type="button" class="action-btn" id="clearFiltersBtn">Clear filters</button>
-              </div>
-            </div>
+
             <div class="filter-group">
               <label for="filterCaalId">CAAL_ID</label>
               <input
@@ -131,36 +134,51 @@
                 placeholder="Search CAAL_ID"
               />
             </div>
-            <div class="filter-group">
+
+            <div class="filter-group chip-multiselect-group">
               <label for="filterMonumentType">Monument Type</label>
-              <select id="filterMonumentType" class="form-control" multiple></select>
+              <div class="selected-filter-chips" id="filterMonumentTypeChips"></div>
+              <select id="filterMonumentType" class="form-control chip-multiselect" multiple></select>
+              <p class="filter-help">Click values to select or deselect. Selected values appear above.</p>
             </div>
-    
-            <div class="filter-group">
+
+            <div class="filter-group chip-multiselect-group">
               <label for="filterClassification">Classification</label>
-              <select id="filterClassification" class="form-control" multiple></select>
+              <div class="selected-filter-chips" id="filterClassificationChips"></div>
+              <select id="filterClassification" class="form-control chip-multiselect" multiple></select>
+              <p class="filter-help">Click values to select or deselect. Selected values appear above.</p>
             </div>
-    
-            <div class="filter-group">
+
+            <div class="filter-group chip-multiselect-group">
               <label for="filterDesignation">Designation</label>
-              <select id="filterDesignation" class="form-control" multiple></select>
+              <div class="selected-filter-chips" id="filterDesignationChips"></div>
+              <select id="filterDesignation" class="form-control chip-multiselect" multiple></select>
+              <p class="filter-help">Click values to select or deselect. Selected values appear above.</p>
             </div>
-    
-            <div class="filter-group">
+
+            <div class="filter-group chip-multiselect-group">
               <label for="filterReligion">Religion</label>
-              <select id="filterReligion" class="form-control" multiple></select>
+              <div class="selected-filter-chips" id="filterReligionChips"></div>
+              <select id="filterReligion" class="form-control chip-multiselect" multiple></select>
+              <p class="filter-help">Click values to select or deselect. Selected values appear above.</p>
             </div>
-    
-            <div class="filter-group">
+
+            <div class="filter-group chip-multiselect-group">
               <label for="filterCulturalPeriod">Cultural Period</label>
-              <select id="filterCulturalPeriod" class="form-control" multiple></select>
+              <div class="selected-filter-chips" id="filterCulturalPeriodChips"></div>
+              <select id="filterCulturalPeriod" class="form-control chip-multiselect" multiple></select>
+              <p class="filter-help">Click values to select or deselect. Selected values appear above.</p>
             </div>
-    
-            <div class="filter-group">
+
+            <div class="filter-group chip-multiselect-group">
               <label for="filterCountry">Country</label>
-              <select id="filterCountry" class="form-control" multiple></select>
+              <div class="selected-filter-chips" id="filterCountryChips"></div>
+              <select id="filterCountry" class="form-control chip-multiselect" multiple></select>
+              <p class="filter-help">Click values to select or deselect. Selected values appear above.</p>
             </div>
+
           </div>
+        </div>
     
          
     

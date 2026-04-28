@@ -12,6 +12,8 @@ const MONUMENTS_CAAL_TABLE = 'public."CAAL_Monuments"';
 const MONUMENTS_VIEW = 'kz.v_monuments_grid_base';
 const GEOM_COLUMN_SQL = `"geom"`;
 
+const MONUMENTS_CAAL_MV = "ui.mv_monuments_caal";
+
 
 // ========================================================
 // HELPERS
@@ -23,24 +25,171 @@ const NATIONAL_REF_WHERE = `
   OR btrim(coalesce("Country", '')) IN ('Kazakhstan', 'Казахстан')
 `;
 
+const ALLOWED_MONUMENT_LANGS = new Set([
+  "en", "ru", "zh", "kk", "ky", "tg", "tk", "uz"
+]);
+
+function safeMonumentLang(lang) {
+  return ALLOWED_MONUMENT_LANGS.has(lang) ? lang : "en";
+}
+
+const MONUMENT_INTERNAL_HELPER_FIELDS = [
+  "search_blob_en",
+  "search_blob_ru",
+  "search_blob_zh",
+  "search_blob_kk",
+  "search_blob_ky",
+  "search_blob_tg",
+  "search_blob_tk",
+  "search_blob_uz",
+  "monument_types_arr",
+  "religions_arr",
+  "cultural_periods_arr"
+];
+
+function stripMonumentInternalFields(row) {
+  const clean = { ...row };
+
+  for (const field of MONUMENT_INTERNAL_HELPER_FIELDS) {
+    delete clean[field];
+  }
+
+  return clean;
+}
+
+//dynamic helper SQL for workspace compatibility to MV columnes
+function monumentHelperColumnsSql(alias = "") {
+  const p = alias ? `${alias}.` : "";
+
+  const commonFields = `
+    ${p}"CAAL_ID",
+    ${p}"Primary Name",
+    ${p}"Primary Name (English)",
+    ${p}"Other Names",
+    ${p}"Region",
+    ${p}"Internal Reference",
+    ${p}"External Reference",
+    ${p}"Monument Passport",
+    ${p}"Descriptive Date",
+    ${p}"Primary Description",
+    ${p}"Primary Description (English)",
+    ${p}"Additional Notes",
+    ${p}"Primary Address",
+    ${p}"Administrative Subdivision Name1",
+    ${p}"Administrative Subdivision Name2",
+    ${p}"Administrative Subdivision Name3",
+    ${p}"Administrative Subdivision Name4",
+    ${p}"World Heritage Site Name",
+
+    ${p}"Country",
+    ${p}"Classification",
+    ${p}"Designation",
+    ${p}"Monument Type1",
+    ${p}"Monument Type2",
+    ${p}"Monument Type3",
+    ${p}"Monument Type4",
+    ${p}"Monument Type5",
+    ${p}"Monument Type6",
+    ${p}"Religion1",
+    ${p}"Religion2",
+    ${p}"Religion3",
+    ${p}"Cultural Period1",
+    ${p}"Cultural Period2",
+    ${p}"Cultural Period3",
+    ${p}"Cultural Period4",
+    ${p}"Cultural Period5",
+    ${p}"Cultural Period6",
+    ${p}"Administrative Subdivision Type1",
+    ${p}"Administrative Subdivision Type2",
+    ${p}"Administrative Subdivision Type3",
+    ${p}"Administrative Subdivision Type4"
+  `;
+
+  function langBlob(lang) {
+    return `
+      lower(concat_ws(' ',
+        ${commonFields},
+
+        ${p}country_${lang},
+        ${p}classification_${lang},
+        ${p}designation_${lang},
+        ${p}monument_type1_${lang},
+        ${p}monument_type2_${lang},
+        ${p}monument_type3_${lang},
+        ${p}monument_type4_${lang},
+        ${p}monument_type5_${lang},
+        ${p}monument_type6_${lang},
+        ${p}religion1_${lang},
+        ${p}religion2_${lang},
+        ${p}religion3_${lang},
+        ${p}cultural_period1_${lang},
+        ${p}cultural_period2_${lang},
+        ${p}cultural_period3_${lang},
+        ${p}cultural_period4_${lang},
+        ${p}cultural_period5_${lang},
+        ${p}cultural_period6_${lang},
+        ${p}admin_subdivision_type1_${lang},
+        ${p}admin_subdivision_type2_${lang},
+        ${p}admin_subdivision_type3_${lang},
+        ${p}admin_subdivision_type4_${lang}
+      )) AS search_blob_${lang}
+    `;
+  }
+
+  return `
+    ${langBlob("en")},
+    ${langBlob("ru")},
+    ${langBlob("zh")},
+    ${langBlob("kk")},
+    ${langBlob("ky")},
+    ${langBlob("tg")},
+    ${langBlob("tk")},
+    ${langBlob("uz")},
+
+    ARRAY_REMOVE(ARRAY[
+      NULLIF(btrim(${p}"Monument Type1"), ''),
+      NULLIF(btrim(${p}"Monument Type2"), ''),
+      NULLIF(btrim(${p}"Monument Type3"), ''),
+      NULLIF(btrim(${p}"Monument Type4"), ''),
+      NULLIF(btrim(${p}"Monument Type5"), ''),
+      NULLIF(btrim(${p}"Monument Type6"), '')
+    ], NULL) AS monument_types_arr,
+
+    ARRAY_REMOVE(ARRAY[
+      NULLIF(btrim(${p}"Religion1"), ''),
+      NULLIF(btrim(${p}"Religion2"), ''),
+      NULLIF(btrim(${p}"Religion3"), '')
+    ], NULL) AS religions_arr,
+
+    ARRAY_REMOVE(ARRAY[
+      NULLIF(btrim(${p}"Cultural Period1"), ''),
+      NULLIF(btrim(${p}"Cultural Period2"), ''),
+      NULLIF(btrim(${p}"Cultural Period3"), ''),
+      NULLIF(btrim(${p}"Cultural Period4"), ''),
+      NULLIF(btrim(${p}"Cultural Period5"), ''),
+      NULLIF(btrim(${p}"Cultural Period6"), '')
+    ], NULL) AS cultural_periods_arr
+  `;
+}
+
 const browseScopeConfig = {
   workspace: {
     sql: `
       SELECT
-        *,
+        v.*,
+        ${monumentHelperColumnsSql("v")},
         'workspace'::text AS source_scope,
         true AS is_editable
-      FROM kz.v_monuments_grid_base
+      FROM kz.v_monuments_grid_base v
     `
   },
   national_ref: {
     sql: `
       SELECT
         *,
-        NULL::integer AS created_by_app_user_id,
         'national_ref'::text AS source_scope,
         false AS is_editable
-      FROM ui.mv_monuments_caal
+      FROM ${MONUMENTS_CAAL_MV}
       WHERE ${NATIONAL_REF_WHERE}
     `
   },
@@ -48,10 +197,9 @@ const browseScopeConfig = {
     sql: `
       SELECT
         *,
-        NULL::integer AS created_by_app_user_id,
         'all_caal'::text AS source_scope,
         false AS is_editable
-      FROM ui.mv_monuments_caal
+      FROM ${MONUMENTS_CAAL_MV}
     `
   }
 };
@@ -221,6 +369,73 @@ function buildMonumentRecord(row, lang, currentAppUserId = null, canEditCaal = f
   };
 }
 
+function buildMonumentMapRecord(row, lang, currentAppUserId = null, canEditCaal = false) {
+  const raw = {
+    id: row.id,
+    "CAAL_ID": row["CAAL_ID"],
+    "Primary Name": row["Primary Name"],
+    "Primary Name (English)": row["Primary Name (English)"],
+    "Country": row["Country"],
+    "Region": row["Region"],
+    "Classification": row["Classification"],
+    "Designation": row["Designation"],
+    "Monument Type1": row["Monument Type1"],
+    "Cultural Period1": row["Cultural Period1"],
+    "Religion1": row["Religion1"],
+    "Longitude": row["Longitude"],
+    "Latitude": row["Latitude"],
+    created_by_app_user_id: row.created_by_app_user_id,
+    source_scope: row.source_scope
+  };
+
+  return {
+    identity: {
+      id: row.id,
+      caal_id: row["CAAL_ID"]
+    },
+
+    summary: {
+      primary_name: row["Primary Name"],
+      primary_name_english: row["Primary Name (English)"],
+      country: row.country_display || row["Country"],
+      region: row["Region"],
+      classification: row.classification_display || row["Classification"],
+      designation: row.designation_display || row["Designation"],
+      monument_type1: row.monument_type1_display || row["Monument Type1"],
+      cultural_period1: row.cultural_period1_display || row["Cultural Period1"],
+      religion1: row.religion1_display || row["Religion1"],
+      longitude: row["Longitude"],
+      latitude: row["Latitude"]
+    },
+
+    raw,
+
+    geometry: buildGeometry(row),
+
+    source: {
+      scope: row.source_scope || "workspace",
+      is_editable:
+        canEditCaal ||
+        (
+          row.source_scope === "workspace" &&
+          currentAppUserId !== null &&
+          Number(row.created_by_app_user_id) === Number(currentAppUserId)
+        )
+    },
+
+    filter_values: {
+      monument_types: row["Monument Type1"] ? [row["Monument Type1"]] : [],
+      religions: row["Religion1"] ? [row["Religion1"]] : [],
+      cultural_periods: row["Cultural Period1"] ? [row["Cultural Period1"]] : [],
+      classification: row["Classification"],
+      designation: row["Designation"],
+      country: row["Country"]
+    },
+
+    is_map_record: true
+  };
+}
+
 function canEditMonuments(session) {
   return !!session?.permissions?.can_edit_workspace;
 }
@@ -233,13 +448,34 @@ function parseCsvParam(value) {
     .filter(Boolean);
 }
 
-function buildMonumentFilterWhere(req) {
+function normalizeSearchText(value) {
+  return String(value || "")
+    .trim()
+    .replace(/[-‐-‒–—]+/g, " ");
+}
+
+function hasExpensiveFreeTextSearch(req) {
+  return Boolean(normalizeSearchText(req.query.text));
+}
+
+function estimateReturnedTotal({ offset, limit, rowCount, exactTotal = null }) {
+  if (exactTotal !== null && exactTotal !== undefined) {
+    return Number(exactTotal);
+  }
+
+  // If a full page came back, report one extra row so the frontend can still allow Next.
+  return offset + rowCount + (rowCount === limit ? 1 : 0);
+}
+
+function buildMonumentFilterWhere(req, lang = "en") {
   const clauses = [];
   const values = [];
   let index = 1;
 
-  const text = req.query.text?.trim();
-  const caalId = req.query.caalId?.trim();
+  const safeLang = safeMonumentLang(lang);
+  const text = normalizeSearchText(req.query.text).toLowerCase();
+  const caalId = String(req.query.caalId || "").trim();
+
   const monumentTypes = parseCsvParam(req.query.monumentTypes);
   const classifications = parseCsvParam(req.query.classifications);
   const designations = parseCsvParam(req.query.designations);
@@ -254,77 +490,43 @@ function buildMonumentFilterWhere(req) {
   }
 
   if (text) {
-    clauses.push(`
-      (
-        coalesce("CAAL_ID",'') ILIKE $${index}
-        OR coalesce("Primary Name",'') ILIKE $${index}
-        OR coalesce("Primary Name (English)",'') ILIKE $${index}
-        OR coalesce("Other Names",'') ILIKE $${index}
-        OR coalesce("Primary Description",'') ILIKE $${index}
-        OR coalesce("Primary Description (English)",'') ILIKE $${index}
-        OR coalesce("Additional Notes",'') ILIKE $${index}
-      )
-    `);
+    clauses.push(`search_blob_${safeLang} ILIKE $${index}`);
     values.push(`%${text}%`);
     index += 1;
   }
 
   if (classifications.length) {
-    clauses.push(`"Classification" = ANY($${index})`);
+    clauses.push(`"Classification" = ANY($${index}::text[])`);
     values.push(classifications);
     index += 1;
   }
 
   if (designations.length) {
-    clauses.push(`"Designation" = ANY($${index})`);
+    clauses.push(`"Designation" = ANY($${index}::text[])`);
     values.push(designations);
     index += 1;
   }
 
   if (countries.length) {
-    clauses.push(`"Country" = ANY($${index})`);
+    clauses.push(`"Country" = ANY($${index}::text[])`);
     values.push(countries);
     index += 1;
   }
 
   if (monumentTypes.length) {
-    clauses.push(`
-      (
-        "Monument Type1" = ANY($${index})
-        OR "Monument Type2" = ANY($${index})
-        OR "Monument Type3" = ANY($${index})
-        OR "Monument Type4" = ANY($${index})
-        OR "Monument Type5" = ANY($${index})
-        OR "Monument Type6" = ANY($${index})
-      )
-    `);
+    clauses.push(`monument_types_arr && $${index}::text[]`);
     values.push(monumentTypes);
     index += 1;
   }
 
   if (religions.length) {
-    clauses.push(`
-      (
-        "Religion1" = ANY($${index})
-        OR "Religion2" = ANY($${index})
-        OR "Religion3" = ANY($${index})
-      )
-    `);
+    clauses.push(`religions_arr && $${index}::text[]`);
     values.push(religions);
     index += 1;
   }
 
   if (culturalPeriods.length) {
-    clauses.push(`
-      (
-        "Cultural Period1" = ANY($${index})
-        OR "Cultural Period2" = ANY($${index})
-        OR "Cultural Period3" = ANY($${index})
-        OR "Cultural Period4" = ANY($${index})
-        OR "Cultural Period5" = ANY($${index})
-        OR "Cultural Period6" = ANY($${index})
-      )
-    `);
+    clauses.push(`cultural_periods_arr && $${index}::text[]`);
     values.push(culturalPeriods);
     index += 1;
   }
@@ -402,9 +604,9 @@ async function fetchLookupRows(sql, lang) {
 }
 
 router.get("/lookups/monuments", async (req, res) => {
-  console.log("MONUMENTS route session:", JSON.stringify(req.session, null, 2));
-  console.log("MONUMENTS query:", req.query);
-  console.log("MONUMENTS appSession:", req.session?.appSession || null);
+  //console.log("MONUMENTS route session:", JSON.stringify(req.session, null, 2));
+  //console.log("MONUMENTS query:", req.query);
+  //console.log("MONUMENTS appSession:", req.session?.appSession || null);
   const currentSession = req.session?.appSession || null;
 
   if (!currentSession) {
@@ -466,8 +668,8 @@ router.get("/lookups/monuments", async (req, res) => {
 });
 
 router.get("/monuments/map", async (req, res) => {
-  console.log("MONUMENTS route session:", JSON.stringify(req.session, null, 2));
-  console.log("MONUMENTS query:", req.query);
+  //console.log("MONUMENTS route session:", JSON.stringify(req.session, null, 2));
+  //console.log("MONUMENTS query:", req.query);
 
   const currentSession = req.session?.appSession || null;
 
@@ -495,7 +697,7 @@ router.get("/monuments/map", async (req, res) => {
 
   // --- base SQL parts ---
   const unionSql = buildBrowseUnionSql(scopes);
-  const { whereSql, values } = buildMonumentFilterWhere(req);
+  const { whereSql, values } = buildMonumentFilterWhere(req, lang);
 
   // --- bbox handling ---
   const bbox = parseBboxParam(req.query.bbox);
@@ -533,31 +735,64 @@ router.get("/monuments/map", async (req, res) => {
 
   // --- final query ---
   try {
-    console.log("MAP scopes:", scopes);
-    console.log("MAP where:", combinedWhere);
-    console.log("MAP values:", extraValues);
+    //console.log("MAP scopes:", scopes);
+    //console.log("MAP where:", combinedWhere);
+    //console.log("MAP values:", extraValues);
+
+    const safeLang = safeMonumentLang(lang);
+    const hasFreeTextSearch = hasExpensiveFreeTextSearch(req);
+    const mapLimit = hasFreeTextSearch ? 1500 : 5000;
+
+    const limitParamIndex = extraValues.length + 1;
 
     const dataSql = `
-      SELECT *
+      SELECT
+        id,
+        "CAAL_ID",
+        "Primary Name",
+        "Primary Name (English)",
+        "Country",
+        country_${safeLang} AS country_display,
+        "Region",
+        "Classification",
+        classification_${safeLang} AS classification_display,
+        "Designation",
+        designation_${safeLang} AS designation_display,
+        "Monument Type1",
+        monument_type1_${safeLang} AS monument_type1_display,
+        "Cultural Period1",
+        cultural_period1_${safeLang} AS cultural_period1_display,
+        "Religion1",
+        religion1_${safeLang} AS religion1_display,
+        "Longitude",
+        "Latitude",
+        created_by_app_user_id,
+        source_scope,
+        is_editable
       FROM (
         ${unionSql}
       ) combined
       ${combinedWhere}
-      LIMIT 5000
+      LIMIT $${limitParamIndex}
     `;
 
-    const result = await pool.query(dataSql, extraValues);
+    const result = await pool.query(dataSql, [...extraValues, mapLimit]);
 
-    console.log("MAP raw rows:", result.rows.length);
+    //console.log("MAP raw rows:", result.rows.length);
 
     const currentAppUserId = currentSession?.user?.user_id ?? null;
     const canEditCaal = canEditCaalMonuments(currentSession);
 
     const records = result.rows.map((row) =>
-      buildMonumentRecord(row, lang, currentAppUserId, canEditCaal)
+      buildMonumentMapRecord(
+        row,
+        lang,
+        currentAppUserId,
+        canEditCaal
+      )
     );
 
-    console.log("MAP final records:", records.length);
+    //console.log("MAP final records:", records.length);
 
     return res.json({
       ok: true,
@@ -607,7 +842,7 @@ router.get("/monuments", async (req, res) => {
   try {
     const unionSql = buildBrowseUnionSql(scopes);
 
-    const { whereSql, values } = buildMonumentFilterWhere(req);
+    const { whereSql, values } = buildMonumentFilterWhere(req, lang);
 
     const dataSql = `
       SELECT *
@@ -619,30 +854,48 @@ router.get("/monuments", async (req, res) => {
       LIMIT $${values.length + 1} OFFSET $${values.length + 2}
     `;
 
-    const countSql = `
-      SELECT COUNT(*) AS total
-      FROM (
-        ${unionSql}
-      ) combined
-      ${whereSql}
-    `;
+    const hasFreeTextSearch = hasExpensiveFreeTextSearch(req);
 
-    const [dataResult, countResult] = await Promise.all([
-      pool.query(dataSql, [...values, limit, offset]),
-      pool.query(countSql, values)
-    ]);
+    const dataResult = await pool.query(dataSql, [...values, limit, offset]);
+
+    let totalIsExact = false;
+    let total = estimateReturnedTotal({
+      offset,
+      limit,
+      rowCount: dataResult.rows.length
+    });
+
+    if (!hasFreeTextSearch) {
+      const countSql = `
+        SELECT COUNT(*) AS total
+        FROM (
+          ${unionSql}
+        ) combined
+        ${whereSql}
+      `;
+
+      const countResult = await pool.query(countSql, values);
+      total = Number(countResult.rows[0].total);
+      totalIsExact = true;
+    }
     
     const currentAppUserId = currentSession?.user?.user_id ?? null;
     const canEditCaal = canEditCaalMonuments(currentSession);
 
     const records = dataResult.rows.map((row) =>
-      buildMonumentRecord(row, lang, currentAppUserId, canEditCaal)
+      buildMonumentRecord(
+        stripMonumentInternalFields(row),
+        lang,
+        currentAppUserId,
+        canEditCaal
+      )
     );
 
     return res.json({
       ok: true,
       records,
-      total: Number(countResult.rows[0].total),
+      total,
+      total_is_exact: totalIsExact,
       limit,
       offset,
       scopes
@@ -781,7 +1034,9 @@ async function fetchPublicMonumentRowById(id) {
     `SELECT *, 'all_caal'::text AS source_scope FROM ui.mv_monuments_caal WHERE id = $1`,
     [id]
   );
-  return result.rows[0] || null;
+
+  const row = result.rows[0] || null;
+  return row ? stripMonumentInternalFields(row) : null;
 }
 
 // ========================================================
@@ -965,6 +1220,9 @@ router.patch("/monuments/:id", async (req, res) => {
     let updateResult;
     let updatedScope = "workspace";
 
+    let updateSql;
+    let updateValues;
+
     if (canEditCaal) {
       console.log("Trying workspace monument update:", {
         table: MONUMENTS_WORKSPACE_TABLE,
@@ -1044,7 +1302,7 @@ router.patch("/monuments/:id", async (req, res) => {
     return res.json({
       ok: true,
       record: buildMonumentRecord(
-        freshRow,
+        stripMonumentInternalFields(freshRow),
         lang,
         userId,
         canEditCaalMonuments(currentSession)

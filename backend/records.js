@@ -39,6 +39,30 @@ function buildGeometry(row) {
   };
 }
 
+const MONUMENT_INTERNAL_HELPER_FIELDS = [
+  "search_blob_en",
+  "search_blob_ru",
+  "search_blob_zh",
+  "search_blob_kk",
+  "search_blob_ky",
+  "search_blob_tg",
+  "search_blob_tk",
+  "search_blob_uz",
+  "monument_types_arr",
+  "religions_arr",
+  "cultural_periods_arr"
+];
+
+function stripMonumentInternalFields(row) {
+  const clean = { ...row };
+
+  for (const field of MONUMENT_INTERNAL_HELPER_FIELDS) {
+    delete clean[field];
+  }
+
+  return clean;
+}
+
 function buildResolvedMonumentRecord(row, lang) {
   return {
     identity: {
@@ -199,7 +223,10 @@ router.get("/resolve", async (req, res) => {
         return res.json({
           ok: true,
           record_type: "monument",
-          record: buildResolvedMonumentRecord(result.rows[0], lang)
+          record: buildResolvedMonumentRecord(
+            stripMonumentInternalFields(result.rows[0]),
+            lang
+          )
         });
       }
     }
@@ -234,7 +261,10 @@ router.get("/resolve", async (req, res) => {
           return res.json({
             ok: true,
             record_type: "monument",
-            record: buildResolvedMonumentRecord(row, lang)
+            record: buildResolvedMonumentRecord(
+              stripMonumentInternalFields(row),
+              lang
+            )
           });
         }
       }
