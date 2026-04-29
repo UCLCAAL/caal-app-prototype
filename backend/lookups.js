@@ -17,7 +17,11 @@ const MONUMENT_LOOKUP_VIEWS = {
   designation: "ui.v_lkp_designation_type",
   religion: "ui.v_lkp_religion",
   monument_type: "ui.v_lkp_site_types_context",
-  cultural_period: "ui.v_lkp_cultural_periods_context"
+  cultural_period: "ui.v_lkp_cultural_periods_context",
+  location_confidence: "ui.v_lkp_loc_acc_ass",
+  admin_subdivision_type: "ui.v_lkp_admin_type",
+  measurement_unit: "ui.v_lkp_unit_of_measurement",
+  measurement_type: "ui.v_lkp_measurement_type"
 };
 
 const ARCHIVE_LOOKUP_VIEWS = {
@@ -47,7 +51,7 @@ function getLookupViewsForPage(page) {
   }
 }
 
-async function fetchLookupSet(viewName, requestedLanguage) {
+async function fetchLookupSet(viewName, requestedLanguage, { preferCanonical = false } = {}) {
   const result = await pool.query(
     `
     SELECT *
@@ -56,12 +60,21 @@ async function fetchLookupSet(viewName, requestedLanguage) {
   );
 
   const items = result.rows.map((row) => {
-    const value =
-      row.concept_id ??
-      row.canonical_value ??
-      row.id ??
-      row.label_name ??
-      null;
+    const value = preferCanonical
+    ? (
+        row.canonical_value ??
+        row.concept_id ??
+        row.id ??
+        row.label_name ??
+        null
+      )
+    : (
+        row.concept_id ??
+        row.canonical_value ??
+        row.id ??
+        row.label_name ??
+        null
+      );
 
     return {
       value,
@@ -101,7 +114,13 @@ router.get("/:page", async (req, res) => {
     const payload = {};
 
     for (const [lookupName, viewName] of Object.entries(lookupViews)) {
-      payload[lookupName] = await fetchLookupSet(viewName, requestedLanguage);
+      payload[lookupName] = await fetchLookupSet(
+        viewName,
+        requestedLanguage,
+        {
+          preferCanonical: page === "archive"
+        }
+      );
     }
 
     return res.json({

@@ -40,6 +40,35 @@ function parseScopes(scopesParam) {
     .filter(Boolean);
 }
 
+function parseCsvParam(value) {
+  if (!value) return [];
+
+  return String(value)
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function normalizeSearchText(value) {
+  return String(value || "")
+    .trim()
+    .replace(/[-‐-‒–—]+/g, " ");
+}
+
+function sqlArchiveSearchExpr(columnName) {
+  return `regexp_replace(coalesce("${columnName}", ''), '[-‐-‒–—]+', ' ', 'g') ILIKE`;
+}
+
+function archiveMultiValueAnySql(columnName, paramIndex) {
+  return `
+    EXISTS (
+      SELECT 1
+      FROM unnest(string_to_array(coalesce("${columnName}", ''), ',')) AS part(value)
+      WHERE btrim(part.value) = ANY($${paramIndex}::text[])
+    )
+  `;
+}
+
 function unique(values) {
   return Array.from(new Set(values));
 }
@@ -168,6 +197,14 @@ router.get("/", async (req, res) => {
 
   const caalId = String(req.query.caalId || "").trim();
 
+  const text = normalizeSearchText(req.query.text);
+
+  const relatedCountries = parseCsvParam(req.query.relatedCountries);
+  const relatedReligions = parseCsvParam(req.query.relatedReligions);
+  const relatedSubjects = parseCsvParam(req.query.relatedSubjects);
+  const contentTypes = parseCsvParam(req.query.contentTypes);
+  const languages = parseCsvParam(req.query.languages);
+
   const unionSql = buildBrowseUnionSql(scopes);
 
   const whereClauses = [];
@@ -176,6 +213,80 @@ router.get("/", async (req, res) => {
   if (caalId) {
     values.push(`%${caalId}%`);
     whereClauses.push(`coalesce("CAAL_ID", '') ILIKE $${values.length}`);
+  }
+
+  if (text) {
+    values.push(`%${text}%`);
+    const idx = values.length;
+
+    const freeTextFields = [
+      "CAAL_ID",
+      "Associated CAAL_ID",
+      "Original Reference",
+      "Original Title",
+      "English Title",
+      "Description",
+      "Description - alternative language",
+      "Number and Type of Original Material",
+      "Related Towns and Cities",
+      "Other Subjects",
+      "Dates of Original Material",
+      "Author of the Original Material",
+      "Publisher of the Original Material",
+      "Editor of the Original Material",
+      "Volume and Issue Number",
+      "Script of Material",
+      "Writing System",
+      "Copyright Holder Name",
+      "Copyright Attribution",
+      "Digital Folder Name",
+      "Digital Files Name",
+      "Creation Date of Digital Files",
+      "Format of Digital Files",
+      "Number of Digital Files",
+      "Colour",
+      "Resolution",
+      "Archive Recorder",
+      "Resource",
+      "Level",
+      "Content Type",
+      "Country",
+      "Related Countries",
+      "Related Religions",
+      "Related Subjects",
+      "Languages of Material"
+    ];
+
+    whereClauses.push(`
+      (
+        ${freeTextFields.map((field) => `${sqlArchiveSearchExpr(field)} $${idx}`).join("\n OR ")}
+      )
+    `);
+  }
+
+  if (relatedCountries.length) {
+    values.push(relatedCountries);
+    whereClauses.push(archiveMultiValueAnySql("Related Countries", values.length));
+  }
+
+  if (relatedReligions.length) {
+    values.push(relatedReligions);
+    whereClauses.push(archiveMultiValueAnySql("Related Religions", values.length));
+  }
+
+  if (relatedSubjects.length) {
+    values.push(relatedSubjects);
+    whereClauses.push(archiveMultiValueAnySql("Related Subjects", values.length));
+  }
+
+  if (contentTypes.length) {
+    values.push(contentTypes);
+    whereClauses.push(`"Content Type" = ANY($${values.length}::text[])`);
+  }
+
+  if (languages.length) {
+    values.push(languages);
+    whereClauses.push(archiveMultiValueAnySql("Languages of Material", values.length));
   }
 
   const whereSql = whereClauses.length
@@ -463,6 +574,143 @@ router.patch("/:id", async (req, res) => {
     return res.status(500).json({
       ok: false,
       error: "Archive update failed",
+      detail: error.message
+    });
+  }
+});
+
+// delete
+router.delete("/:id", async (req, res) => {
+  const currentSession = req.session?.appSession || null;
+
+  if (!currentSession) {
+    return res.status(401).json({
+      ok: false,
+      error: "No active session"
+    });
+  }
+
+  if (!canEditArchive(currentSession) && !canEditCaalArchive(currentSession)) {
+    return res.status(403).json({
+      ok: false,
+      error: "You do not have permission to delete archive records"
+    });
+  }
+
+  const id = Number(req.params.id);
+
+  if (!Number.isInteger(id)) {
+    return res.status(400).json({
+      ok: false,
+      error: "Invalid archive id"
+    });
+  }
+
+  const userId = currentSession?.user?.user_id ?? null;
+  const username = currentSession?.user?.username ?? null;
+  const canEditCaal = canEditCaalArchive(currentSession);
+  const deleteReason = String(req.body?.reason || "").trim() || null;
+
+  try {
+    const ownershipClause = canEditCaal
+      ? ""
+      : `AND a.created_by_app_user_id = $2`;
+
+    const values = canEditCaal
+      ? [id, userId, username, deleteReason]
+      : [id, userId, username, deleteReason];
+
+    const deleteSql = `
+      WITH target AS (
+        SELECT *
+        FROM ${ARCHIVE_WORKSPACE_TABLE} a
+        WHERE a.id = $1
+          ${ownershipClause}
+      ),
+      registry_update AS (
+        UPDATE public.record_registry rr
+        SET
+          status = 'deleted',
+          deleted_at = now(),
+          deleted_by_app_user_id = $2,
+          deleted_by = $3,
+          delete_reason = $4,
+          deleted_record = to_jsonb(target)
+        FROM target
+        WHERE rr.source_schema = 'kz'
+          AND rr.source_table = 'CAAL_Archive'
+          AND rr.source_row_id = target.id
+        RETURNING rr.id
+      ),
+      registry_insert AS (
+        INSERT INTO public.record_registry (
+          source_schema,
+          source_table,
+          source_row_id,
+          caal_id,
+          record_type,
+          created_at,
+          created_by,
+          created_by_app_user_id,
+          status,
+          notes,
+          deleted_at,
+          deleted_by_app_user_id,
+          deleted_by,
+          delete_reason,
+          deleted_record
+        )
+        SELECT
+          'kz',
+          'CAAL_Archive',
+          target.id,
+          target."CAAL_ID",
+          'archive',
+          now(),
+          COALESCE(target."Archive Recorder", $3),
+          target.created_by_app_user_id,
+          'deleted',
+          'Registry row created during web app delete',
+          now(),
+          $2,
+          $3,
+          $4,
+          to_jsonb(target)
+        FROM target
+        WHERE NOT EXISTS (SELECT 1 FROM registry_update)
+        RETURNING id
+      ),
+      deleted AS (
+        DELETE FROM ${ARCHIVE_WORKSPACE_TABLE} a
+        USING target
+        WHERE a.id = target.id
+        RETURNING a.id, a."CAAL_ID"
+      )
+      SELECT * FROM deleted;
+    `;
+
+    const result = await pool.query(deleteSql, values);
+
+    if (result.rows.length === 0) {
+      return res.status(403).json({
+        ok: false,
+        error: canEditCaal
+          ? "Archive record not found in workspace table"
+          : "You can only delete your own workspace archive records"
+      });
+    }
+
+    return res.json({
+      ok: true,
+      deleted: result.rows[0]
+    });
+  } catch (error) {
+    console.error("Archive delete failed:");
+    console.error(error);
+
+    return res.status(500).json({
+      ok: false,
+      error: "Archive delete failed",
       detail: error.message
     });
   }

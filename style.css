@@ -720,11 +720,135 @@ body {
   color: #6b7280;
 }
 
+.measurement-row {
+  grid-column: 1 / -1;
+  border: 1px solid var(--border-soft);
+  border-radius: 12px;
+  background: #ffffff;
+  padding: 0.85rem;
+  box-shadow: var(--shadow-soft);
+}
+
+.measurement-row + .measurement-row {
+  margin-top: 0.25rem;
+}
+
+.measurement-row-title {
+  margin: 0 0 0.65rem;
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.measurement-row-fields {
+  display: grid;
+  grid-template-columns: minmax(90px, 0.8fr) minmax(120px, 1fr) minmax(160px, 1.4fr);
+  gap: 0.75rem;
+  align-items: end;
+}
+
+.measurement-field {
+  min-width: 0;
+}
+
+.measurement-row-edit .detail-item {
+  padding: 0;
+  border: none;
+  box-shadow: none;
+  background: transparent;
+}
+
+.measurement-row-edit .detail-label,
+.measurement-row-readonly .detail-label {
+  font-size: 0.76rem;
+}
+
+@media (max-width: 900px) {
+  .measurement-row-fields {
+    grid-template-columns: 1fr;
+  }
+}
+
+.app-toast {
+  position: fixed;
+  right: 1.25rem;
+  bottom: 1.25rem;
+  z-index: 9999;
+  max-width: 22rem;
+  padding: 0.75rem 1rem;
+  border-radius: 0.85rem;
+  box-shadow: 0 10px 30px rgba(15, 23, 42, 0.18);
+  font-size: 0.95rem;
+  opacity: 0;
+  transform: translateY(0.75rem);
+  pointer-events: none;
+  transition: opacity 0.18s ease, transform 0.18s ease;
+}
+
+.app-toast.is-visible {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.app-toast-success {
+  background: #e6f2ed;
+  border: 1px solid #a8c3b9;
+  color: #29564d;
+}
+
+.app-toast-error {
+  background: #fff1f2;
+  border: 1px solid #fecdd3;
+  color: #9f1239;
+}
+
+.action-btn.danger {
+  border-color: #fecaca;
+  background: #fff1f2;
+  color: #991b1b;
+}
+
+.action-btn.danger:hover {
+  background: #ffe4e6;
+  border-color: #fca5a5;
+}
+
 /* =========================================================
    ARCHIVE WORKSPACE
    ========================================================= */
 .archive-workspace {
   grid-template-columns: minmax(300px, 28vw) minmax(520px, 1fr);
+}
+
+.record-identity-strip {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.45rem;
+  margin-top: 0.75rem;
+}
+
+.record-identity-item {
+  border: 1px solid #d4ded9;
+  border-radius: 0.6rem;
+  background: #f8fbfa;
+  padding: 0.55rem 0.65rem;
+}
+
+.record-identity-label {
+  display: block;
+  font-size: 0.76rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #64737b;
+  margin-bottom: 0.2rem;
+}
+
+.record-identity-item strong {
+  font-size: 0.98rem;
+  color: #1f2a30;
+  word-break: break-word;
 }
 
 /* =========================================================

@@ -45,6 +45,7 @@ const archiveActionBar = document.getElementById("archiveActionBar");
 const archiveSaveBtn = document.getElementById("archiveSaveBtn");
 const archiveCancelEditBtn = document.getElementById("archiveCancelEditBtn");
 const archiveEditBtn = document.getElementById("archiveEditBtn");
+const archiveDeleteBtn = document.getElementById("archiveDeleteBtn");
 
 // API base
 // --------------------------------------------------------
@@ -72,6 +73,8 @@ let archivePreviewRecord = null;
 let archiveJustSavedRecordId = null;
 
 let archiveMessages = {};
+
+let archiveFilterDebounceTimer = null;
 
 // labels translation loader 
 function archiveText(key, fallback = null) {
@@ -103,8 +106,51 @@ function setArchiveLoading(isLoading, message = "") {
   });
 }
 
+function showArchiveToast(message, variant = "success") {
+  let toast = document.getElementById("archiveToast");
+
+  if (!toast) {
+    toast = document.createElement("div");
+    toast.id = "archiveToast";
+    toast.className = "app-toast";
+    document.body.appendChild(toast);
+  }
+
+  toast.textContent = message;
+  toast.className = `app-toast app-toast-${variant} is-visible`;
+
+  window.clearTimeout(showArchiveToast._timer);
+  showArchiveToast._timer = window.setTimeout(() => {
+    toast.classList.remove("is-visible");
+  }, 2500);
+}
+
 // Label helpers
 // --------------------------------------------------------
+async function archiveReloadFromFilters() {
+  archiveOffset = 0;
+
+  setArchiveLoading(true, archiveLabel("Updating records...", "Updating records..."));
+
+  try {
+    await loadArchiveRecords(archiveLimit, 0);
+  } catch (error) {
+    console.error("Archive filter reload failed:", error);
+  } finally {
+    setArchiveLoading(false);
+  }
+}
+
+function archiveScheduleFilterReload() {
+  if (archiveFilterDebounceTimer) {
+    clearTimeout(archiveFilterDebounceTimer);
+  }
+
+  archiveFilterDebounceTimer = setTimeout(() => {
+    archiveReloadFromFilters();
+  }, 400);
+}
+
 function archiveLabel(name, fallback = null) {
   return archiveLabels[name] || fallback || name;
 }
@@ -218,7 +264,8 @@ function updatePaginationUI() {
   const start = archiveTotalCount === 0 ? 0 : archiveOffset + 1;
   const end = archiveOffset + archiveAllRecords.length;
 
-  archivePageInfo.textContent = `${start}-${end} shown`;
+  const pageNumber = Math.floor(archiveOffset / archiveLimit) + 1;
+  archivePageInfo.textContent = `${archiveLabel("Page", "Page")} ${pageNumber}`;
 
   if (archivePrevBtn) {
     archivePrevBtn.disabled = archiveOffset === 0;
@@ -243,9 +290,225 @@ function archivePopulateFilterLookups() {
   archivePopulateMultiSelect(filterArchiveRelatedSubjects, archiveLookupOptions("related_subject"));
   archivePopulateMultiSelect(filterArchiveContentType, archiveLookupOptions("content_type"));
   archivePopulateMultiSelect(filterArchiveLanguages, archiveLookupOptions("language"));
+
+  archiveWireClickToggleMultiSelects();
+  archiveRenderAllFilterChips();
+}
+
+const archiveChipFilterConfigs = [
+  {
+    select: filterArchiveRelatedCountries,
+    chipsId: "filterArchiveRelatedCountriesChips"
+  },
+  {
+    select: filterArchiveRelatedReligions,
+    chipsId: "filterArchiveRelatedReligionsChips"
+  },
+  {
+    select: filterArchiveRelatedSubjects,
+    chipsId: "filterArchiveRelatedSubjectsChips"
+  },
+  {
+    select: filterArchiveContentType,
+    chipsId: "filterArchiveContentTypeChips"
+  },
+  {
+    select: filterArchiveLanguages,
+    chipsId: "filterArchiveLanguagesChips"
+  }
+];
+
+function archiveGetSelectedOptionData(selectEl) {
+  if (!selectEl) return [];
+
+  return Array.from(selectEl.options)
+    .filter((option) => option.selected)
+    .map((option) => ({
+      value: option.value,
+      label: option.textContent || option.value
+    }));
+}
+
+function archiveRenderFilterChipsForSelect(selectEl, chipsId) {
+  const chipsEl = document.getElementById(chipsId);
+  if (!selectEl || !chipsEl) return;
+
+  const selected = archiveGetSelectedOptionData(selectEl);
+  chipsEl.innerHTML = "";
+
+  if (!selected.length) {
+    const empty = document.createElement("span");
+    empty.className = "filter-chip-empty";
+    empty.textContent = archiveLabel("No values selected", "No values selected");
+    chipsEl.appendChild(empty);
+    return;
+  }
+
+  selected.forEach((item) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "filter-chip";
+    chip.dataset.value = item.value;
+    chip.innerHTML = `
+      <span>${item.label}</span>
+      <span class="filter-chip-remove" aria-hidden="true">×</span>
+    `;
+
+    chip.addEventListener("click", async () => {
+      const option = Array.from(selectEl.options).find(
+        (opt) => opt.value === item.value
+      );
+
+      if (option) option.selected = false;
+
+      archiveRenderAllFilterChips();
+      await archiveReloadFromFilters();
+    });
+
+    chipsEl.appendChild(chip);
+  });
+}
+
+function archiveRenderAllFilterChips() {
+  archiveChipFilterConfigs.forEach(({ select, chipsId }) => {
+    archiveRenderFilterChipsForSelect(select, chipsId);
+  });
+}
+
+function archiveWireClickToggleMultiSelects() {
+  archiveChipFilterConfigs.forEach(({ select, chipsId }) => {
+    if (!select || select.dataset.clickToggleWired === "true") return;
+
+    select.addEventListener("mousedown", (event) => {
+      const option = event.target;
+      if (!option || option.tagName !== "OPTION") return;
+
+      event.preventDefault();
+      option.selected = !option.selected;
+
+      archiveRenderFilterChipsForSelect(select, chipsId);
+
+      select.dispatchEvent(
+        new Event("change", {
+          bubbles: true
+        })
+      );
+    });
+
+    select.addEventListener("change", () => {
+      archiveRenderFilterChipsForSelect(select, chipsId);
+    });
+
+    select.dataset.clickToggleWired = "true";
+  });
+
+  archiveRenderAllFilterChips();
+}
+
+function archiveBuildQueryParams({ limit = archiveLimit, offset = archiveOffset } = {}) {
+  const scopes = getArchiveEnabledScopes();
+
+  const lang =
+    (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
+    window.appSession?.profile?.preferred_language ||
+    "en";
+
+  const params = new URLSearchParams();
+  params.set("scopes", scopes.join(","));
+  params.set("lang", lang);
+  params.set("limit", String(limit));
+  params.set("offset", String(offset));
+
+  const text = archiveSearch?.value.trim();
+  const caalId = archiveFilterCaalId?.value.trim();
+
+  if (text) params.set("text", text);
+  if (caalId) params.set("caalId", caalId);
+
+  const relatedCountries = archiveSelectedValues(filterArchiveRelatedCountries);
+  const relatedReligions = archiveSelectedValues(filterArchiveRelatedReligions);
+  const relatedSubjects = archiveSelectedValues(filterArchiveRelatedSubjects);
+  const contentTypes = archiveSelectedValues(filterArchiveContentType);
+  const languages = archiveSelectedValues(filterArchiveLanguages);
+
+  if (relatedCountries.length) params.set("relatedCountries", relatedCountries.join(","));
+  if (relatedReligions.length) params.set("relatedReligions", relatedReligions.join(","));
+  if (relatedSubjects.length) params.set("relatedSubjects", relatedSubjects.join(","));
+  if (contentTypes.length) params.set("contentTypes", contentTypes.join(","));
+  if (languages.length) params.set("languages", languages.join(","));
+
+  return params;
 }
 
 // edit/add helpers
+async function archiveDeleteCurrentRecord() {
+  const record = archiveSelectedRecord;
+
+  if (!record?.identity?.id) return;
+
+  if (record.source?.scope !== "workspace") {
+    alert(archiveLabel("Only workspace records can be deleted.", "Only workspace records can be deleted."));
+    return;
+  }
+
+  const caalId = record.identity?.caal_id || archiveLabel("this record", "this record");
+  const title = record.summary?.original_title || record.summary?.english_title || "";
+
+  const confirmed = window.confirm(
+    `${archiveLabel("Delete archive record", "Delete archive record")} ${caalId}?\n\n${title}\n\n` +
+    archiveLabel(
+      "This will remove it from the workspace, but a recovery copy will be kept in the registry.",
+      "This will remove it from the workspace, but a recovery copy will be kept in the registry."
+    )
+  );
+
+  if (!confirmed) return;
+
+  const reason = window.prompt(
+    archiveLabel("Optional delete reason", "Optional delete reason"),
+    ""
+  );
+
+  setArchiveLoading(true, archiveLabel("Deleting record...", "Deleting record..."));
+
+  try {
+    const response = await fetch(`/api/archive/${record.identity.id}`, {
+      method: "DELETE",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      credentials: "include",
+      body: JSON.stringify({
+        reason: reason || null
+      })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok || !data.ok) {
+      alert(data.detail || data.error || "Archive delete failed");
+      return;
+    }
+
+    archivePendingNewRecord = null;
+    archiveSelectedRecord = null;
+    archiveIsEditMode = false;
+    archiveIsDirty = false;
+
+    showArchiveToast(
+      archiveLabel("Archive record deleted", "Archive record deleted")
+    );
+
+    await loadArchiveRecords(archiveLimit, archiveOffset);
+    renderArchiveEmptyState();
+  } catch (error) {
+    console.error("Archive delete failed:", error);
+    alert(error.message || "Archive delete failed");
+  } finally {
+    setArchiveLoading(false);
+  }
+}
+
 function archiveInputId(fieldName) {
   return "archive_fld_" + fieldName.replace(/[^a-zA-Z0-9]+/g, "_");
 }
@@ -318,6 +581,7 @@ function archiveRenderSelect(fieldName, label, lookupName, currentValue, fullWid
 
 function archiveRenderMultiSelect(fieldName, label, lookupName, currentValue, fullWidth = false) {
   const inputId = archiveInputId(fieldName);
+  const chipsId = `${inputId}_chips`;
   const fullWidthClass = fullWidth ? " full-width" : "";
   const selectedValues = archiveArrayValue(currentValue).map(String);
 
@@ -330,13 +594,119 @@ function archiveRenderMultiSelect(fieldName, label, lookupName, currentValue, fu
     .join("");
 
   return `
-    <div class="detail-item${fullWidthClass}">
+    <div class="detail-item${fullWidthClass} archive-edit-chip-multiselect">
       <label class="detail-label" for="${inputId}">${label}</label>
-      <select id="${inputId}" class="form-control" multiple>
+      <div class="selected-filter-chips archive-edit-selected-chips" id="${chipsId}"></div>
+      <select
+        id="${inputId}"
+        class="form-control chip-multiselect archive-edit-multiselect"
+        multiple
+        data-chip-target="${chipsId}"
+      >
         ${optionsHtml}
       </select>
+      <p class="filter-help">${archiveLabel("Click values to select or deselect. Selected values appear above.", "Click values to select or deselect. Selected values appear above.")}</p>
     </div>
   `;
+}
+
+function archiveRenderEditMultiSelectChips(selectEl) {
+  if (!selectEl) return;
+
+  const chipsId = selectEl.dataset.chipTarget;
+  const chipsEl = chipsId ? document.getElementById(chipsId) : null;
+
+  if (!chipsEl) return;
+
+  const selected = Array.from(selectEl.options)
+    .filter((option) => option.selected)
+    .map((option) => ({
+      value: option.value,
+      label: option.textContent || option.value
+    }));
+
+  chipsEl.innerHTML = "";
+
+  if (!selected.length) {
+    const empty = document.createElement("span");
+    empty.className = "filter-chip-empty";
+    empty.textContent = archiveLabel("No values selected", "No values selected");
+    chipsEl.appendChild(empty);
+    return;
+  }
+
+  selected.forEach((item) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "filter-chip";
+    chip.dataset.value = item.value;
+    chip.innerHTML = `
+      <span>${item.label}</span>
+      <span class="filter-chip-remove" aria-hidden="true">×</span>
+    `;
+
+    chip.addEventListener("click", () => {
+      const option = Array.from(selectEl.options).find(
+        (opt) => opt.value === item.value
+      );
+
+      if (option) {
+        option.selected = false;
+      }
+
+      archiveIsDirty = true;
+      archiveRenderEditMultiSelectChips(selectEl);
+
+      selectEl.dispatchEvent(
+        new Event("change", {
+          bubbles: true
+        })
+      );
+    });
+
+    chipsEl.appendChild(chip);
+  });
+}
+
+function archiveWireEditMultiSelects() {
+  if (!archiveRecordDetails) return;
+
+  const selects = Array.from(
+    archiveRecordDetails.querySelectorAll("select.archive-edit-multiselect")
+  );
+
+  selects.forEach((selectEl) => {
+    if (selectEl.dataset.editChipWired === "true") {
+      archiveRenderEditMultiSelectChips(selectEl);
+      return;
+    }
+
+    selectEl.addEventListener("mousedown", (event) => {
+      const option = event.target;
+
+      if (!option || option.tagName !== "OPTION") return;
+
+      event.preventDefault();
+
+      option.selected = !option.selected;
+      archiveIsDirty = true;
+
+      archiveRenderEditMultiSelectChips(selectEl);
+
+      selectEl.dispatchEvent(
+        new Event("change", {
+          bubbles: true
+        })
+      );
+    });
+
+    selectEl.addEventListener("change", () => {
+      archiveRenderEditMultiSelectChips(selectEl);
+    });
+
+    selectEl.dataset.editChipWired = "true";
+    archiveRenderEditMultiSelectChips(selectEl);
+  });
 }
 
 function archiveRenderReadOnlyItem(label, value, fullWidth = false) {
@@ -513,6 +883,53 @@ function archiveRenderDetailItem(label, value, fullWidth = false) {
   `;
 }
 
+function archiveRenderTitleCard(record, statusBadge = "") {
+  const caalId =
+    archiveIdentity(record, "caal_id") ||
+    archiveRaw(record, "CAAL_ID") ||
+    archiveLabel("Assigned on save", "Assigned on save");
+
+  const associatedCaalId =
+    archiveIdentity(record, "associated_caal_id") ||
+    archiveRaw(record, "Associated CAAL_ID");
+
+  return `
+    <div class="${archiveRecordTitleClass(record)} archive-title-card">
+      <div class="record-title-row">
+        <div>
+          <h3 class="archive-title-caal-id">${safeArchiveValue(caalId)}</h3>
+          <p class="archive-title-associated-id">
+            <span>${archiveLabel("Associated CAAL_ID", "Associated CAAL_ID")}:</span>
+            <strong>${safeArchiveValue(associatedCaalId)}</strong>
+          </p>
+        </div>
+        ${statusBadge}
+      </div>
+    </div>
+  `;
+}
+
+function archiveRenderIdentityStrip(record, { isNew = false } = {}) {
+  const caalId = archiveIdentity(record, "caal_id") || archiveRaw(record, "CAAL_ID");
+  const associatedId =
+    archiveIdentity(record, "associated_caal_id") ||
+    archiveRaw(record, "Associated CAAL_ID");
+
+  return `
+    <div class="record-identity-strip">
+      <div class="record-identity-item">
+        <span class="record-identity-label">${archiveLabel("CAAL_ID", "CAAL_ID")}</span>
+        <strong>${safeArchiveValue(isNew || !caalId ? archiveLabel("Assigned on save", "Assigned on save") : caalId)}</strong>
+      </div>
+
+      <div class="record-identity-item">
+        <span class="record-identity-label">${archiveLabel("Associated CAAL_ID", "Associated CAAL_ID")}</span>
+        <strong>${safeArchiveValue(associatedId)}</strong>
+      </div>
+    </div>
+  `;
+}
+
 function archiveRenderGroupBlock(title, innerHtml, hasValues = true) {
   const content = hasValues
     ? innerHtml
@@ -637,11 +1054,18 @@ window.archiveCanChangeLanguage = function () {
 // for buttons
 function archiveRenderActionBar({ hasRecord = false, canEdit = false } = {}) {
   const isEditing = archiveIsEditMode;
+  const canDelete =
+    isEditing &&
+    hasRecord &&
+    canEdit &&
+    archiveSelectedRecord?.source?.scope === "workspace" &&
+    archiveSelectedRecord?.identity?.id;
 
   if (addArchiveBtn) addArchiveBtn.hidden = isEditing;
   if (archiveEditBtn) archiveEditBtn.hidden = isEditing || !hasRecord;
   if (archiveSaveBtn) archiveSaveBtn.hidden = !isEditing;
   if (archiveCancelEditBtn) archiveCancelEditBtn.hidden = !isEditing;
+  if (archiveDeleteBtn) archiveDeleteBtn.hidden = !canDelete;
 
   if (archiveEditBtn) {
     archiveEditBtn.disabled = !canEdit;
@@ -652,7 +1076,6 @@ function archiveRenderActionBar({ hasRecord = false, canEdit = false } = {}) {
   if (archiveEditBtn) archiveEditBtn.classList.toggle("is-active", !isEditing && hasRecord);
   if (archiveSaveBtn) archiveSaveBtn.classList.toggle("is-active", isEditing);
 }
-
 
 // Labels API
 // --------------------------------------------------------
@@ -709,20 +1132,7 @@ async function loadArchiveRecords(limit = 100, offset = 0) {
     return;
   }
 
-  const lang =
-    (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
-    window.appSession?.profile?.preferred_language ||
-    "en";
-
-  const params = new URLSearchParams();
-  params.set("scopes", scopes.join(","));
-  params.set("lang", lang);
-  params.set("limit", String(limit));
-  params.set("offset", String(offset));
-
-  if (archiveFilterCaalId?.value.trim()) {
-    params.set("caalId", archiveFilterCaalId.value.trim());
-  }
+  const params = archiveBuildQueryParams({ limit, offset });
 
   console.log("Archive fetch URL:", `/api/archive?${params.toString()}`);
 
@@ -744,8 +1154,8 @@ async function loadArchiveRecords(limit = 100, offset = 0) {
   archiveOffset = data.offset || offset;
 
   archiveVisibleRecords = archiveAllRecords;
-  archiveApplyFilters();
 
+  renderArchiveResultsList(archiveVisibleRecords);
   updatePaginationUI();
 }
 
@@ -917,6 +1327,7 @@ async function archiveClearFilters() {
 
   setArchiveLoading(true, archiveLabel("Updating records...", "Updating records..."));
 
+  archiveRenderAllFilterChips();
   try {
     await loadArchiveRecords(archiveLimit, 0);
   } catch (error) {
@@ -941,8 +1352,13 @@ function renderArchiveResultsList(records) {
   if (!archiveResultsList) return;
 
   if (archiveResultsCount) {
-    archiveResultsCount.textContent = `${records.length} ${archiveLabel("records", "records")} (${archiveTotalCount} total)`;
-  }
+  const start = records.length === 0 ? 0 : archiveOffset + 1;
+  const end = archiveOffset + records.length;
+
+  archiveResultsCount.textContent = archiveTotalCount
+    ? `${archiveLabel("Showing", "Showing")} ${start}-${end} ${archiveLabel("of", "of")} ${archiveTotalCount} ${archiveLabel("records", "records")}`
+    : `${archiveLabel("Showing", "Showing")} 0 ${archiveLabel("records", "records")}`;
+}
 
   if (records.length === 0) {
     archiveResultsList.innerHTML = `
@@ -1212,7 +1628,8 @@ function archiveRenderDisplayMode(record) {
     record.source?.scope === "all_caal";
 
   const canEditThisRecord =
-    (isWorkspaceRecord && isOwner) ||
+    record.source?.is_editable === true ||
+    (isWorkspaceRecord && (isOwner || isSuperUser)) ||
     (isCaalRecord && isSuperUser);
 
   const statusBadge = canEditThisRecord
@@ -1222,10 +1639,16 @@ function archiveRenderDisplayMode(record) {
   archiveRecordDetails.innerHTML = `
     <div class="${archiveRecordTitleClass(record)}">
       <div class="record-title-row">
-        <h3>${safeArchiveValue(s.original_title || s.english_title)}</h3>
+        <div>
+          <h3>${safeArchiveValue(s.original_title || s.english_title)}</h3>
+          <p>${safeArchiveValue(archiveIdentity(record, "caal_id"))}</p>
+          <p>
+            <strong>${archiveLabel("Associated CAAL_ID", "Associated CAAL_ID")}:</strong>
+            ${safeArchiveValue(archiveIdentity(record, "associated_caal_id"))}
+          </p>
+        </div>
         ${statusBadge}
       </div>
-      <p>${safeArchiveValue(s.original_reference || archiveIdentity(record, "caal_id"))}</p>
     </div>
 
     <div class="group-stack">
@@ -1376,7 +1799,11 @@ function archiveRenderEditMode(record) {
   archiveRecordDetails.innerHTML = `
     <div class="${archiveRecordTitleClass(record)}">
       <h3>${safeArchiveValue(record?.summary?.original_title || record?.summary?.english_title)}</h3>
-      <p>${safeArchiveValue(record?.identity?.caal_id || archiveRaw(record, "Original Reference"))}</p>
+      <p>${safeArchiveValue(archiveIdentity(record, "caal_id") || archiveLabel("Assigned on save", "Assigned on save"))}</p>
+      <p>
+        <strong>${archiveLabel("Associated CAAL_ID", "Associated CAAL_ID")}:</strong>
+        ${safeArchiveValue(archiveIdentity(record, "associated_caal_id") || archiveRaw(record, "Associated CAAL_ID"))}
+      </p>
     </div>
 
     <div class="group-stack">
@@ -1389,9 +1816,9 @@ function archiveRenderEditMode(record) {
   `;
 
   archiveRenderActionBar({
-    hasRecord: true,
-    canEdit: false
-  });
+  hasRecord: true,
+  canEdit: record.source?.is_editable === true
+});
 
 if (archiveCancelEditBtn) {
   archiveCancelEditBtn.onclick = () => {
@@ -1450,6 +1877,12 @@ if (archiveSaveBtn) {
       archiveIsDirty = false;
       archiveRenderActionBar();
 
+      showArchiveToast(
+        isNewRecord
+          ? archiveLabel("Archive record created", "Archive record created")
+          : archiveLabel("Archive record saved", "Archive record saved")
+      );
+
       await loadArchiveRecords(archiveLimit, archiveOffset);
       archiveJustSavedRecordId = data.record?.identity?.id || null;
 
@@ -1475,9 +1908,16 @@ if (archiveSaveBtn) {
     } catch (error) {
       console.error("Archive save failed:", error);
       alert(error.message || "Archive save failed");
+      showArchiveToast(data.detail || data.error || "Archive save failed", "error");
     }
   };
 }
+
+if (archiveDeleteBtn) {
+  archiveDeleteBtn.onclick = archiveDeleteCurrentRecord;
+}
+
+  archiveWireEditMultiSelects();
 
   Array.from(archiveRecordDetails.querySelectorAll("input, textarea, select")).forEach((el) => {
     el.addEventListener("input", () => {
@@ -1510,23 +1950,11 @@ if (clearArchiveFiltersBtn) {
 }
 
 if (archiveSearch) {
-  archiveSearch.addEventListener("input", archiveApplyFilters);
+  archiveSearch.addEventListener("input", archiveScheduleFilterReload);
 }
 
 if (archiveFilterCaalId) {
-  archiveFilterCaalId.addEventListener("input", async () => {
-    archiveOffset = 0;
-
-    setArchiveLoading(true, archiveLabel("Updating records...", "Updating records..."));
-
-    try {
-      await loadArchiveRecords(archiveLimit, 0);
-    } catch (error) {
-      console.error("Archive CAAL_ID search failed:", error);
-    } finally {
-      setArchiveLoading(false);
-    }
-  });
+  archiveFilterCaalId.addEventListener("input", archiveScheduleFilterReload);
 }
 
 [
@@ -1537,7 +1965,10 @@ if (archiveFilterCaalId) {
   filterArchiveLanguages
 ].forEach((selectEl) => {
   if (selectEl) {
-    selectEl.addEventListener("change", archiveApplyFilters);
+    selectEl.addEventListener("change", () => {
+      archiveRenderAllFilterChips();
+      archiveReloadFromFilters();
+    });
   }
 });
 

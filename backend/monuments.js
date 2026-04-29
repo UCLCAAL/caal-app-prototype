@@ -268,6 +268,58 @@ function numberOrNull(value) {
   return Number.isFinite(parsed) ? parsed : value;
 }
 
+function validateMonumentCreateLocation(payload) {
+  const lngRaw = payload["Longitude"];
+  const latRaw = payload["Latitude"];
+
+  const hasLng =
+    lngRaw !== null &&
+    lngRaw !== undefined &&
+    String(lngRaw).trim() !== "";
+
+  const hasLat =
+    latRaw !== null &&
+    latRaw !== undefined &&
+    String(latRaw).trim() !== "";
+
+  if (!hasLng && !hasLat) {
+    return {
+      ok: false,
+      error: "New monument records require either a map point or manual longitude and latitude."
+    };
+  }
+
+  if (!hasLng || !hasLat) {
+    return {
+      ok: false,
+      error: "Both longitude and latitude are required for new monument records."
+    };
+  }
+
+  const lng = Number(lngRaw);
+  const lat = Number(latRaw);
+
+  if (!Number.isFinite(lng) || !Number.isFinite(lat)) {
+    return {
+      ok: false,
+      error: "Longitude and latitude must be valid numbers."
+    };
+  }
+
+  if (lng < -180 || lng > 180 || lat < -90 || lat > 90) {
+    return {
+      ok: false,
+      error: "Longitude must be between -180 and 180, and latitude must be between -90 and 90."
+    };
+  }
+
+  return {
+    ok: true,
+    lng,
+    lat
+  };
+}
+
 function pickLangValue(row, baseName, lang, fallbackOrder = []) {
   const direct = row[`${baseName}_${lang}`];
   if (direct !== undefined && direct !== null && direct !== "") {
@@ -1063,6 +1115,15 @@ router.post("/monuments", async (req, res) => {
   const preferredLanguage = currentSession?.profile?.preferred_language ?? null;
   const sessionCountry = currentSession?.profile?.country ?? null;
 
+  const locationCheck = validateMonumentCreateLocation(payload);
+
+  if (!locationCheck.ok) {
+    return res.status(400).json({
+      ok: false,
+      error: locationCheck.error
+    });
+  }
+
   if (!payload["Country"]) {
     payload["Country"] = sessionCountry;
   }
@@ -1072,8 +1133,11 @@ router.post("/monuments", async (req, res) => {
   payload["Date of Recording"] = new Date().toISOString().slice(0, 10);
   payload.created_by_app_user_id = appUserId;
 
-  const lng = payload["Longitude"];
-  const lat = payload["Latitude"];
+  const lng = locationCheck.lng;
+  const lat = locationCheck.lat;
+
+  payload["Longitude"] = lng;
+  payload["Latitude"] = lat;
 
   const fields = Object.keys(payload);
   const values = fields.map((field) => payload[field]);
@@ -1315,6 +1379,142 @@ router.patch("/monuments/:id", async (req, res) => {
     return res.status(500).json({
       ok: false,
       error: "Monument update failed",
+      detail: error.message
+    });
+  }
+});
+
+// DELETE
+// ---------------------------
+router.delete("/monuments/:id", async (req, res) => {
+  const currentSession = req.session?.appSession || null;
+
+  if (!currentSession) {
+    return res.status(401).json({
+      ok: false,
+      error: "No active session"
+    });
+  }
+
+  if (!canEditMonuments(currentSession) && !canEditCaalMonuments(currentSession)) {
+    return res.status(403).json({
+      ok: false,
+      error: "You do not have permission to delete monument records"
+    });
+  }
+
+  const id = Number(req.params.id);
+
+  if (!Number.isInteger(id)) {
+    return res.status(400).json({
+      ok: false,
+      error: "Invalid monument id"
+    });
+  }
+
+  const userId = currentSession?.user?.user_id ?? null;
+  const username = currentSession?.user?.username ?? null;
+  const canEditCaal = canEditCaalMonuments(currentSession);
+  const deleteReason = String(req.body?.reason || "").trim() || null;
+
+  try {
+    const ownershipClause = canEditCaal
+      ? ""
+      : `AND m.created_by_app_user_id = $2`;
+
+    const values = [id, userId, username, deleteReason];
+
+    const deleteSql = `
+      WITH target AS (
+        SELECT *
+        FROM ${MONUMENTS_WORKSPACE_TABLE} m
+        WHERE m.id = $1
+          ${ownershipClause}
+      ),
+      registry_update AS (
+        UPDATE public.record_registry rr
+        SET
+          status = 'deleted',
+          deleted_at = now(),
+          deleted_by_app_user_id = $2,
+          deleted_by = $3,
+          delete_reason = $4,
+          deleted_record = to_jsonb(target)
+        FROM target
+        WHERE rr.source_schema = 'kz'
+          AND rr.source_table = 'CAAL_Monuments'
+          AND rr.source_row_id = target.id
+        RETURNING rr.id
+      ),
+      registry_insert AS (
+        INSERT INTO public.record_registry (
+          source_schema,
+          source_table,
+          source_row_id,
+          caal_id,
+          record_type,
+          created_at,
+          created_by,
+          created_by_app_user_id,
+          status,
+          notes,
+          deleted_at,
+          deleted_by_app_user_id,
+          deleted_by,
+          delete_reason,
+          deleted_record
+        )
+        SELECT
+          'kz',
+          'CAAL_Monuments',
+          target.id,
+          target."CAAL_ID",
+          'monument',
+          now(),
+          COALESCE(target."Recorder", $3),
+          target.created_by_app_user_id,
+          'deleted',
+          'Registry row created during web app delete',
+          now(),
+          $2,
+          $3,
+          $4,
+          to_jsonb(target)
+        FROM target
+        WHERE NOT EXISTS (SELECT 1 FROM registry_update)
+        RETURNING id
+      ),
+      deleted AS (
+        DELETE FROM ${MONUMENTS_WORKSPACE_TABLE} m
+        USING target
+        WHERE m.id = target.id
+        RETURNING m.id, m."CAAL_ID"
+      )
+      SELECT * FROM deleted;
+    `;
+
+    const result = await pool.query(deleteSql, values);
+
+    if (result.rows.length === 0) {
+      return res.status(403).json({
+        ok: false,
+        error: canEditCaal
+          ? "Monument record not found in workspace table"
+          : "You can only delete your own workspace monument records"
+      });
+    }
+
+    return res.json({
+      ok: true,
+      deleted: result.rows[0]
+    });
+  } catch (error) {
+    console.error("Monument delete failed:");
+    console.error(error);
+
+    return res.status(500).json({
+      ok: false,
+      error: "Monument delete failed",
       detail: error.message
     });
   }

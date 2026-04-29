@@ -81,9 +81,25 @@
           </label>
         </div>
 
-        <button type="button" class="action-btn filters-toggle" id="toggleArchiveFiltersBtn" data-i18n="archive_advanced_filters">
-          Advanced filters
-        </button>
+        <div class="filter-action-row">
+          <button
+            type="button"
+            class="action-btn filters-toggle"
+            id="toggleArchiveFiltersBtn"
+            data-i18n="archive_advanced_filters"
+          >
+            Advanced filters
+          </button>
+
+          <button
+            type="button"
+            class="action-btn clear-filters-btn"
+            id="clearArchiveFiltersBtn"
+            data-i18n="archive_clear_filters"
+          >
+            Clear filters
+          </button>
+        </div>
 
         <div class="filters-panel" id="archiveFiltersPanel" hidden>
           <div class="filters-grid">
@@ -101,29 +117,39 @@
               />
             </div>
             
-            <div class="filter-group">
+            <div class="filter-group chip-multiselect-group">
               <label for="filterArchiveRelatedCountries" data-i18n="archive_related_countries">Related Countries</label>
-              <select id="filterArchiveRelatedCountries" class="form-control" multiple></select>
+              <div class="selected-filter-chips" id="filterArchiveRelatedCountriesChips"></div>
+              <select id="filterArchiveRelatedCountries" class="form-control chip-multiselect" multiple></select>
+              <p class="filter-help" data-i18n="filter_click_toggle_help">Click values to select or deselect. Selected values appear above.</p>
             </div>
 
-            <div class="filter-group">
+            <div class="filter-group chip-multiselect-group">
               <label for="filterArchiveRelatedReligions" data-i18n="archive_related_religions">Related Religions</label>
-              <select id="filterArchiveRelatedReligions" class="form-control" multiple></select>
+              <div class="selected-filter-chips" id="filterArchiveRelatedReligionsChips"></div>
+              <select id="filterArchiveRelatedReligions" class="form-control chip-multiselect" multiple></select>
+              <p class="filter-help" data-i18n="filter_click_toggle_help">Click values to select or deselect. Selected values appear above.</p>
             </div>
 
-            <div class="filter-group">
+            <div class="filter-group chip-multiselect-group">
               <label for="filterArchiveRelatedSubjects" data-i18n="archive_related_subjects">Related Subjects</label>
-              <select id="filterArchiveRelatedSubjects" class="form-control" multiple></select>
+              <div class="selected-filter-chips" id="filterArchiveRelatedSubjectsChips"></div>
+              <select id="filterArchiveRelatedSubjects" class="form-control chip-multiselect" multiple></select>
+              <p class="filter-help" data-i18n="filter_click_toggle_help">Click values to select or deselect. Selected values appear above.</p>
             </div>
 
-            <div class="filter-group">
+            <div class="filter-group chip-multiselect-group">
               <label for="filterArchiveContentType" data-i18n="archive_content_type">Content Type</label>
-              <select id="filterArchiveContentType" class="form-control" multiple></select>
+              <div class="selected-filter-chips" id="filterArchiveContentTypeChips"></div>
+              <select id="filterArchiveContentType" class="form-control chip-multiselect" multiple></select>
+              <p class="filter-help" data-i18n="filter_click_toggle_help">Click values to select or deselect. Selected values appear above.</p>
             </div>
 
-            <div class="filter-group">
+            <div class="filter-group chip-multiselect-group">
               <label for="filterArchiveLanguages" data-i18n="archive_languages_material">Languages of Material</label>
-              <select id="filterArchiveLanguages" class="form-control" multiple></select>
+              <div class="selected-filter-chips" id="filterArchiveLanguagesChips"></div>
+              <select id="filterArchiveLanguages" class="form-control chip-multiselect" multiple></select>
+              <p class="filter-help" data-i18n="filter_click_toggle_help">Click values to select or deselect. Selected values appear above.</p>
             </div>
           </div>
         </div>
@@ -160,6 +186,7 @@
           <button type="button" class="action-btn" id="archiveEditBtn" hidden>Edit record</button>
           <button type="button" class="action-btn primary" id="archiveSaveBtn" hidden>Save</button>
           <button type="button" class="action-btn" id="archiveCancelEditBtn" hidden>Cancel</button>
+          <button type="button" class="action-btn danger" id="archiveDeleteBtn" hidden>Delete record</button>
         </div>
       </div>
 

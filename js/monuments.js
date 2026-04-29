@@ -40,6 +40,7 @@ const addMonumentBtn = document.getElementById("addMonumentBtn");
 const monumentEditBtn = document.getElementById("monumentEditBtn");
 const monumentSaveBtn = document.getElementById("monumentSaveBtn");
 const monumentCancelEditBtn = document.getElementById("monumentCancelEditBtn");
+const monumentDeleteBtn = document.getElementById("monumentDeleteBtn");
 
 const monumentMapActionBar = document.getElementById("monumentMapActionBar");
 const monumentPickPointBtn = document.getElementById("monumentPickPointBtn");
@@ -156,13 +157,10 @@ function ensureRecordVisibleOnMap(record) {
   }
 }
 
-function drawPendingPickPoint(latlng) {
+function drawPendingPickPoint(lng, lat) {
   if (!map || !mapLoaded) return;
 
-  const lng = Number(latlng.lng);
-  const lat = Number(latlng.lat);
-
-  const feature = {
+  const geojson = {
     type: "FeatureCollection",
     features: [
       {
@@ -171,43 +169,51 @@ function drawPendingPickPoint(latlng) {
           type: "Point",
           coordinates: [lng, lat]
         },
-        properties: {}
+        properties: {
+          kind: "pending-pick"
+        }
       }
     ]
   };
 
-  if (map.getLayer("monument-pick-point")) {
-    map.removeLayer("monument-pick-point");
-  }
-  if (map.getSource("monument-pick-point")) {
-    map.removeSource("monument-pick-point");
+  const existingSource = map.getSource("monument-pick-point");
+
+  if (existingSource && typeof existingSource.setData === "function") {
+    existingSource.setData(geojson);
+  } else {
+    map.addSource("monument-pick-point", {
+      type: "geojson",
+      data: geojson
+    });
   }
 
-  map.addSource("monument-pick-point", {
-    type: "geojson",
-    data: feature
-  });
-
-  map.addLayer({
-    id: "monument-pick-point",
-    type: "circle",
-    source: "monument-pick-point",
-    paint: {
-      "circle-radius": 7,
-      "circle-color": "#2a9d8f",
-      "circle-opacity": 0.95,
-      "circle-stroke-width": 2,
-      "circle-stroke-color": "#ffffff"
-    }
-  });
+  if (!map.getLayer("monument-pick-point-layer")) {
+    map.addLayer({
+      id: "monument-pick-point-layer",
+      type: "circle",
+      source: "monument-pick-point",
+      paint: {
+        "circle-radius": 8,
+        "circle-color": "#1d4ed8",
+        "circle-opacity": 0.95,
+        "circle-stroke-width": 3,
+        "circle-stroke-color": "#ffffff"
+      }
+    });
+  }
+  
+  if (map.getLayer("monument-pick-point-layer")) {
+    map.moveLayer("monument-pick-point-layer");
+  }
 }
 
 function clearPendingPickPoint() {
-  if (!map) return;
+  if (!map || !mapLoaded) return;
 
-  if (map.getLayer("monument-pick-point")) {
-    map.removeLayer("monument-pick-point");
+  if (map.getLayer("monument-pick-point-layer")) {
+    map.removeLayer("monument-pick-point-layer");
   }
+
   if (map.getSource("monument-pick-point")) {
     map.removeSource("monument-pick-point");
   }
@@ -601,6 +607,46 @@ function mRenderSelect(fieldName, label, lookupName, currentValue, fullWidth = f
   `;
 }
 
+function mRenderMeasurementDisplaySet(index, record) {
+  const value = mRaw(record, `Measurement Value${index}`);
+  const unit = mRaw(record, `Measurement Unit${index}`);
+  const type = mRaw(record, `Measurement Type${index}`);
+
+  const hasAnyValue =
+    value !== null && value !== undefined && value !== "" ||
+    unit !== null && unit !== undefined && unit !== "" ||
+    type !== null && type !== undefined && type !== "";
+
+  if (!hasAnyValue) {
+    return "";
+  }
+
+  return `
+    <div class="measurement-row measurement-row-readonly">
+      <div class="measurement-row-title">
+        ${mLabel(`Measurement ${index}`, `Measurement ${index}`)}
+      </div>
+
+      <div class="measurement-row-fields">
+        <div class="measurement-field">
+          <span class="detail-label">${mLabel("Value", "Value")}</span>
+          <div class="detail-value">${mSafeValue(value)}</div>
+        </div>
+
+        <div class="measurement-field">
+          <span class="detail-label">${mLabel("Unit", "Unit")}</span>
+          <div class="detail-value">${mSafeValue(unit)}</div>
+        </div>
+
+        <div class="measurement-field">
+          <span class="detail-label">${mLabel("Type", "Type")}</span>
+          <div class="detail-value">${mSafeValue(type)}</div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
 function monumentConfirmLoseChanges() {
   if (!monumentIsEditMode || !monumentIsDirty) {
     return true;
@@ -660,6 +706,17 @@ function updateMonumentActionBar() {
 
   if (monumentCancelEditBtn) {
     monumentCancelEditBtn.hidden = !monumentIsEditMode;
+  }
+
+  const canDelete =
+    monumentIsEditMode &&
+    hasSelectedRecord &&
+    canEditThisRecord &&
+    monumentSelectedRecord?.source?.scope === "workspace" &&
+    monumentSelectedRecord?.identity?.id;
+
+  if (monumentDeleteBtn) {
+    monumentDeleteBtn.hidden = !canDelete;
   }
 }
 
@@ -958,7 +1015,58 @@ function validateRelatedFieldsBeforeSave() {
   return true;
 }
 
+function validateNewMonumentLocationBeforeSave(payload) {
+  const lngRaw = payload["Longitude"];
+  const latRaw = payload["Latitude"];
 
+  const hasLng = lngRaw !== null && lngRaw !== undefined && String(lngRaw).trim() !== "";
+  const hasLat = latRaw !== null && latRaw !== undefined && String(latRaw).trim() !== "";
+
+  if (!hasLng && !hasLat) {
+    alert(
+      mLabel(
+        "New monument location required",
+        "Please either click a point on the map or enter longitude and latitude before saving a new monument record."
+      )
+    );
+    return false;
+  }
+
+  if (!hasLng || !hasLat) {
+    alert(
+      mLabel(
+        "Both coordinates required",
+        "Please enter both longitude and latitude, or choose a point on the map."
+      )
+    );
+    return false;
+  }
+
+  const lng = Number(lngRaw);
+  const lat = Number(latRaw);
+
+  if (!Number.isFinite(lng) || !Number.isFinite(lat)) {
+    alert(
+      mLabel(
+        "Invalid coordinates",
+        "Longitude and latitude must be valid numbers."
+      )
+    );
+    return false;
+  }
+
+  if (lng < -180 || lng > 180 || lat < -90 || lat > 90) {
+    alert(
+      mLabel(
+        "Coordinates out of range",
+        "Longitude must be between -180 and 180, and latitude must be between -90 and 90."
+      )
+    );
+    return false;
+  }
+
+  return true;
+}
 
 // modal helpers
 // ================================
@@ -2356,20 +2464,14 @@ function renderMonumentDisplayMode(record) {
     mRenderDetailItem(mLabel("Administrative Subdivision Type4", "Administrative Subdivision Type4"), mLookupLabel("admin_subdivision_type", mRaw(record, "Administrative Subdivision Type4")))
   ].join("");
 
-  const measurementsHtml = [
-    mRenderDetailItem(mLabel("Measurement Value1", "Measurement Value1"), mRaw(record, "Measurement Value1")),
-    mRenderDetailItem(mLabel("Measurement Unit1", "Measurement Unit1"), mLookupLabel("measurement_unit", mRaw(record, "Measurement Unit1"))),
-    mRenderDetailItem(mLabel("Measurement Type1", "Measurement Type1"), mLookupLabel("measurement_type", mRaw(record, "Measurement Type1"))),
-    mRenderDetailItem(mLabel("Measurement Value2", "Measurement Value2"), mRaw(record, "Measurement Value2")),
-    mRenderDetailItem(mLabel("Measurement Unit2", "Measurement Unit2"), mLookupLabel("measurement_unit", mRaw(record, "Measurement Unit2"))),
-    mRenderDetailItem(mLabel("Measurement Type2", "Measurement Type2"), mLookupLabel("measurement_type", mRaw(record, "Measurement Type2"))),
-    mRenderDetailItem(mLabel("Measurement Value3", "Measurement Value3"), mRaw(record, "Measurement Value3")),
-    mRenderDetailItem(mLabel("Measurement Unit3", "Measurement Unit3"), mLookupLabel("measurement_unit", mRaw(record, "Measurement Unit3"))),
-    mRenderDetailItem(mLabel("Measurement Type3", "Measurement Type3"), mLookupLabel("measurement_type", mRaw(record, "Measurement Type3"))),
-    mRenderDetailItem(mLabel("Measurement Value4", "Measurement Value4"), mRaw(record, "Measurement Value4")),
-    mRenderDetailItem(mLabel("Measurement Unit4", "Measurement Unit4"), mLookupLabel("measurement_unit", mRaw(record, "Measurement Unit4"))),
-    mRenderDetailItem(mLabel("Measurement Type4", "Measurement Type4"), mLookupLabel("measurement_type", mRaw(record, "Measurement Type4")))
-  ].join("");
+  const measurementsHtml = `
+  ${mRenderMeasurementDisplaySet(1, record)}
+  ${mRenderMeasurementDisplaySet(2, record)}
+  ${mRenderMeasurementDisplaySet(3, record)}
+  ${mRenderMeasurementDisplaySet(4, record)}
+`;
+
+const measurementsHasValues = measurementsHtml.trim() !== "";
 
   const metadataHtml = [
     mRenderDetailItem(mLabel("Preferred Language", "Preferred Language"), mRaw(record, "Preferred Language")),
@@ -2402,7 +2504,7 @@ function renderMonumentDisplayMode(record) {
       ${mRenderGroupBlock(mLabel("Basic", "Basic"), basicHtml, true)}
       ${mRenderGroupBlock(mLabel("Monument", "Monument"), monumentHtml, true)}
       ${mRenderGroupBlock(mLabel("Administration", "Administration"), adminHtml, true)}
-      ${mRenderGroupBlock(mLabel("Measurements", "Measurements"), measurementsHtml, true)}
+      ${mRenderGroupBlock(mLabel("Measurements", "Measurements"), measurementsHtml, measurementsHasValues)}
       ${mRenderGroupBlock(mLabel("Metadata", "Metadata"), metadataHtml, true)}
       ${mRenderGroupBlock(mLabel("Related resources", "Related resources"), relatedHtml, true)}
     </div>
@@ -2428,6 +2530,38 @@ function renderMonumentDisplayMode(record) {
 // --------------------------------------------------------
 // Edit mode
 // --------------------------------------------------------
+function mRenderMeasurementEditSet(index, record) {
+  return `
+    <div class="measurement-row measurement-row-edit">
+      <div class="measurement-row-title">
+        ${mLabel(`Measurement ${index}`, `Measurement ${index}`)}
+      </div>
+
+      <div class="measurement-row-fields">
+        ${mRenderNumberInput(
+          `Measurement Value${index}`,
+          mLabel("Value", "Value"),
+          mRaw(record, `Measurement Value${index}`)
+        )}
+
+        ${mRenderSelect(
+          `Measurement Unit${index}`,
+          mLabel("Unit", "Unit"),
+          "measurement_unit",
+          mRaw(record, `Measurement Unit${index}`)
+        )}
+
+        ${mRenderSelect(
+          `Measurement Type${index}`,
+          mLabel("Type", "Type"),
+          "measurement_type",
+          mRaw(record, `Measurement Type${index}`)
+        )}
+      </div>
+    </div>
+  `;
+}
+
 function renderMonumentEditMode(record) {
   recordDetails.innerHTML = `
     <div class="record-title">
@@ -2527,22 +2661,10 @@ function renderMonumentEditMode(record) {
           <div class="detail-item full-width section-header">
             <span class="detail-section-title">${mLabel("Measurements", "Measurements")}</span>
           </div>
-
-          ${mRenderNumberInput("Measurement Value1", mLabel("Measurement Value1", "Measurement Value1"), mRaw(record, "Measurement Value1"))}
-          ${mRenderSelect("Measurement Unit1", mLabel("Measurement Unit1", "Measurement Unit1"), "measurement_unit", mRaw(record, "Measurement Unit1"))}
-          ${mRenderSelect("Measurement Type1", mLabel("Measurement Type1", "Measurement Type1"), "measurement_type", mRaw(record, "Measurement Type1"))}
-
-          ${mRenderNumberInput("Measurement Value2", mLabel("Measurement Value2", "Measurement Value2"), mRaw(record, "Measurement Value2"))}
-          ${mRenderSelect("Measurement Unit2", mLabel("Measurement Unit2", "Measurement Unit2"), "measurement_unit", mRaw(record, "Measurement Unit2"))}
-          ${mRenderSelect("Measurement Type2", mLabel("Measurement Type2", "Measurement Type2"), "measurement_type", mRaw(record, "Measurement Type2"))}
-
-          ${mRenderNumberInput("Measurement Value3", mLabel("Measurement Value3", "Measurement Value3"), mRaw(record, "Measurement Value3"))}
-          ${mRenderSelect("Measurement Unit3", mLabel("Measurement Unit3", "Measurement Unit3"), "measurement_unit", mRaw(record, "Measurement Unit3"))}
-          ${mRenderSelect("Measurement Type3", mLabel("Measurement Type3", "Measurement Type3"), "measurement_type", mRaw(record, "Measurement Type3"))}
-
-          ${mRenderNumberInput("Measurement Value4", mLabel("Measurement Value4", "Measurement Value4"), mRaw(record, "Measurement Value4"))}
-          ${mRenderSelect("Measurement Unit4", mLabel("Measurement Unit4", "Measurement Unit4"), "measurement_unit", mRaw(record, "Measurement Unit4"))}
-          ${mRenderSelect("Measurement Type4", mLabel("Measurement Type4", "Measurement Type4"), "measurement_type", mRaw(record, "Measurement Type4"))}
+          ${mRenderMeasurementEditSet(1, record)}
+          ${mRenderMeasurementEditSet(2, record)}
+          ${mRenderMeasurementEditSet(3, record)}
+          ${mRenderMeasurementEditSet(4, record)}
         </div>
       </div>
 
@@ -2740,20 +2862,89 @@ function updateAddModeUI() {
   }
 }
 
+function syncCurrentMonumentFormIntoSelectedRecord() {
+  if (!monumentSelectedRecord || !monumentSelectedRecord.raw) return;
+
+  // Only harvest form values while actually editing/adding.
+  if (!monumentIsEditMode && !monumentPendingNewRecord) return;
+
+  const payload = mBuildSavePayload();
+
+  Object.entries(payload).forEach(([field, value]) => {
+    monumentSelectedRecord.raw[field] = value;
+  });
+
+  monumentSelectedRecord.summary.primary_name = payload["Primary Name"] ?? "";
+  monumentSelectedRecord.summary.primary_name_english = payload["Primary Name (English)"] ?? "";
+  monumentSelectedRecord.summary.country = payload["Country"] ?? "";
+  monumentSelectedRecord.summary.region = payload["Region"] ?? "";
+  monumentSelectedRecord.summary.classification = payload["Classification"] ?? "";
+  monumentSelectedRecord.summary.designation = payload["Designation"] ?? "";
+  monumentSelectedRecord.summary.monument_type1 = payload["Monument Type1"] ?? "";
+  monumentSelectedRecord.summary.cultural_period1 = payload["Cultural Period1"] ?? "";
+  monumentSelectedRecord.summary.religion1 = payload["Religion1"] ?? "";
+  monumentSelectedRecord.summary.recorder = payload["Recorder"] ?? monumentSelectedRecord.summary.recorder;
+  monumentSelectedRecord.summary.date_of_recording =
+    payload["Date of Recording"] ?? monumentSelectedRecord.summary.date_of_recording;
+
+  monumentSelectedRecord.filter_values = {
+    monument_types: [
+      payload["Monument Type1"],
+      payload["Monument Type2"],
+      payload["Monument Type3"],
+      payload["Monument Type4"],
+      payload["Monument Type5"],
+      payload["Monument Type6"]
+    ].filter(Boolean),
+    religions: [
+      payload["Religion1"],
+      payload["Religion2"],
+      payload["Religion3"]
+    ].filter(Boolean),
+    cultural_periods: [
+      payload["Cultural Period1"],
+      payload["Cultural Period2"],
+      payload["Cultural Period3"],
+      payload["Cultural Period4"],
+      payload["Cultural Period5"],
+      payload["Cultural Period6"]
+    ].filter(Boolean),
+    classification: payload["Classification"] ?? "",
+    designation: payload["Designation"] ?? "",
+    country: payload["Country"] ?? ""
+  };
+}
+
+function updateCoordinateInputs(lng, lat) {
+  const lngInput = document.getElementById(mInputId("Longitude"));
+  const latInput = document.getElementById(mInputId("Latitude"));
+
+  if (lngInput) lngInput.value = lng;
+  if (latInput) latInput.value = lat;
+}
+
 function applyMapClickToSelectedRecord(latlng) {
   if (!monumentSelectedRecord) return;
+
+  syncCurrentMonumentFormIntoSelectedRecord();
 
   const lng = Number(latlng.lng.toFixed(6));
   const lat = Number(latlng.lat.toFixed(6));
 
   monumentSelectedRecord.raw["Longitude"] = lng;
   monumentSelectedRecord.raw["Latitude"] = lat;
+
   monumentSelectedRecord.summary.longitude = lng;
   monumentSelectedRecord.summary.latitude = lat;
+
   monumentSelectedRecord.geometry = {
     type: "Point",
     coordinates: [lng, lat]
   };
+
+  updateCoordinateInputs(lng, lat);
+  drawPendingPickPoint(lng, lat);
+  monumentIsDirty = true;
 }
 
 window.monumentCanChangeLanguage = function () {
@@ -2793,17 +2984,21 @@ async function saveCurrentMonumentRecord() {
   if (!monumentSelectedRecord) return;
   if (!validateRelatedFieldsBeforeSave()) return;
 
+  const payload = mBuildSavePayload();
+  const record = monumentSelectedRecord;
+  const isNewRecord = !record?.identity?.id;
+
+  if (isNewRecord && !validateNewMonumentLocationBeforeSave(payload)) {
+    return;
+  }
+
   setMonumentsLoading(true, "Saving record...");
 
   try {
-    const payload = mBuildSavePayload();
     const lang =
       (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
       window.appSession?.profile?.preferred_language ||
       "en";
-
-    const record = monumentSelectedRecord;
-    const isNewRecord = !record?.identity?.id;
 
     const url = isNewRecord
       ? `/api/monuments?lang=${encodeURIComponent(lang)}`
@@ -2887,6 +3082,80 @@ function cancelCurrentMonumentEdit() {
     updateSelectedResultCard();
   } else {
     renderMonumentEmptyState();
+  }
+}
+
+async function monumentDeleteCurrentRecord() {
+  const record = monumentSelectedRecord;
+
+  if (!record?.identity?.id) return;
+
+  if (record.source?.scope !== "workspace") {
+    alert(mLabel("Only workspace records can be deleted.", "Only workspace records can be deleted."));
+    return;
+  }
+
+  const caalId = record.identity?.caal_id || mLabel("this record", "this record");
+  const name = record.summary?.primary_name || record.summary?.primary_name_english || "";
+
+  const confirmed = window.confirm(
+    `${mLabel("Delete monument record", "Delete monument record")} ${caalId}?\n\n${name}\n\n` +
+    mLabel(
+      "This will remove it from the workspace, but a recovery copy will be kept in the registry.",
+      "This will remove it from the workspace, but a recovery copy will be kept in the registry."
+    )
+  );
+
+  if (!confirmed) return;
+
+  const reason = window.prompt(
+    mLabel("Optional delete reason", "Optional delete reason"),
+    ""
+  );
+
+  setMonumentsLoading(true, mLabel("Deleting record...", "Deleting record..."));
+
+  try {
+    const response = await fetch(`/api/monuments/${record.identity.id}`, {
+      method: "DELETE",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      credentials: "include",
+      body: JSON.stringify({
+        reason: reason || null
+      })
+    });
+
+    const data = await response.json();
+
+    if (!response.ok || !data.ok) {
+      alert(data.detail || data.error || "Monument delete failed");
+      return;
+    }
+
+    monumentPendingNewRecord = null;
+    monumentSelectedRecord = null;
+    monumentIsEditMode = false;
+    monumentIsDirty = false;
+    monumentIsAddMode = false;
+
+    monumentSyncModeVisualState();
+    updateAddModeUI();
+    updateMonumentActionBar();
+    clearPendingPickPoint();
+
+    if (typeof showToast === "function") {
+      showToast(mLabel("Monument record deleted", "Monument record deleted"));
+    }
+
+    await applyMonumentFilters({ includeMap: true, listFirst: true });
+    renderMonumentEmptyState();
+  } catch (error) {
+    console.error("Monument delete failed:", error);
+    alert(error.message || "Monument delete failed");
+  } finally {
+    setMonumentsLoading(false);
   }
 }
 
@@ -3030,6 +3299,10 @@ if (monumentCancelEditBtn) {
   monumentCancelEditBtn.addEventListener("click", () => {
     cancelCurrentMonumentEdit();
   });
+}
+
+if (monumentDeleteBtn) {
+  monumentDeleteBtn.onclick = monumentDeleteCurrentRecord;
 }
 
 document.addEventListener("keydown", (event) => {
