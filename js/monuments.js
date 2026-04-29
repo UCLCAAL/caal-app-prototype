@@ -82,6 +82,7 @@ let monumentMapRequestSeq = 0;
 let monumentTotalIsExact = true;
 let monumentMapIsStale = false;
 
+
 // --------------------------------------------------------
 // MapLibre map
 // --------------------------------------------------------
@@ -222,27 +223,6 @@ function clearPendingPickPoint() {
 // --------------------------------------------------------
 // Helpers
 // --------------------------------------------------------
-function moveSelection(direction) {
-  if (!monumentListRecords.length) return;
-
-  const currentIndex = monumentListRecords.findIndex(
-    r => r.identity?.id === monumentSelectedRecord?.identity?.id
-  );
-
-  let newIndex = currentIndex + direction;
-
-  if (newIndex < 0) newIndex = 0;
-  if (newIndex >= monumentListRecords.length) newIndex = monumentListRecords.length - 1;
-
-  const record = monumentListRecords[newIndex];
-  if (!record) return;
-
-  monumentSelectedRecord = record;
-  renderMonumentRecordDetails(record);
-  updateSelectedResultCard();
-  drawSelectedMonumentHighlight(record);
-}
-
 function updateSelectedResultCard() {
   if (!resultsList) return;
 
@@ -1771,11 +1751,11 @@ async function loadMonumentListRecords() {
   renderMonumentPageInfo();
 }
 
-async function loadFullMonumentRecordForMapClick(mapRecord) {
-  const caalId = mapRecord?.identity?.caal_id;
+async function loadFullMonumentRecord(record) {
+  const caalId = record?.identity?.caal_id;
 
   if (!caalId) {
-    return mapRecord;
+    return record;
   }
 
   const response = await fetch(
@@ -1813,33 +1793,6 @@ function renderMonumentPageInfo() {
   }
 }
 
-async function loadFullMonumentRecordForMapClick(mapRecord) {
-  const caalId = mapRecord?.identity?.caal_id;
-
-  if (!caalId) {
-    return mapRecord;
-  }
-
-  const response = await fetch(
-    `/api/records/resolve?caal_id=${encodeURIComponent(caalId)}`,
-    {
-      method: "GET",
-      credentials: "include"
-    }
-  );
-
-  const data = await response.json();
-
-  if (!response.ok || !data.ok) {
-    throw new Error(data.detail || data.error || "Could not load full monument record");
-  }
-
-  if (data.record_type !== "monument" || !data.record) {
-    throw new Error("Resolved record is not a monument");
-  }
-
-  return data.record;
-}
 
 // --------------------------------------------------------
 // Filters
@@ -2062,7 +2015,7 @@ function bindMonumentLayerEvents() {
         setMonumentsLoading(true, mLabel("Loading full record...", "Loading full record..."));
 
         try {
-          const fullRecord = await loadFullMonumentRecordForMapClick(record);
+          const fullRecord = await loadFullMonumentRecord(record);
 
           monumentIsEditMode = false;
           monumentSyncModeVisualState();
@@ -2303,21 +2256,36 @@ function renderMonumentResultsList(records) {
   .join("");
 
   Array.from(resultsList.querySelectorAll(".result-card")).forEach((card) => {
-    card.addEventListener("click", () => {
+    card.addEventListener("click", async () => {
       if (!monumentConfirmLoseChanges()) return;
 
       const idx = Number(card.dataset.resultIndex);
-      const record = records[idx];
-      if (!record) return;
+      const lightRecord = records[idx];
+      if (!lightRecord) return;
 
-      monumentIsEditMode = false;
-      monumentSyncModeVisualState();
-      monumentPendingNewRecord = null;
-      renderMonumentRecordDetails(record);
-      updateSelectedResultCard();
+      setMonumentsLoading(true, mLabel("Loading full record...", "Loading full record..."));
 
-      if (map && record.geometry?.coordinates) {
-        drawSelectedMonumentHighlight(record);
+      try {
+        const fullRecord = await loadFullMonumentRecord(lightRecord);
+
+        monumentIsEditMode = false;
+        monumentSyncModeVisualState();
+        monumentPendingNewRecord = null;
+        monumentSelectedRecord = fullRecord;
+
+        renderMonumentRecordDetails(fullRecord);
+        updateSelectedResultCard();
+
+        if (map && fullRecord.geometry?.coordinates) {
+          drawSelectedMonumentHighlight(fullRecord);
+        } else if (map && lightRecord.geometry?.coordinates) {
+          drawSelectedMonumentHighlight(lightRecord);
+        }
+      } catch (error) {
+        console.error("Failed to load full monument record:", error);
+        alert(error.message || "Could not load full monument record");
+      } finally {
+        setMonumentsLoading(false);
       }
     });
 
@@ -2330,14 +2298,24 @@ function renderMonumentResultsList(records) {
     });
   });
   Array.from(resultsList.querySelectorAll(".result-preview-btn")).forEach((btn) => {
-    btn.addEventListener("click", (event) => {
+    btn.addEventListener("click", async (event) => {
       event.stopPropagation();
 
       const idx = Number(btn.dataset.previewIndex);
-      const record = records[idx];
-      if (!record) return;
+      const lightRecord = records[idx];
+      if (!lightRecord) return;
 
-      renderMonumentPreviewModal(record);
+      setMonumentsLoading(true, mLabel("Loading preview...", "Loading preview..."));
+
+      try {
+        const fullRecord = await loadFullMonumentRecord(lightRecord);
+        renderMonumentPreviewModal(fullRecord);
+      } catch (error) {
+        console.error("Failed to load monument preview:", error);
+        alert(error.message || "Could not load monument preview");
+      } finally {
+        setMonumentsLoading(false);
+      }
     });
   });
 }
@@ -2362,6 +2340,47 @@ function renderMonumentEmptyState() {
 // --------------------------------------------------------
 // Display mode
 // --------------------------------------------------------
+async function moveSelection(direction) {
+  if (!monumentListRecords.length) return;
+
+  const currentIndex = monumentListRecords.findIndex(
+    r => Number(r.identity?.id) === Number(monumentSelectedRecord?.identity?.id)
+  );
+
+  let newIndex = currentIndex + direction;
+
+  if (currentIndex === -1) {
+    newIndex = direction > 0 ? 0 : monumentListRecords.length - 1;
+  }
+
+  if (newIndex < 0) newIndex = 0;
+  if (newIndex >= monumentListRecords.length) newIndex = monumentListRecords.length - 1;
+
+  const lightRecord = monumentListRecords[newIndex];
+  if (!lightRecord) return;
+
+  setMonumentsLoading(true, mLabel("Loading full record...", "Loading full record..."));
+
+  try {
+    const fullRecord = await loadFullMonumentRecord(lightRecord);
+
+    monumentSelectedRecord = fullRecord;
+    renderMonumentRecordDetails(fullRecord);
+    updateSelectedResultCard();
+
+    if (fullRecord.geometry?.coordinates) {
+      drawSelectedMonumentHighlight(fullRecord);
+    } else {
+      drawSelectedMonumentHighlight(lightRecord);
+    }
+  } catch (error) {
+    console.error("Failed to load full monument record:", error);
+    alert(error.message || "Could not load full monument record");
+  } finally {
+    setMonumentsLoading(false);
+  }
+}
+
 function renderMonumentRecordDetails(record) {
   monumentSelectedRecord = record;
 
@@ -3037,13 +3056,29 @@ async function saveCurrentMonumentRecord() {
       monumentMapRecords.find((item) => item?.identity?.id === data.record?.identity?.id);
 
     if (refreshed) {
-      monumentSelectedRecord = refreshed;
-      renderMonumentRecordDetails(refreshed);
+      const fullRecord = await loadFullMonumentRecord(refreshed);
+
+      monumentSelectedRecord = fullRecord;
+      renderMonumentRecordDetails(fullRecord);
       updateSelectedResultCard();
 
-      if (map && refreshed.geometry?.coordinates) {
+      if (map && fullRecord.geometry?.coordinates) {
+        drawSelectedMonumentHighlight(fullRecord);
+        ensureRecordVisibleOnMap(fullRecord);
+      } else if (map && refreshed.geometry?.coordinates) {
         drawSelectedMonumentHighlight(refreshed);
         ensureRecordVisibleOnMap(refreshed);
+      }
+    } else if (data.record) {
+      const fullRecord = await loadFullMonumentRecord(data.record);
+
+      monumentSelectedRecord = fullRecord;
+      renderMonumentRecordDetails(fullRecord);
+      updateSelectedResultCard();
+
+      if (map && fullRecord.geometry?.coordinates) {
+        drawSelectedMonumentHighlight(fullRecord);
+        ensureRecordVisibleOnMap(fullRecord);
       }
     } else {
       renderMonumentEmptyState();
@@ -3305,7 +3340,7 @@ if (monumentDeleteBtn) {
   monumentDeleteBtn.onclick = monumentDeleteCurrentRecord;
 }
 
-document.addEventListener("keydown", (event) => {
+document.addEventListener("keydown", async (event) => {
   if (event.key === "Escape") {
     if (monumentIsAddMode) {
       monumentIsAddMode = false;
@@ -3324,12 +3359,12 @@ document.addEventListener("keydown", (event) => {
 
   if (event.key === "ArrowDown") {
     event.preventDefault();
-    moveSelection(1);
+    await moveSelection(1);
   }
 
   if (event.key === "ArrowUp") {
     event.preventDefault();
-    moveSelection(-1);
+    await moveSelection(-1);
   }
 });
 
@@ -3363,9 +3398,11 @@ document.addEventListener("app:languageChanged", async () => {
         monumentMapRecords.find((record) => Number(record?.identity?.id) === Number(selectedId));
 
       if (refreshed) {
-        monumentSelectedRecord = refreshed;
+        const fullRecord = await loadFullMonumentRecord(refreshed);
+
+        monumentSelectedRecord = fullRecord;
         monumentIsEditMode = wasEditing;
-        renderMonumentRecordDetails(refreshed);
+        renderMonumentRecordDetails(fullRecord);
         updateSelectedResultCard();
         return;
       }
@@ -3393,7 +3430,10 @@ document.addEventListener("app:languageChanged", async () => {
       monumentPageOffset = 0;
       monumentPendingNewRecord = null;
       monumentIsEditMode = false;
+      monumentIsDirty = false;
+      monumentIsAddMode = false;
       monumentSyncModeVisualState();
+      updateAddModeUI();
       monumentSelectedRecord = null;
 
       if (map) {
@@ -3405,21 +3445,14 @@ document.addEventListener("app:languageChanged", async () => {
         }
       }
 
-      setMonumentsLoading(true, "Updating scope...");
+      setMonumentsLoading(true, mLabel("Updating scope...", "Updating scope..."));
+
       try {
-        setMonumentsLoading(true, "Updating scope...");
-        try {
-          await loadMonumentListRecords();
+        await loadMonumentListRecords();
 
-          setMonumentsLoading(true, "Redrawing map...");
-          await loadMonumentMapRecords();
+        setMonumentsLoading(true, mLabel("Redrawing map...", "Redrawing map..."));
+        await loadMonumentMapRecords();
 
-          renderMonumentEmptyState();
-        } catch (error) {
-          console.error("Failed to reload monuments after scope change:", error);
-        } finally {
-          setMonumentsLoading(false);
-        }
         renderMonumentEmptyState();
       } catch (error) {
         console.error("Failed to reload monuments after scope change:", error);

@@ -421,6 +421,63 @@ function buildMonumentRecord(row, lang, currentAppUserId = null, canEditCaal = f
   };
 }
 
+function buildMonumentListRecord(row, lang, currentAppUserId = null, canEditCaal = false) {
+  const raw = {
+    id: row.id,
+    "CAAL_ID": row["CAAL_ID"],
+    "Primary Name": row["Primary Name"],
+    "Primary Name (English)": row["Primary Name (English)"],
+    "Classification": row["Classification"],
+    "Monument Type1": row["Monument Type1"],
+    "Longitude": row["Longitude"],
+    "Latitude": row["Latitude"],
+    created_by_app_user_id: row.created_by_app_user_id,
+    source_scope: row.source_scope
+  };
+
+  return {
+    identity: {
+      id: row.id,
+      caal_id: row["CAAL_ID"]
+    },
+
+    summary: {
+      primary_name: row["Primary Name"],
+      primary_name_english: row["Primary Name (English)"],
+      classification: row.classification_display || row["Classification"],
+      monument_type1: row.monument_type1_display || row["Monument Type1"],
+      longitude: row["Longitude"],
+      latitude: row["Latitude"]
+    },
+
+    raw,
+
+    geometry: buildGeometry(row),
+
+    source: {
+      scope: row.source_scope || "workspace",
+      is_editable:
+        canEditCaal ||
+        (
+          row.source_scope === "workspace" &&
+          currentAppUserId !== null &&
+          Number(row.created_by_app_user_id) === Number(currentAppUserId)
+        )
+    },
+
+    filter_values: {
+      monument_types: row["Monument Type1"] ? [row["Monument Type1"]] : [],
+      religions: row["Religion1"] ? [row["Religion1"]] : [],
+      cultural_periods: row["Cultural Period1"] ? [row["Cultural Period1"]] : [],
+      classification: row["Classification"],
+      designation: row["Designation"],
+      country: row["Country"]
+    },
+
+    is_lightweight_record: true
+  };
+}
+
 function buildMonumentMapRecord(row, lang, currentAppUserId = null, canEditCaal = false) {
   const raw = {
     id: row.id,
@@ -639,7 +696,202 @@ async function applyCulturalPeriodDatesToPayload(payload) {
   return payload;
 }
 
+function monumentCardSelectSql(alias = "combined", lang = "en") {
+  const p = alias ? `${alias}.` : "";
+  const safeLang = safeMonumentLang(lang);
 
+  return `
+    ${p}id,
+    ${p}"CAAL_ID",
+    ${p}"Primary Name",
+    ${p}"Primary Name (English)",
+    ${p}"Classification",
+    ${p}classification_${safeLang} AS classification_display,
+    ${p}"Monument Type1",
+    ${p}monument_type1_${safeLang} AS monument_type1_display,
+    ${p}"Longitude",
+    ${p}"Latitude",
+    ${p}created_by_app_user_id,
+    ${p}source_scope,
+    ${p}is_editable
+  `;
+}
+
+function workspaceCardSelectSql(lang = "en") {
+  const safeLang = safeMonumentLang(lang);
+
+  return `
+    m.id,
+    m."CAAL_ID",
+    m."Primary Name",
+    m."Primary Name (English)",
+
+    m."Classification",
+    COALESCE(
+      cls.display_${safeLang},
+      cls.display_ru,
+      cls.display_en,
+      m."Classification"
+    ) AS classification_display,
+
+    m."Monument Type1",
+    COALESCE(
+      mt1.display_${safeLang},
+      mt1.display_ru,
+      mt1.display_en,
+      m."Monument Type1"
+    ) AS monument_type1_display,
+
+    m."Longitude",
+    m."Latitude",
+    m.created_by_app_user_id,
+    'workspace'::text AS source_scope,
+    true AS is_editable
+  `;
+}
+
+function workspaceCardJoinsSql() {
+  return `
+    LEFT JOIN ui.v_lkp_classifications cls
+      ON cls.canonical_value = m."Classification"
+    LEFT JOIN ui.v_lkp_site_types_context mt1
+      ON mt1.canonical_value = m."Monument Type1"
+  `;
+}
+
+function buildWorkspaceMonumentFilterWhere(req, alias = "m") {
+  const clauses = [];
+  const values = [];
+  let index = 1;
+
+  const p = alias ? `${alias}.` : "";
+
+  const text = normalizeSearchText(req.query.text).toLowerCase();
+  const caalId = String(req.query.caalId || "").trim();
+
+  const monumentTypes = parseCsvParam(req.query.monumentTypes);
+  const classifications = parseCsvParam(req.query.classifications);
+  const designations = parseCsvParam(req.query.designations);
+  const religions = parseCsvParam(req.query.religions);
+  const culturalPeriods = parseCsvParam(req.query.culturalPeriods);
+  const countries = parseCsvParam(req.query.countries);
+
+  if (caalId) {
+    clauses.push(`${p}"CAAL_ID" ILIKE $${index}`);
+    values.push(`%${caalId}%`);
+    index += 1;
+  }
+
+  if (text) {
+    clauses.push(`
+      lower(concat_ws(' ',
+        ${p}"CAAL_ID",
+        ${p}"Primary Name",
+        ${p}"Primary Name (English)",
+        ${p}"Other Names",
+        ${p}"Country",
+        ${p}"Region",
+        ${p}"Classification",
+        ${p}"Designation",
+        ${p}"Monument Type1",
+        ${p}"Monument Type2",
+        ${p}"Monument Type3",
+        ${p}"Monument Type4",
+        ${p}"Monument Type5",
+        ${p}"Monument Type6",
+        ${p}"Religion1",
+        ${p}"Religion2",
+        ${p}"Religion3",
+        ${p}"Cultural Period1",
+        ${p}"Cultural Period2",
+        ${p}"Cultural Period3",
+        ${p}"Cultural Period4",
+        ${p}"Cultural Period5",
+        ${p}"Cultural Period6",
+        ${p}"Internal Reference",
+        ${p}"External Reference",
+        ${p}"Monument Passport",
+        ${p}"Descriptive Date",
+        ${p}"Primary Description",
+        ${p}"Primary Description (English)",
+        ${p}"Additional Notes",
+        ${p}"Primary Address",
+        ${p}"Administrative Subdivision Name1",
+        ${p}"Administrative Subdivision Name2",
+        ${p}"Administrative Subdivision Name3",
+        ${p}"Administrative Subdivision Name4",
+        ${p}"World Heritage Site Name"
+      )) ILIKE $${index}
+    `);
+    values.push(`%${text}%`);
+    index += 1;
+  }
+
+  if (classifications.length) {
+    clauses.push(`${p}"Classification" = ANY($${index}::text[])`);
+    values.push(classifications);
+    index += 1;
+  }
+
+  if (designations.length) {
+    clauses.push(`${p}"Designation" = ANY($${index}::text[])`);
+    values.push(designations);
+    index += 1;
+  }
+
+  if (countries.length) {
+    clauses.push(`${p}"Country" = ANY($${index}::text[])`);
+    values.push(countries);
+    index += 1;
+  }
+
+  if (monumentTypes.length) {
+    clauses.push(`
+      ARRAY_REMOVE(ARRAY[
+        NULLIF(btrim(${p}"Monument Type1"), ''),
+        NULLIF(btrim(${p}"Monument Type2"), ''),
+        NULLIF(btrim(${p}"Monument Type3"), ''),
+        NULLIF(btrim(${p}"Monument Type4"), ''),
+        NULLIF(btrim(${p}"Monument Type5"), ''),
+        NULLIF(btrim(${p}"Monument Type6"), '')
+      ], NULL) && $${index}::text[]
+    `);
+    values.push(monumentTypes);
+    index += 1;
+  }
+
+  if (religions.length) {
+    clauses.push(`
+      ARRAY_REMOVE(ARRAY[
+        NULLIF(btrim(${p}"Religion1"), ''),
+        NULLIF(btrim(${p}"Religion2"), ''),
+        NULLIF(btrim(${p}"Religion3"), '')
+      ], NULL) && $${index}::text[]
+    `);
+    values.push(religions);
+    index += 1;
+  }
+
+  if (culturalPeriods.length) {
+    clauses.push(`
+      ARRAY_REMOVE(ARRAY[
+        NULLIF(btrim(${p}"Cultural Period1"), ''),
+        NULLIF(btrim(${p}"Cultural Period2"), ''),
+        NULLIF(btrim(${p}"Cultural Period3"), ''),
+        NULLIF(btrim(${p}"Cultural Period4"), ''),
+        NULLIF(btrim(${p}"Cultural Period5"), ''),
+        NULLIF(btrim(${p}"Cultural Period6"), '')
+      ], NULL) && $${index}::text[]
+    `);
+    values.push(culturalPeriods);
+    index += 1;
+  }
+
+  return {
+    whereSql: clauses.length ? `WHERE ${clauses.join(" AND ")}` : "",
+    values
+  };
+}
 // ========================================================
 // LOOKUPS
 // ========================================================
@@ -747,6 +999,71 @@ router.get("/monuments/map", async (req, res) => {
     currentSession.profile?.preferred_language ||
     "en";
 
+  const workspaceOnly = scopes.length === 1 && scopes[0] === "workspace";
+
+  if (workspaceOnly) {
+    try {
+      const { whereSql, values } = buildWorkspaceMonumentFilterWhere(req);
+      const bbox = parseBboxParam(req.query.bbox);
+
+      const extraClauses = [];
+      const extraValues = [...values];
+      let nextIndex = extraValues.length + 1;
+
+      if (bbox) {
+        extraClauses.push(`
+          m."Longitude" BETWEEN $${nextIndex} AND $${nextIndex + 1}
+          AND m."Latitude" BETWEEN $${nextIndex + 2} AND $${nextIndex + 3}
+        `);
+
+        extraValues.push(bbox.minLng, bbox.maxLng, bbox.minLat, bbox.maxLat);
+        nextIndex += 4;
+      }
+
+      let combinedWhere = whereSql;
+
+      if (extraClauses.length) {
+        combinedWhere = combinedWhere
+          ? `${combinedWhere} AND ${extraClauses.join(" AND ")}`
+          : `WHERE ${extraClauses.join(" AND ")}`;
+      }
+
+      const limitParamIndex = extraValues.length + 1;
+
+      const dataSql = `
+        SELECT
+          ${workspaceCardSelectSql(lang)}
+        FROM ${MONUMENTS_WORKSPACE_TABLE} m
+        ${workspaceCardJoinsSql()}
+        ${combinedWhere}
+        LIMIT $${limitParamIndex}
+      `;
+
+      const result = await pool.query(dataSql, [...extraValues, 5000]);
+
+      const currentAppUserId = currentSession?.user?.user_id ?? null;
+      const canEditCaal = canEditCaalMonuments(currentSession);
+
+      const records = result.rows.map((row) =>
+        buildMonumentMapRecord(row, lang, currentAppUserId, canEditCaal)
+      );
+
+      return res.json({
+        ok: true,
+        total: records.length,
+        records
+      });
+    } catch (error) {
+      console.error("Workspace monument map fast fetch failed:");
+      console.error(error);
+
+      return res.status(500).json({
+        ok: false,
+        error: "Workspace monument map fetch failed",
+        detail: error.message
+      });
+    }
+  }
   // --- base SQL parts ---
   const unionSql = buildBrowseUnionSql(scopes);
   const { whereSql, values } = buildMonumentFilterWhere(req, lang);
@@ -891,13 +1208,70 @@ router.get("/monuments", async (req, res) => {
   const offset = Number(req.query.offset) || 0;
   const lang = req.query.lang || currentSession.profile?.preferred_language || "en";
 
+  const workspaceOnly = scopes.length === 1 && scopes[0] === "workspace";
+
+  if (workspaceOnly) {
+    try {
+      const { whereSql, values } = buildWorkspaceMonumentFilterWhere(req);
+
+      const dataSql = `
+        SELECT
+          ${workspaceCardSelectSql(lang)}
+        FROM ${MONUMENTS_WORKSPACE_TABLE} m
+        ${workspaceCardJoinsSql()}
+        ${whereSql}
+        ORDER BY m.id DESC
+        LIMIT $${values.length + 1} OFFSET $${values.length + 2}
+      `;
+
+      const dataResult = await pool.query(dataSql, [...values, limit, offset]);
+
+      const countSql = `
+        SELECT COUNT(*) AS total
+        FROM ${MONUMENTS_WORKSPACE_TABLE} m
+        ${whereSql}
+      `;
+
+      const countResult = await pool.query(countSql, values);
+
+      const currentAppUserId = currentSession?.user?.user_id ?? null;
+      const canEditCaal = canEditCaalMonuments(currentSession);
+
+      const records = dataResult.rows.map((row) =>
+        buildMonumentListRecord(row, lang, currentAppUserId, canEditCaal)
+      );
+
+      return res.json({
+        ok: true,
+        records,
+        total: Number(countResult.rows[0].total),
+        total_is_exact: true,
+        limit,
+        offset,
+        scopes
+      });
+    } catch (error) {
+      console.error("Workspace monuments fast fetch failed:");
+      console.error(error);
+
+      return res.status(500).json({
+        ok: false,
+        error: "Workspace monuments fetch failed",
+        detail: error.message
+      });
+    }
+  }
+
   try {
     const unionSql = buildBrowseUnionSql(scopes);
 
     const { whereSql, values } = buildMonumentFilterWhere(req, lang);
 
+    const safeLang = safeMonumentLang(lang);
+
     const dataSql = `
-      SELECT *
+      SELECT
+        ${monumentCardSelectSql("combined", lang)}
       FROM (
         ${unionSql}
       ) combined
@@ -935,8 +1309,8 @@ router.get("/monuments", async (req, res) => {
     const canEditCaal = canEditCaalMonuments(currentSession);
 
     const records = dataResult.rows.map((row) =>
-      buildMonumentRecord(
-        stripMonumentInternalFields(row),
+      buildMonumentListRecord(
+        row,
         lang,
         currentAppUserId,
         canEditCaal
