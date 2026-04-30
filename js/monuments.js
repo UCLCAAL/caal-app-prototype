@@ -12,6 +12,7 @@ const siteSearch = document.getElementById("siteSearch");
 const toggleFiltersBtn = document.getElementById("toggleFiltersBtn");
 const filtersPanel = document.getElementById("filtersPanel");
 const clearFiltersBtn = document.getElementById("clearFiltersBtn");
+const showResultsOnMapBtn = document.getElementById("showResultsOnMapBtn");
 
 const filterCaalId = document.getElementById("filterCaalId");
 const filterMonumentType = document.getElementById("filterMonumentType");
@@ -139,6 +140,7 @@ function drawSelectedMonumentHighlight(record) {
       "circle-stroke-color": "#ffd54f"
     }
   });
+  renderMonumentLegend();
 }
 
 function ensureRecordVisibleOnMap(record) {
@@ -206,6 +208,7 @@ function drawPendingPickPoint(lng, lat) {
   if (map.getLayer("monument-pick-point-layer")) {
     map.moveLayer("monument-pick-point-layer");
   }
+  renderMonumentLegend();
 }
 
 function clearPendingPickPoint() {
@@ -218,11 +221,162 @@ function clearPendingPickPoint() {
   if (map.getSource("monument-pick-point")) {
     map.removeSource("monument-pick-point");
   }
+  renderMonumentLegend();
+}
+
+let monumentLegendEl = null;
+
+function addMonumentLegendControl() {
+  if (!map) return;
+
+  class MonumentLegendControl {
+    onAdd(mapInstance) {
+      this._map = mapInstance;
+
+      const container = document.createElement("div");
+      container.className = "maplibregl-ctrl monument-map-legend";
+      monumentLegendEl = container;
+
+      renderMonumentLegend();
+
+      this._container = container;
+      return container;
+    }
+
+    onRemove() {
+      if (this._container?.parentNode) {
+        this._container.parentNode.removeChild(this._container);
+      }
+      monumentLegendEl = null;
+      this._map = undefined;
+    }
+  }
+
+  map.addControl(new MonumentLegendControl(), "bottom-right");
+}
+
+function renderMonumentLegend() {
+  if (!monumentLegendEl) return;
+
+  const hasWorkspace = monumentMapRecords.some(
+    (record) => record.source?.scope === "workspace"
+  );
+
+  const hasNational = monumentMapRecords.some(
+    (record) => record.source?.scope === "national_ref"
+  );
+
+  const hasAllCaal = monumentMapRecords.some(
+    (record) => record.source?.scope === "all_caal"
+  );
+
+  const hasSelected = !!monumentSelectedRecord?.geometry?.coordinates;
+
+  const hasPending =
+    !!map &&
+    !!map.getSource("monument-pick-point");
+
+  const rows = [];
+
+  if (hasWorkspace) {
+    rows.push(`
+      <div class="legend-row">
+        <span class="legend-symbol legend-workspace"></span>
+        <span>Workspace records</span>
+      </div>
+    `);
+  }
+
+  if (hasNational) {
+    rows.push(`
+      <div class="legend-row">
+        <span class="legend-symbol legend-national"></span>
+        <span>National CAAL records</span>
+      </div>
+    `);
+  }
+
+  if (hasAllCaal) {
+    rows.push(`
+      <div class="legend-row">
+        <span class="legend-symbol legend-reference"></span>
+        <span>Other CAAL records</span>
+      </div>
+    `);
+  }
+
+  if (hasSelected) {
+    rows.push(`
+      <div class="legend-row">
+        <span class="legend-symbol legend-selected"></span>
+        <span>Selected record</span>
+      </div>
+    `);
+  }
+
+  if (hasPending) {
+    rows.push(`
+      <div class="legend-row">
+        <span class="legend-symbol legend-pending"></span>
+        <span>New / moved point</span>
+      </div>
+    `);
+  }
+
+  monumentLegendEl.hidden = rows.length === 0;
+
+  monumentLegendEl.innerHTML = `
+    <div class="legend-title">Map key</div>
+    ${rows.join("")}
+  `;
 }
 
 // --------------------------------------------------------
 // Helpers
 // --------------------------------------------------------
+function showCurrentMonumentResultsOnMap() {
+  if (!map || !Array.isArray(monumentMapRecords) || monumentMapRecords.length === 0) {
+    return;
+  }
+
+  const coordinates = monumentMapRecords
+    .map((record) => record?.geometry?.coordinates)
+    .filter((coords) =>
+      Array.isArray(coords) &&
+      coords.length === 2 &&
+      Number.isFinite(Number(coords[0])) &&
+      Number.isFinite(Number(coords[1]))
+    );
+
+  if (!coordinates.length) return;
+
+  const bounds = coordinates.reduce((b, coords) => {
+    return b.extend(coords);
+  }, new maplibregl.LngLatBounds(coordinates[0], coordinates[0]));
+
+  map.fitBounds(bounds, {
+    padding: {
+      top: 70,
+      right: 70,
+      bottom: 70,
+      left: 70
+    },
+    maxZoom: 10,
+    duration: 700
+  });
+}
+
+function updateShowResultsOnMapButton() {
+  if (!showResultsOnMapBtn) return;
+
+  const hasMappableResults = monumentMapRecords.some(
+    (record) => Array.isArray(record?.geometry?.coordinates)
+  );
+
+  showResultsOnMapBtn.disabled = !hasMappableResults;
+  showResultsOnMapBtn.classList.toggle("is-disabled", !hasMappableResults);
+}
+
 function updateSelectedResultCard() {
   if (!resultsList) return;
 
@@ -1126,6 +1280,14 @@ function renderMonumentPreviewModal(record) {
     <div class="record-title">
       <h3>${mSafeValue(mSummary(record, "primary_name"))}</h3>
       <p>${mSafeValue(mIdentity(record, "caal_id"))}</p>
+
+      ${
+        record?.geometry?.coordinates
+          ? `<button type="button" class="action-btn" id="previewCentreOnMapBtn">
+              Centre on map
+            </button>`
+          : ""
+      }
     </div>
 
     <div class="group-stack">
@@ -1174,6 +1336,28 @@ function renderMonumentPreviewModal(record) {
   `;
 
   modal.hidden = false;
+
+  const previewCentreBtn = document.getElementById("previewCentreOnMapBtn");
+
+  if (previewCentreBtn) {
+    previewCentreBtn.addEventListener("click", () => {
+      if (!map || !record?.geometry?.coordinates) return;
+
+      monumentSelectedRecord = record;
+
+      drawSelectedMonumentHighlight(record);
+      renderMonumentLegend();
+
+      map.easeTo({
+        center: record.geometry.coordinates,
+        zoom: Math.max(map.getZoom(), 10),
+        duration: 600
+      });
+
+      closeMonumentPreviewModal();
+    });
+  }
+
   initMonumentPreviewMiniMap(record);
 }
 
@@ -1962,30 +2146,41 @@ function monumentRecordToFeature(record) {
 function bindMonumentLayerEvents() {
   if (!map || monumentsLayerEventsBound) return;
 
-  map.on("click", "monument-ref-clusters", (e) => {
-    const features = map.queryRenderedFeatures(e.point, {
-      layers: ["monument-ref-clusters"]
-    });
+  function handleClusterClick(sourceId, clusterLayerId) {
+    map.on("click", clusterLayerId, (e) => {
+      const features = map.queryRenderedFeatures(e.point, {
+        layers: [clusterLayerId]
+      });
 
-    const clusterId = features[0]?.properties?.cluster_id;
-    if (clusterId == null) return;
+      const clusterId = features[0]?.properties?.cluster_id;
+      if (clusterId == null) return;
 
-    map.getSource("monuments-ref").getClusterExpansionZoom(clusterId, (err, zoom) => {
-      if (err) return;
+      map.getSource(sourceId).getClusterExpansionZoom(clusterId, (err, zoom) => {
+        if (err) return;
 
-      map.easeTo({
-        center: features[0].geometry.coordinates,
-        zoom
+        map.easeTo({
+          center: features[0].geometry.coordinates,
+          zoom
+        });
       });
     });
-  });
+  }
+
+  handleClusterClick("monuments-national", "monument-national-clusters");
+  handleClusterClick("monuments-all-caal", "monument-all-caal-clusters");
 
   function handleMonumentPointClick(e) {
     const feature = e.features?.[0];
     if (!feature) return;
 
     const clickedId = Number(feature.properties?.id);
+    const clickedScope = feature.properties?.source_scope;
+
     const record = monumentMapRecords.find(
+      (r) =>
+        Number(r.identity?.id) === clickedId &&
+        String(r.source?.scope || "") === String(clickedScope || "")
+    ) || monumentMapRecords.find(
       (r) => Number(r.identity?.id) === clickedId
     );
 
@@ -1999,6 +2194,7 @@ function bindMonumentLayerEvents() {
             type="button"
             class="map-popup-title-btn"
             data-monument-id="${record.identity?.id}"
+            data-monument-scope="${record.source?.scope || ""}"
           >
             ${mSafeValue(mSummary(record, "primary_name"))}
           </button><br>
@@ -2011,7 +2207,7 @@ function bindMonumentLayerEvents() {
 
     setTimeout(() => {
       const popupTitleBtn = document.querySelector(
-        `.map-popup-title-btn[data-monument-id="${record.identity?.id}"]`
+        `.map-popup-title-btn[data-monument-id="${record.identity?.id}"][data-monument-scope="${record.source?.scope || ""}"]`
       );
 
       if (!popupTitleBtn) return;
@@ -2037,6 +2233,8 @@ function bindMonumentLayerEvents() {
           } else if (record.geometry?.coordinates) {
             drawSelectedMonumentHighlight(record);
           }
+
+          renderMonumentLegend();
         } catch (error) {
           console.error("Failed to load full monument record from map click:", error);
           alert(error.message || "Could not load full monument record");
@@ -2047,10 +2245,13 @@ function bindMonumentLayerEvents() {
     }, 0);
   }
 
-  map.on("click", "monuments-ref-layer", handleMonumentPointClick);
-  map.on("click", "monuments-workspace-layer", handleMonumentPointClick);
+  [
+    "monuments-national-layer",
+    "monuments-all-caal-layer",
+    "monuments-workspace-layer"
+  ].forEach((layerId) => {
+    map.on("click", layerId, handleMonumentPointClick);
 
-  ["monuments-ref-layer", "monuments-workspace-layer"].forEach((layerId) => {
     map.on("mouseenter", layerId, () => {
       map.getCanvas().style.cursor = "pointer";
     });
@@ -2070,9 +2271,27 @@ function drawMonumentRecords(records) {
     (r) => r.source?.scope === "workspace"
   );
 
-  const referenceRecords = records.filter(
-    (r) => r.source?.scope !== "workspace"
+  const nationalRecords = records.filter(
+    (r) => r.source?.scope === "national_ref"
   );
+
+  const allCaalRecords = records.filter(
+    (r) => r.source?.scope === "all_caal"
+  );
+
+  const nationalGeojson = {
+    type: "FeatureCollection",
+    features: nationalRecords
+      .map(monumentRecordToFeature)
+      .filter(Boolean)
+  };
+
+  const allCaalGeojson = {
+    type: "FeatureCollection",
+    features: allCaalRecords
+      .map(monumentRecordToFeature)
+      .filter(Boolean)
+  };
 
   const workspaceGeojson = {
     type: "FeatureCollection",
@@ -2081,43 +2300,57 @@ function drawMonumentRecords(records) {
       .filter(Boolean)
   };
 
-  const referenceGeojson = {
-    type: "FeatureCollection",
-    features: referenceRecords
-      .map(monumentRecordToFeature)
-      .filter(Boolean)
-  };
-
-  const existingRefSource = map.getSource("monuments-ref");
+  const existingNationalSource = map.getSource("monuments-national");
+  const existingAllCaalSource = map.getSource("monuments-all-caal");
   const existingWorkspaceSource = map.getSource("monuments-workspace");
 
   if (
-    existingRefSource &&
-    typeof existingRefSource.setData === "function" &&
+    existingNationalSource &&
+    typeof existingNationalSource.setData === "function" &&
+    existingAllCaalSource &&
+    typeof existingAllCaalSource.setData === "function" &&
     existingWorkspaceSource &&
     typeof existingWorkspaceSource.setData === "function"
   ) {
-    existingRefSource.setData(referenceGeojson);
+    existingNationalSource.setData(nationalGeojson);
+    existingAllCaalSource.setData(allCaalGeojson);
     existingWorkspaceSource.setData(workspaceGeojson);
+
+    if (map.getLayer("monuments-workspace-layer")) {
+      map.moveLayer("monuments-workspace-layer");
+    }
+
+    renderMonumentLegend();
     return;
   }
 
   [
-    "monument-ref-clusters",
-    "monument-ref-cluster-count",
-    "monuments-ref-layer",
+    "monument-national-clusters",
+    "monument-national-cluster-count",
+    "monument-all-caal-clusters",
+    "monument-all-caal-cluster-count",
+    "monuments-national-layer",
+    "monuments-all-caal-layer",
     "monuments-workspace-layer"
   ].forEach((layer) => {
     if (map.getLayer(layer)) map.removeLayer(layer);
   });
 
-  ["monuments-ref", "monuments-workspace"].forEach((source) => {
+  ["monuments-national", "monuments-all-caal", "monuments-workspace"].forEach((source) => {
     if (map.getSource(source)) map.removeSource(source);
   });
 
-  map.addSource("monuments-ref", {
+  map.addSource("monuments-national", {
     type: "geojson",
-    data: referenceGeojson,
+    data: nationalGeojson,
+    cluster: true,
+    clusterMaxZoom: 9,
+    clusterRadius: 40
+  });
+
+  map.addSource("monuments-all-caal", {
+    type: "geojson",
+    data: allCaalGeojson,
     cluster: true,
     clusterMaxZoom: 9,
     clusterRadius: 40
@@ -2130,27 +2363,23 @@ function drawMonumentRecords(records) {
   });
 
   map.addLayer({
-    id: "monument-ref-clusters",
+    id: "monument-national-clusters",
     type: "circle",
-    source: "monuments-ref",
+    source: "monuments-national",
     filter: ["has", "point_count"],
     paint: {
-      "circle-radius": [
-        "step",
-        ["get", "point_count"],
-        14, 20, 18, 100, 22, 500, 26
-      ],
-      "circle-color": "#c95a4a",
-      "circle-opacity": 0.75,
+      "circle-radius": ["step", ["get", "point_count"], 14, 20, 18, 100, 22, 500, 26],
+      "circle-color": "#0f766e",
+      "circle-opacity": 0.78,
       "circle-stroke-width": 1,
       "circle-stroke-color": "rgba(255,255,255,0.9)"
     }
   });
 
   map.addLayer({
-    id: "monument-ref-cluster-count",
+    id: "monument-national-cluster-count",
     type: "symbol",
-    source: "monuments-ref",
+    source: "monuments-national",
     filter: ["has", "point_count"],
     layout: {
       "text-field": ["get", "point_count_abbreviated"],
@@ -2162,21 +2391,56 @@ function drawMonumentRecords(records) {
   });
 
   map.addLayer({
-    id: "monuments-ref-layer",
+    id: "monument-all-caal-clusters",
     type: "circle",
-    source: "monuments-ref",
+    source: "monuments-all-caal",
+    filter: ["has", "point_count"],
+    paint: {
+      "circle-radius": ["step", ["get", "point_count"], 14, 20, 18, 100, 22, 500, 26],
+      "circle-color": "#c95a4a",
+      "circle-opacity": 0.72,
+      "circle-stroke-width": 1,
+      "circle-stroke-color": "rgba(255,255,255,0.9)"
+    }
+  });
+
+  map.addLayer({
+    id: "monument-all-caal-cluster-count",
+    type: "symbol",
+    source: "monuments-all-caal",
+    filter: ["has", "point_count"],
+    layout: {
+      "text-field": ["get", "point_count_abbreviated"],
+      "text-size": 12
+    },
+    paint: {
+      "text-color": "#ffffff"
+    }
+  });
+
+  map.addLayer({
+    id: "monuments-national-layer",
+    type: "circle",
+    source: "monuments-national",
     filter: ["!", ["has", "point_count"]],
     paint: {
-      "circle-radius": [
-        "interpolate",
-        ["linear"],
-        ["zoom"],
-        4, 4.5,
-        8, 6,
-        12, 8
-      ],
+      "circle-radius": ["interpolate", ["linear"], ["zoom"], 4, 4.5, 8, 6, 12, 8],
+      "circle-color": "#0f766e",
+      "circle-opacity": 0.88,
+      "circle-stroke-width": 1.2,
+      "circle-stroke-color": "rgba(255,255,255,0.9)"
+    }
+  });
+
+  map.addLayer({
+    id: "monuments-all-caal-layer",
+    type: "circle",
+    source: "monuments-all-caal",
+    filter: ["!", ["has", "point_count"]],
+    paint: {
+      "circle-radius": ["interpolate", ["linear"], ["zoom"], 4, 4.5, 8, 6, 12, 8],
       "circle-color": "#c95a4a",
-      "circle-opacity": 0.85,
+      "circle-opacity": 0.8,
       "circle-stroke-width": 1.2,
       "circle-stroke-color": "rgba(255,255,255,0.9)"
     }
@@ -2201,8 +2465,13 @@ function drawMonumentRecords(records) {
       "circle-stroke-color": "rgba(255,255,255,0.95)"
     }
   });
+  if (map.getLayer("monuments-workspace-layer")) {
+    map.moveLayer("monuments-workspace-layer");
+  }
 
   bindMonumentLayerEvents();
+  renderMonumentLegend();
+  updateShowResultsOnMapButton();
 }
 
 
@@ -3231,6 +3500,12 @@ if (filterCaalId) {
   }
 });
 
+if (showResultsOnMapBtn) {
+  showResultsOnMapBtn.addEventListener("click", () => {
+    showCurrentMonumentResultsOnMap();
+  });
+}
+
 if (toggleFiltersBtn && filtersPanel) {
   toggleFiltersBtn.addEventListener("click", () => {
     const isHidden = filtersPanel.hidden;
@@ -3592,6 +3867,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
 
     map.addControl(new maplibregl.NavigationControl(), "top-right");
+    addMonumentLegendControl();
 
     map.on("click", (event) => {
       if (!monumentIsAddMode) return;
@@ -3605,6 +3881,14 @@ document.addEventListener("DOMContentLoaded", async () => {
       renderMonumentRecordDetails(monumentSelectedRecord);
       updateSelectedResultCard();
     });
+
+    map.addControl(
+      new maplibregl.ScaleControl({
+        maxWidth: 120,
+        unit: "metric"
+      }),
+      "bottom-left"
+    );
 
     map.on("load", async () => {
       mapLoaded = true;

@@ -197,7 +197,10 @@ const browseScopeConfig = {
     sql: `
       SELECT
         *,
-        'all_caal'::text AS source_scope,
+        CASE
+          WHEN ${NATIONAL_REF_WHERE} THEN 'national_ref'
+          ELSE 'all_caal'
+        END::text AS source_scope,
         false AS is_editable
       FROM ${MONUMENTS_CAAL_MV}
     `

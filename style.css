@@ -616,13 +616,20 @@ body {
 
 .filter-action-row {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: 1fr 1fr;
   gap: 0.65rem;
   align-items: center;
   margin: 0.75rem 0 0.9rem;
 }
 
-.filter-action-row .action-btn {
+.filter-action-row .show-results-map-btn {
+  grid-column: 1 / -1;
+  width: 100%;
+}
+
+.filter-action-row .filters-toggle,
+.filter-action-row .clear-filters-btn {
+  width: 100%;
   min-height: 2.35rem;
   height: auto;
   padding: 0.45rem 0.85rem;
@@ -630,6 +637,12 @@ body {
   align-items: center;
   justify-content: center;
   line-height: 1.15;
+}
+
+.show-results-map-btn {
+  background: #ffffff;
+  border-color: #d4dbe1;
+  color: var(--text);
 }
 
 .filters-toggle {
@@ -813,6 +826,93 @@ body {
 .action-btn.danger:hover {
   background: #ffe4e6;
   border-color: #fca5a5;
+}
+
+.monument-map-legend {
+  background: rgba(255, 255, 255, 0.94);
+  border-radius: 10px;
+  padding: 10px 12px;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  font-size: 12px;
+  line-height: 1.3;
+  min-width: 180px;
+}
+
+.legend-title {
+  font-weight: 700;
+  margin-bottom: 8px;
+  color: #263238;
+}
+
+.legend-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 6px 0;
+  color: #263238;
+}
+
+.legend-symbol {
+  display: inline-block;
+  flex: 0 0 auto;
+}
+
+.legend-workspace {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #2e7d32;
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
+}
+
+.legend-reference {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #c95a4a;
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
+}
+
+.legend-selected {
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: transparent;
+  border: 3px solid #ffd54f;
+}
+
+.legend-national {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #0f766e;
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
+}
+
+.legend-pending {
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  background: #2563eb;
+  border: 3px solid #ffffff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
+}
+
+.workspace-shell {
+  min-height: calc(100vh - 78px - 18px);
+  margin-bottom: 18px;
+}
+
+.map-pane-body {
+  padding-bottom: 18px;
+}
+
+.map-pane-body #map {
+  height: 100%;
+  min-height: 0;
 }
 
 /* =========================================================
