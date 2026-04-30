@@ -646,28 +646,7 @@ function updateMonumentActionBar() {
 
   const hasSelectedRecord = !!record;
 
-  const currentAppUserId = window.appSession?.user?.user_id ?? null;
-  const recordAppUserId = record?.raw?.created_by_app_user_id ?? null;
-
-  const isOwner =
-    currentAppUserId !== null &&
-    recordAppUserId !== null &&
-    Number(currentAppUserId) === Number(recordAppUserId);
-
-  const isSuperUser =
-    window.appSession?.permissions?.can_edit_caal === true;
-
-  const isWorkspaceRecord = record?.source?.scope === "workspace";
-  const isCaalRecord =
-    record?.source?.scope === "national_ref" ||
-    record?.source?.scope === "all_caal";
-
-  const canEditThisRecord =
-    !!record &&
-    (
-      (isWorkspaceRecord && (isOwner || isSuperUser)) ||
-      (isCaalRecord && isSuperUser)
-    );
+  const canEditThisRecord = canEditMonumentRecord(record);
 
   if (addMonumentBtn) {
     addMonumentBtn.hidden = monumentIsEditMode;
@@ -698,6 +677,31 @@ function updateMonumentActionBar() {
   if (monumentDeleteBtn) {
     monumentDeleteBtn.hidden = !canDelete;
   }
+}
+
+function canEditMonumentRecord(record) {
+  if (!record) return false;
+
+  const currentAppUserId = window.appSession?.user?.user_id ?? null;
+  const recordAppUserId = record?.raw?.created_by_app_user_id ?? null;
+
+  const isOwner =
+    currentAppUserId !== null &&
+    recordAppUserId !== null &&
+    Number(currentAppUserId) === Number(recordAppUserId);
+
+  const isSuperUser =
+    window.appSession?.permissions?.can_edit_caal === true;
+
+  const isWorkspaceRecord = record?.source?.scope === "workspace";
+  const isCaalRecord =
+    record?.source?.scope === "national_ref" ||
+    record?.source?.scope === "all_caal";
+
+  return (
+    (isWorkspaceRecord && (isOwner || isSuperUser)) ||
+    (isCaalRecord && isSuperUser)
+  );
 }
 
 function getMonumentEnabledScopes() {
@@ -1776,6 +1780,9 @@ async function loadFullMonumentRecord(record) {
     throw new Error("Resolved record is not a monument");
   }
 
+  data.record.source = data.record.source || {};
+  data.record.source.is_editable = canEditMonumentRecord(data.record);
+  
   return data.record;
 }
 
@@ -2419,9 +2426,7 @@ function renderMonumentDisplayMode(record) {
     record.source?.scope === "national_ref" ||
     record.source?.scope === "all_caal";
 
-  const canEditThisRecord =
-  (isWorkspaceRecord && (isOwner || isSuperUser)) ||
-  (isCaalRecord && isSuperUser);
+  const canEditThisRecord = canEditMonumentRecord(record);
 
   const statusBadge = canEditThisRecord
     ? `<span class="record-status-badge record-status-editable">${mLabel("Editable", "Editable")}</span>`
@@ -3298,7 +3303,7 @@ if (addMonumentBtn) {
 if (monumentEditBtn) {
   monumentEditBtn.addEventListener("click", () => {
     if (!monumentSelectedRecord) return;
-    if (monumentSelectedRecord?.source?.is_editable !== true) return;
+    if (!canEditMonumentRecord(monumentSelectedRecord)) return;
 
     monumentIsEditMode = true;
     monumentSyncModeVisualState();
@@ -3369,41 +3374,63 @@ document.addEventListener("keydown", async (event) => {
 });
 
 document.addEventListener("app:languageChanged", async () => {
-  const selectedId = monumentSelectedRecord?.identity?.id ?? null;
+  const selectedCaalId = monumentSelectedRecord?.identity?.caal_id ?? null;
+  const selectedScope = monumentSelectedRecord?.source?.scope ?? null;
   const wasEditing = monumentIsEditMode;
   const pendingNew = monumentPendingNewRecord;
 
-  setMonumentsLoading(true, "Switching language...");
+  setMonumentsLoading(true, mLabel("Switching language...", "Switching language..."));
 
   try {
     await loadMonumentLabels();
     await loadMonumentLookups();
     populateMonumentFilterLookups();
+
     await loadMonumentMapRecords();
     await loadMonumentListRecords();
 
     // Preserve an unsaved brand-new local record
-    if (pendingNew && selectedId === null) {
+    if (pendingNew && selectedCaalId === null) {
       monumentPendingNewRecord = pendingNew;
       monumentSelectedRecord = pendingNew;
       monumentIsEditMode = wasEditing;
       renderMonumentRecordDetails(pendingNew);
+      updateMonumentActionBar();
       return;
     }
 
-    // Restore the currently open saved record
-    if (selectedId !== null) {
-      const refreshed =
-        monumentListRecords.find((record) => Number(record?.identity?.id) === Number(selectedId)) ||
-        monumentMapRecords.find((record) => Number(record?.identity?.id) === Number(selectedId));
+    // Restore the currently open saved record by CAAL_ID, not numeric id
+    if (selectedCaalId) {
+      const sameScopeMatch =
+        monumentListRecords.find((record) =>
+          record?.identity?.caal_id === selectedCaalId &&
+          record?.source?.scope === selectedScope
+        ) ||
+        monumentMapRecords.find((record) =>
+          record?.identity?.caal_id === selectedCaalId &&
+          record?.source?.scope === selectedScope
+        );
+
+      const anyScopeMatch =
+        monumentListRecords.find((record) =>
+          record?.identity?.caal_id === selectedCaalId
+        ) ||
+        monumentMapRecords.find((record) =>
+          record?.identity?.caal_id === selectedCaalId
+        );
+
+      const refreshed = sameScopeMatch || anyScopeMatch;
 
       if (refreshed) {
         const fullRecord = await loadFullMonumentRecord(refreshed);
 
         monumentSelectedRecord = fullRecord;
-        monumentIsEditMode = wasEditing;
+        monumentIsEditMode =
+          wasEditing && fullRecord?.source?.is_editable === true;
+
         renderMonumentRecordDetails(fullRecord);
         updateSelectedResultCard();
+        updateMonumentActionBar();
         return;
       }
     }
@@ -3411,6 +3438,7 @@ document.addEventListener("app:languageChanged", async () => {
     monumentSelectedRecord = null;
     monumentIsEditMode = false;
     monumentSyncModeVisualState();
+    updateMonumentActionBar();
     renderMonumentEmptyState();
   } catch (error) {
     console.error("Monuments language refresh failed:", error);

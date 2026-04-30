@@ -63,7 +63,7 @@ function stripMonumentInternalFields(row) {
   return clean;
 }
 
-function buildResolvedMonumentRecord(row, lang) {
+function buildResolvedMonumentRecord(row, lang, session) {
   return {
     identity: {
       id: row.id,
@@ -82,12 +82,12 @@ function buildResolvedMonumentRecord(row, lang) {
     geometry: buildGeometry(row),
     source: {
       scope: row.source_scope,
-      is_editable: false
+      is_editable: isEditableResolvedRow(row, session)
     }
   };
 }
 
-function buildResolvedArchiveRecord(row, lang) {
+function buildResolvedArchiveRecord(row, lang, session) {
   return {
     identity: {
       id: row.id,
@@ -104,7 +104,7 @@ function buildResolvedArchiveRecord(row, lang) {
     raw: row,
     source: {
       scope: row.source_scope,
-      is_editable: false
+      is_editable: isEditableResolvedRow(row, session)
     }
   };
 }
@@ -122,6 +122,48 @@ function getAllowedScopes(session) {
   }
 
   return scopes;
+}
+
+function getAccessLevel(session) {
+  return Number(
+    session?.user?.access_level ??
+    session?.profile?.access_level ??
+    session?.permissions?.access_level ??
+    session?.access_level ??
+    0
+  );
+}
+
+function canEditCaal(session) {
+  return (
+    session?.permissions?.can_edit_caal === true ||
+    getAccessLevel(session) === 9
+  );
+}
+
+function canEditWorkspace(session) {
+  return session?.permissions?.can_edit_workspace === true;
+}
+
+function isEditableResolvedRow(row, session) {
+  const currentAppUserId = session?.user?.user_id ?? null;
+  const recordAppUserId = row?.created_by_app_user_id ?? null;
+
+  const isOwner =
+    currentAppUserId !== null &&
+    recordAppUserId !== null &&
+    Number(currentAppUserId) === Number(recordAppUserId);
+
+  const isSuperUser = canEditCaal(session);
+  const isWorkspaceRecord = row?.source_scope === "workspace";
+  const isCaalRecord =
+    row?.source_scope === "national_ref" ||
+    row?.source_scope === "all_caal";
+
+  return (
+    (isWorkspaceRecord && canEditWorkspace(session) && (isOwner || isSuperUser)) ||
+    (isCaalRecord && isSuperUser)
+  );
 }
 
 function buildMonumentResolveSql(scopes) {
@@ -225,7 +267,8 @@ router.get("/resolve", async (req, res) => {
           record_type: "monument",
           record: buildResolvedMonumentRecord(
             stripMonumentInternalFields(result.rows[0]),
-            lang
+            lang,
+            currentSession
           )
         });
       }
@@ -263,7 +306,8 @@ router.get("/resolve", async (req, res) => {
             record_type: "monument",
             record: buildResolvedMonumentRecord(
               stripMonumentInternalFields(row),
-              lang
+              lang,
+              currentSession
             )
           });
         }
@@ -286,7 +330,11 @@ router.get("/resolve", async (req, res) => {
         return res.json({
           ok: true,
           record_type: "archive",
-          record: buildResolvedArchiveRecord(result.rows[0], lang)
+          record: buildResolvedArchiveRecord(
+            stripMonumentInternalFields(result.rows[0]),
+            lang,
+            currentSession
+          )
         });
       }
     }
@@ -315,7 +363,11 @@ router.get("/resolve", async (req, res) => {
         return res.json({
           ok: true,
           record_type: "archive",
-          record: buildResolvedArchiveRecord(result.rows[0], lang)
+          record: buildResolvedArchiveRecord(
+            stripMonumentInternalFields(result.rows[0]),
+            lang,
+            currentSession
+          )
         });
       }
     }

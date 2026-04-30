@@ -1052,6 +1052,32 @@ window.archiveCanChangeLanguage = function () {
 };
 
 // for buttons
+function canEditArchiveRecord(record) {
+  if (!record) return false;
+
+  const currentAppUserId = window.appSession?.user?.user_id ?? null;
+  const recordAppUserId = record?.raw?.created_by_app_user_id ?? null;
+
+  const isOwner =
+    currentAppUserId !== null &&
+    recordAppUserId !== null &&
+    Number(currentAppUserId) === Number(recordAppUserId);
+
+  const isSuperUser =
+    window.appSession?.permissions?.can_edit_caal === true;
+
+  const isWorkspaceRecord = record?.source?.scope === "workspace";
+  const isCaalRecord =
+    record?.source?.scope === "national_ref" ||
+    record?.source?.scope === "all_caal";
+
+  return (
+    record?.source?.is_editable === true ||
+    (isWorkspaceRecord && (isOwner || isSuperUser)) ||
+    (isCaalRecord && isSuperUser)
+  );
+}
+
 function archiveRenderActionBar({ hasRecord = false, canEdit = false } = {}) {
   const isEditing = archiveIsEditMode;
   const canDelete =
@@ -1598,39 +1624,7 @@ function archiveRenderDisplayMode(record) {
     archiveScopeLabel(record.source?.scope)
   ]);
 
-  const currentUsername = window.appSession?.user?.username;
-  const recordRecorder =
-    record?.summary?.archive_recorder ||
-    record?.raw?.["Archive Recorder"];
-
-  const appSession = window.appSession || null;
-  const accessLevel =
-    Number(
-      window.appSession?.user?.access_level ??
-      window.appSession?.profile?.access_level ??
-      0
-    );
-
-  const currentAppUserId = window.appSession?.user?.user_id ?? null;
-  const recordAppUserId = record?.raw?.created_by_app_user_id ?? null;
-
-  const isOwner =
-    currentAppUserId !== null &&
-    recordAppUserId !== null &&
-    Number(currentAppUserId) === Number(recordAppUserId);
-
-  const isSuperUser =
-    window.appSession?.permissions?.can_edit_caal === true;
-
-  const isWorkspaceRecord = record.source?.scope === "workspace";
-  const isCaalRecord =
-    record.source?.scope === "national_ref" ||
-    record.source?.scope === "all_caal";
-
-  const canEditThisRecord =
-    record.source?.is_editable === true ||
-    (isWorkspaceRecord && (isOwner || isSuperUser)) ||
-    (isCaalRecord && isSuperUser);
+  const canEditThisRecord = canEditArchiveRecord(record);
 
   const statusBadge = canEditThisRecord
   ? `<span class="record-status-badge record-status-editable">${archiveLabel("Editable", "Editable")}</span>`
@@ -1817,8 +1811,9 @@ function archiveRenderEditMode(record) {
 
   archiveRenderActionBar({
   hasRecord: true,
-  canEdit: record.source?.is_editable === true
+  canEdit: canEditArchiveRecord(record)
 });
+
 
 if (archiveCancelEditBtn) {
   archiveCancelEditBtn.onclick = () => {
