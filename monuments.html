@@ -218,13 +218,16 @@
         </div>
 
         <div class="map-actions">
-          <div id="monumentMapActionBar" class="map-action-bar" hidden>
-          <button type="button" class="action-btn" id="monumentPickPointBtn">Select point on map</button>
-          <button type="button" class="action-btn" id="monumentCancelPickPointBtn" hidden>Cancel point selection</button>
-        </div>
+          <button type="button" class="action-btn" id="downloadMapBtn">
+            Download map
+          </button>
+          
           <select id="basemapSelect" class="form-control" style="width: 180px;">
             <option value="osm">OpenStreetMap</option>
-            <option value="satellite">Satellite</option>
+            <option value="maptiler-hybrid">MapTiler Satellite Hybrid</option>
+            <option value="maptiler-streets">MapTiler Streets</option>
+            <option value="maptiler-satellite">MapTiler Satellite</option>
+            <option value="maptiler-topo">MapTiler Topographic</option>
           </select>
         </div>
       </div>

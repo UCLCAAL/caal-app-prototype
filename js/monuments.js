@@ -24,7 +24,8 @@ const filterCountry = document.getElementById("filterCountry");
 
 const resultsList = document.getElementById("resultsList");
 const resultsCount = document.getElementById("resultsCount");
-
+//map
+const downloadMapBtn = document.getElementById("downloadMapBtn");
 const basemapSelect = document.getElementById("basemapSelect");
 
 const showWorkspaceRecords = document.getElementById("showWorkspaceRecords");
@@ -43,14 +44,13 @@ const monumentSaveBtn = document.getElementById("monumentSaveBtn");
 const monumentCancelEditBtn = document.getElementById("monumentCancelEditBtn");
 const monumentDeleteBtn = document.getElementById("monumentDeleteBtn");
 
-const monumentMapActionBar = document.getElementById("monumentMapActionBar");
-const monumentPickPointBtn = document.getElementById("monumentPickPointBtn");
-const monumentCancelPickPointBtn = document.getElementById("monumentCancelPickPointBtn");
 // modal
 const monumentPreviewModal = document.getElementById("monumentPreviewModal");
 const monumentPreviewTitle = document.getElementById("monumentPreviewTitle");
 const monumentPreviewBody = document.getElementById("monumentPreviewBody");
 const monumentPreviewCloseBtn = document.getElementById("monumentPreviewCloseBtn");
+// related
+const relatedRecordStatusCache = new Map();
 
 
 // --------------------------------------------------------
@@ -259,15 +259,15 @@ function renderMonumentLegend() {
   if (!monumentLegendEl) return;
 
   const hasWorkspace = monumentMapRecords.some(
-    (record) => record.source?.scope === "workspace"
+    (record) => monumentDisplayScope(record) === "workspace"
   );
 
   const hasNational = monumentMapRecords.some(
-    (record) => record.source?.scope === "national_ref"
+    (record) => monumentDisplayScope(record) === "national_ref"
   );
 
   const hasAllCaal = monumentMapRecords.some(
-    (record) => record.source?.scope === "all_caal"
+    (record) => monumentDisplayScope(record) === "all_caal"
   );
 
   const hasSelected = !!monumentSelectedRecord?.geometry?.coordinates;
@@ -276,7 +276,13 @@ function renderMonumentLegend() {
     !!map &&
     !!map.getSource("monument-pick-point");
 
+  const hasRelatedMap =
+    !!map &&
+    !!map.getSource("monument-related-selection");
+
   const rows = [];
+
+  
 
   if (hasWorkspace) {
     rows.push(`
@@ -323,12 +329,335 @@ function renderMonumentLegend() {
     `);
   }
 
+  if (hasRelatedMap) {
+    rows.push(`
+      <div class="legend-row">
+        <span class="legend-symbol legend-related"></span>
+        <span>Related monument</span>
+      </div>
+    `);
+  }
+
   monumentLegendEl.hidden = rows.length === 0;
 
   monumentLegendEl.innerHTML = `
     <div class="legend-title">Map key</div>
     ${rows.join("")}
   `;
+}
+
+// Older/simple export: raw MapLibre canvas only.
+// Does not include DOM controls such as legend, scale bar, or attribution.
+function downloadRawMapScreenshot() {
+  if (!map) return;
+
+  map.once("idle", () => {
+    const canvas = map.getCanvas();
+    const link = document.createElement("a");
+
+    link.href = canvas.toDataURL("image/png");
+    link.download = `caal_distribution_map_${new Date().toISOString().slice(0, 10)}.png`;
+    link.click();
+  });
+
+  map.triggerRepaint();
+}
+
+// canvas export 
+function getCurrentMapLegendItems() {
+  const items = [];
+
+  const hasWorkspace = monumentMapRecords.some(
+    (record) => monumentDisplayScope(record) === "workspace"
+  );
+
+  const hasNational = monumentMapRecords.some(
+    (record) => monumentDisplayScope(record) === "national_ref"
+  );
+
+  const hasAllCaal = monumentMapRecords.some(
+    (record) => monumentDisplayScope(record) === "all_caal"
+  );
+
+  const hasSelected = !!monumentSelectedRecord?.geometry?.coordinates;
+
+  const hasPending =
+    !!map &&
+    !!map.getSource("monument-pick-point");
+
+  const hasRelatedMap =
+    !!map &&
+    !!map.getSource("monument-related-selection");
+
+  if (hasWorkspace) {
+    items.push({ label: "Workspace records", color: "#2e7d32", type: "circle" });
+  }
+
+  if (hasNational) {
+    items.push({ label: "National CAAL records", color: "#0f766e", type: "circle" });
+  }
+
+  if (hasAllCaal) {
+    items.push({ label: "Other CAAL records", color: "#c95a4a", type: "circle" });
+  }
+
+  if (hasSelected) {
+    items.push({ label: "Selected record", color: "#ffd54f", type: "ring" });
+  }
+
+  if (hasPending) {
+    items.push({ label: "New / moved point", color: "#1d4ed8", type: "circle" });
+  }
+
+  if (hasRelatedMap) {
+    items.push({ label: "Related monument", color: "#7c3aed", type: "circle" });
+  }
+
+  return items;
+}
+
+// scale distance helper
+function calculateMapScaleBar() {
+  if (!map) return null;
+
+  const canvas = map.getCanvas();
+  const center = map.getCenter();
+  const y = canvas.height - 80;
+
+  const leftLngLat = map.unproject([80, y]);
+  const rightLngLat = map.unproject([280, y]);
+
+  const metres = leftLngLat.distanceTo(rightLngLat);
+
+  const niceDistances = [
+    100, 200, 500,
+    1000, 2000, 5000,
+    10000, 20000, 50000,
+    100000, 200000, 500000,
+    1000000
+  ];
+
+  const target = niceDistances.find((d) => d >= metres / 2) || niceDistances[niceDistances.length - 1];
+
+  const metresPerPixel = metres / 200;
+  const widthPx = target / metresPerPixel;
+
+  const label = target >= 1000
+    ? `${target / 1000} km`
+    : `${target} m`;
+
+  return {
+    widthPx: Math.max(90, Math.min(widthPx, 320)),
+    label
+  };
+}
+
+function downloadCurrentMapImage() {
+  if (!map) return;
+
+  map.once("idle", () => {
+    const mapCanvas = map.getCanvas();
+
+    const exportCanvas = document.createElement("canvas");
+    exportCanvas.width = mapCanvas.width;
+    exportCanvas.height = mapCanvas.height;
+
+    const ctx = exportCanvas.getContext("2d");
+
+    // Draw MapLibre canvas
+    ctx.drawImage(mapCanvas, 0, 0);
+
+    const width = exportCanvas.width;
+    const height = exportCanvas.height;
+
+    const uiScale = Math.max(1, width / 1400);
+
+    function scaled(px) {
+      return Math.round(px * uiScale);
+    }
+
+    // Shared styles
+    ctx.font = "23px Arial, sans-serif";
+    ctx.textBaseline = "middle";
+
+   // --- CAAL watermark / accreditation ---
+    const watermarkText = "CAAL - Central Asian Archaeological Landscapes";
+
+    ctx.save();
+    ctx.globalAlpha = 0.96;
+    ctx.fillStyle = "rgba(255, 255, 255, 0.93)";
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.16)";
+    ctx.lineWidth = 1;
+
+    ctx.font = `bold ${scaled(18)}px Arial, sans-serif`;
+    ctx.textBaseline = "middle";
+
+    const watermarkPaddingX = scaled(16);
+    const watermarkPaddingY = scaled(12);
+    const watermarkTextWidth = ctx.measureText(watermarkText).width;
+
+    const watermarkW = Math.ceil(watermarkTextWidth + watermarkPaddingX * 2);
+    const watermarkH = scaled(44);
+    const watermarkX = width - watermarkW - scaled(16);
+    const watermarkY = height - watermarkH - scaled(16);
+
+    ctx.beginPath();
+    ctx.roundRect(watermarkX, watermarkY, watermarkW, watermarkH, scaled(10));
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = "#263238";
+    ctx.fillText(
+      watermarkText,
+      watermarkX + watermarkPaddingX,
+      watermarkY + watermarkH / 2
+    );
+
+    ctx.restore();
+
+    // --- Legend / map key ---
+    const legendItems = getCurrentMapLegendItems();
+
+    if (legendItems.length) {
+      ctx.save();
+
+      const legendTitleSize = scaled(20);
+      const legendTextSize = scaled(17);
+      const rowH = scaled(30);
+      const legendPadding = scaled(16);
+      const symbolRadius = scaled(8);
+      const symbolGap = scaled(16);
+
+      ctx.font = `bold ${legendTitleSize}px Arial, sans-serif`;
+      const titleText = "Map key";
+
+      ctx.font = `${legendTextSize}px Arial, sans-serif`;
+      const maxLabelWidth = Math.max(
+        ...legendItems.map((item) => ctx.measureText(item.label).width)
+      );
+
+      const legendW = Math.ceil(
+        legendPadding * 2 +
+        symbolRadius * 2 +
+        symbolGap +
+        maxLabelWidth
+      );
+
+      const legendH = Math.ceil(
+        legendPadding * 2 +
+        scaled(22) +
+        legendItems.length * rowH
+      );
+
+      const legendX = width - legendW - scaled(16);
+      const legendY = watermarkY - legendH - scaled(12);
+
+      ctx.fillStyle = "rgba(255, 255, 255, 0.93)";
+      ctx.strokeStyle = "rgba(0, 0, 0, 0.16)";
+      ctx.lineWidth = 1;
+
+      ctx.beginPath();
+      ctx.roundRect(legendX, legendY, legendW, legendH, scaled(10));
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = "#263238";
+      ctx.font = `bold ${legendTitleSize}px Arial, sans-serif`;
+      ctx.textBaseline = "middle";
+      ctx.fillText(titleText, legendX + legendPadding, legendY + legendPadding + scaled(6));
+
+      legendItems.forEach((item, index) => {
+        const y = legendY + legendPadding + scaled(28) + index * rowH;
+        const symbolX = legendX + legendPadding + symbolRadius;
+        const textX = symbolX + symbolRadius + symbolGap;
+
+        if (item.type === "ring") {
+          ctx.beginPath();
+          ctx.arc(symbolX, y, symbolRadius + scaled(1), 0, Math.PI * 2);
+          ctx.fillStyle = "rgba(255, 213, 79, 0)";
+          ctx.fill();
+          ctx.strokeStyle = item.color;
+          ctx.lineWidth = scaled(3);
+          ctx.stroke();
+        } else {
+          ctx.beginPath();
+          ctx.arc(symbolX, y, symbolRadius, 0, Math.PI * 2);
+          ctx.fillStyle = item.color;
+          ctx.fill();
+          ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
+          ctx.lineWidth = scaled(2);
+          ctx.stroke();
+        }
+
+        ctx.fillStyle = "#263238";
+        ctx.font = `${legendTextSize}px Arial, sans-serif`;
+        ctx.fillText(item.label, textX, y);
+      });
+
+      ctx.restore();
+    }
+
+    // --- Scale bar ---
+    const scale = calculateMapScaleBar();
+
+    if (scale) {
+      ctx.save();
+
+      const scaleTextSize = scaled(17);
+      const scalePaddingX = scaled(14);
+      const scalePaddingY = scaled(10);
+      const barH = scaled(9);
+
+      ctx.font = `${scaleTextSize}px Arial, sans-serif`;
+      ctx.textBaseline = "middle";
+
+      const labelWidth = ctx.measureText(scale.label).width;
+      const pillW = Math.ceil(scale.widthPx + labelWidth + scalePaddingX * 3);
+      const pillH = scaled(42);
+
+      const scaleX = scaled(24);
+      const scaleY = height - scaled(38);
+
+      ctx.fillStyle = "rgba(255, 255, 255, 0.93)";
+      ctx.strokeStyle = "rgba(0, 0, 0, 0.18)";
+      ctx.lineWidth = 1;
+
+      ctx.beginPath();
+      ctx.roundRect(scaleX - scalePaddingX, scaleY - pillH / 2, pillW, pillH, scaled(10));
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.strokeStyle = "#263238";
+      ctx.lineWidth = scaled(3);
+
+      ctx.beginPath();
+      ctx.moveTo(scaleX, scaleY);
+      ctx.lineTo(scaleX + scale.widthPx, scaleY);
+      ctx.stroke();
+
+      ctx.lineWidth = scaled(2);
+      ctx.beginPath();
+      ctx.moveTo(scaleX, scaleY - barH);
+      ctx.lineTo(scaleX, scaleY + barH);
+      ctx.moveTo(scaleX + scale.widthPx, scaleY - barH);
+      ctx.lineTo(scaleX + scale.widthPx, scaleY + barH);
+      ctx.stroke();
+
+      ctx.fillStyle = "#263238";
+      ctx.font = `${scaleTextSize}px Arial, sans-serif`;
+      ctx.fillText(scale.label, scaleX + scale.widthPx + scalePaddingX, scaleY);
+
+      ctx.restore();
+    }
+
+    // --- Download ---
+    const link = document.createElement("a");
+    link.href = exportCanvas.toDataURL("image/png");
+    link.download = `caal_distribution_map_${new Date().toISOString().slice(0, 10)}.png`;
+    link.click();
+  });
+
+  map.triggerRepaint();
 }
 
 // --------------------------------------------------------
@@ -480,6 +809,29 @@ function mSafeValue(value) {
     return `<span class="empty-value">${mLabel("Not recorded", "Not recorded")}</span>`;
   }
   return value;
+}
+
+function mDateOnly(value) {
+  if (!value) return value;
+
+  const text = String(value).trim();
+
+  // ISO-like timestamp: 2026-04-30T13:28:37.313Z
+  if (/^\d{4}-\d{2}-\d{2}T/.test(text)) {
+    return text.slice(0, 10);
+  }
+
+  // Space-separated timestamp: 2026-04-30 13:28:37
+  if (/^\d{4}-\d{2}-\d{2}\s/.test(text)) {
+    return text.slice(0, 10);
+  }
+
+  // Slash date with time: 13/01/2021 11:28
+  if (/^\d{1,2}\/\d{1,2}\/\d{4}\s/.test(text)) {
+    return text.split(/\s+/)[0];
+  }
+
+  return text;
 }
 
 function mHasValue(value) {
@@ -881,6 +1233,25 @@ function monumentScopeLabel(scope) {
   }
 }
 
+function monumentDisplayScope(record) {
+  const rawScope = record?.source?.scope || "unknown";
+
+  const nationalChecked = showNationalRecords?.checked === true;
+  const allCaalChecked = showAllCaalRecords?.checked === true;
+
+  // When All CAAL is on but National CAAL is off, suppress the national subset styling.
+  // This keeps the map and legend aligned with the visible checkbox state.
+  if (
+    rawScope === "national_ref" &&
+    allCaalChecked &&
+    !nationalChecked
+  ) {
+    return "all_caal";
+  }
+
+  return rawScope;
+}
+
 function getMonumentCurrentFilters() {
   return {
     text: siteSearch ? siteSearch.value.trim() : "",
@@ -1075,15 +1446,31 @@ function mRenderRelatedIdList(label, value, fullWidth = true) {
   const ids = parseRelatedIds(value);
 
   const inner = ids.length
-    ? ids.map((id) => `
-        <button
-          type="button"
-          class="related-id-chip"
-          data-related-id="${id}"
-        >
-          ${id}
-        </button>
-      `).join("")
+    ? ids.map((id) => {
+        const looksValid = isLikelyRelatedId(id);
+
+        if (!looksValid) {
+          return `
+            <span
+              class="related-id-chip related-id-chip-invalid"
+              title="${mLabel("This does not look like a valid CAAL_ID.", "This does not look like a valid CAAL_ID.")}"
+            >
+              ${id}
+            </span>
+          `;
+        }
+
+        return `
+          <button
+            type="button"
+            class="related-id-chip"
+            data-related-id="${id}"
+            title="${mLabel("Open related record", "Open related record")}"
+          >
+            ${id}
+          </button>
+        `;
+      }).join("")
     : mSafeValue("");
 
   return `
@@ -1206,6 +1593,124 @@ function validateNewMonumentLocationBeforeSave(payload) {
   return true;
 }
 
+async function resolveRelatedRecordStatus(caalId) {
+  if (!caalId) return { status: "empty" };
+
+  if (relatedRecordStatusCache.has(caalId)) {
+    return relatedRecordStatusCache.get(caalId);
+  }
+
+  if (!isLikelyRelatedId(caalId)) {
+    const result = { status: "invalid", caalId };
+    relatedRecordStatusCache.set(caalId, result);
+    return result;
+  }
+
+  try {
+    const response = await fetch(
+      `/api/records/resolve?caal_id=${encodeURIComponent(caalId)}`,
+      { method: "GET", credentials: "include" }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok || !data.ok || !data.record) {
+      const result = { status: "missing", caalId };
+      relatedRecordStatusCache.set(caalId, result);
+      return result;
+    }
+
+    const result = {
+      status: "found",
+      caalId,
+      recordType: data.record_type,
+      record: data.record,
+      hasGeometry:
+        data.record_type === "monument" &&
+        Array.isArray(data.record?.geometry?.coordinates)
+    };
+
+    relatedRecordStatusCache.set(caalId, result);
+    return result;
+  } catch (error) {
+    const result = { status: "unknown", caalId };
+    relatedRecordStatusCache.set(caalId, result);
+    return result;
+  }
+}
+
+async function validateDisplayedRelatedIds() {
+  const chips = Array.from(document.querySelectorAll(".related-id-chip[data-related-id]"));
+
+  await Promise.all(chips.map(async (chip) => {
+    const caalId = chip.dataset.relatedId;
+    const result = await resolveRelatedRecordStatus(caalId);
+
+    chip.classList.remove(
+      "related-id-chip-found",
+      "related-id-chip-missing",
+      "related-id-chip-invalid",
+      "related-id-chip-unknown"
+    );
+
+    if (result.status === "found") {
+      chip.classList.add("related-id-chip-found");
+      chip.disabled = false;
+      chip.title = result.hasGeometry
+        ? mLabel("Open related record or show on map", "Open related record or show on map")
+        : mLabel("Open related record", "Open related record");
+    } else if (result.status === "missing") {
+      chip.classList.add("related-id-chip-missing");
+      chip.disabled = true;
+      chip.title = mLabel("Related record not found", "Related record not found");
+    } else if (result.status === "invalid") {
+      chip.classList.add("related-id-chip-invalid");
+      chip.disabled = true;
+      chip.title = mLabel("Invalid related ID format", "Invalid related ID format");
+    } else {
+      chip.classList.add("related-id-chip-unknown");
+      chip.disabled = true;
+      chip.title = mLabel("Could not check related record", "Could not check related record");
+    }
+  }));
+}
+
+function clearRelatedMonumentsMap() {
+  if (!map) return;
+
+  [
+    "monument-related-lines",
+    "monument-related-selected-halo",
+    "monument-related-points"
+  ].forEach((layerId) => {
+    if (map.getLayer(layerId)) {
+      map.removeLayer(layerId);
+    }
+  });
+
+  if (map.getSource("monument-related-selection")) {
+    map.removeSource("monument-related-selection");
+  }
+
+  renderMonumentLegend();
+}
+
+function bringMonumentOverlaysToFront() {
+  if (!map) return;
+
+  [
+    "monument-related-lines",
+    "monument-related-selected-halo",
+    "monument-related-points",
+    "monument-selected-ring",
+    "monument-pick-point-layer"
+  ].forEach((layerId) => {
+    if (map.getLayer(layerId)) {
+      map.moveLayer(layerId);
+    }
+  });
+}
+
 // modal helpers
 // ================================
 //only populated fields
@@ -1281,13 +1786,19 @@ function renderMonumentPreviewModal(record) {
       <h3>${mSafeValue(mSummary(record, "primary_name"))}</h3>
       <p>${mSafeValue(mIdentity(record, "caal_id"))}</p>
 
-      ${
-        record?.geometry?.coordinates
-          ? `<button type="button" class="action-btn" id="previewCentreOnMapBtn">
-              Centre on map
-            </button>`
-          : ""
-      }
+      <div class="preview-action-row">
+        <button type="button" class="action-btn primary" id="previewOpenInDetailsBtn">
+          ${mLabel("Open in details pane", "Open in details pane")}
+        </button>
+
+        ${
+          record?.geometry?.coordinates
+            ? `<button type="button" class="action-btn" id="previewCentreOnMapBtn">
+                Centre on map
+              </button>`
+            : ""
+        }
+      </div>
     </div>
 
     <div class="group-stack">
@@ -1336,6 +1847,29 @@ function renderMonumentPreviewModal(record) {
   `;
 
   modal.hidden = false;
+
+  const previewOpenBtn = document.getElementById("previewOpenInDetailsBtn");
+
+  if (previewOpenBtn) {
+    previewOpenBtn.addEventListener("click", () => {
+      if (!monumentConfirmLoseChanges()) return;
+
+      monumentIsEditMode = false;
+      monumentSyncModeVisualState();
+      monumentPendingNewRecord = null;
+      monumentSelectedRecord = record;
+
+      renderMonumentRecordDetails(record);
+      updateSelectedResultCard();
+
+      if (record.geometry?.coordinates) {
+        drawSelectedMonumentHighlight(record);
+        bringMonumentOverlaysToFront();
+      }
+
+      closeMonumentPreviewModal();
+    });
+  }
 
   const previewCentreBtn = document.getElementById("previewCentreOnMapBtn");
 
@@ -2121,8 +2655,22 @@ function getBasemapStyle(name) {
     };
   }
 
-  if (name === "satellite") {
+
+
+  if (name === "maptiler-satellite") {
     return "https://api.maptiler.com/maps/satellite/style.json?key=wZNaIRIPfJrrJLopqgo0";
+  }
+
+  if (name === "maptiler-hybrid") {
+    return "https://api.maptiler.com/maps/hybrid/style.json?key=wZNaIRIPfJrrJLopqgo0";
+  }
+
+  if (name === "maptiler-topo") {
+    return "https://api.maptiler.com/maps/topo-v2/style.json?key=wZNaIRIPfJrrJLopqgo0";
+  }
+  
+  if (name === "maptiler-streets") {
+    return "https://api.maptiler.com/maps/streets-v2/style.json?key=wZNaIRIPfJrrJLopqgo0";
   }
 
   return "https://demotiles.maplibre.org/style.json";
@@ -2144,32 +2692,32 @@ function monumentRecordToFeature(record) {
 }
 
 function bindMonumentLayerEvents() {
-  if (!map || monumentsLayerEventsBound) return;
+ if (!map || monumentsLayerEventsBound) return;
 
   function handleClusterClick(sourceId, clusterLayerId) {
-    map.on("click", clusterLayerId, (e) => {
-      const features = map.queryRenderedFeatures(e.point, {
-        layers: [clusterLayerId]
-      });
+     map.on("click", clusterLayerId, (e) => {
+       const features = map.queryRenderedFeatures(e.point, {
+         layers: [clusterLayerId]
+       });
 
-      const clusterId = features[0]?.properties?.cluster_id;
-      if (clusterId == null) return;
+       const clusterId = features[0]?.properties?.cluster_id;
+       if (clusterId == null) return;
 
-      map.getSource(sourceId).getClusterExpansionZoom(clusterId, (err, zoom) => {
-        if (err) return;
+       map.getSource(sourceId).getClusterExpansionZoom(clusterId, (err, zoom) => {
+         if (err) return;
 
-        map.easeTo({
-          center: features[0].geometry.coordinates,
-          zoom
-        });
-      });
-    });
+         map.easeTo({
+           center: features[0].geometry.coordinates,
+           zoom
+         });
+       });
+     });
   }
 
-  handleClusterClick("monuments-national", "monument-national-clusters");
-  handleClusterClick("monuments-all-caal", "monument-all-caal-clusters");
+    handleClusterClick("monuments-national", "monument-national-clusters");
+    handleClusterClick("monuments-all-caal", "monument-all-caal-clusters");
 
-  function handleMonumentPointClick(e) {
+  async function handleMonumentPointClick(e) {
     const feature = e.features?.[0];
     if (!feature) return;
 
@@ -2184,15 +2732,64 @@ function bindMonumentLayerEvents() {
       (r) => Number(r.identity?.id) === clickedId
     );
 
-    if (!record?.geometry?.coordinates) return;
+    if (!record) return;
 
-    new maplibregl.Popup({ closeButton: true, closeOnClick: true })
-      .setLngLat(record.geometry.coordinates)
+    await openMapMonumentPreview(record);
+  }
+
+  let monumentHoverPopup = null;
+  let monumentHoverCloseTimer = null;
+
+  async function openMapMonumentPreview(record) {
+    if (!record) return;
+
+    setMonumentsLoading(true, mLabel("Loading preview...", "Loading preview..."));
+
+    try {
+      const fullRecord = await loadFullMonumentRecord(record);
+      renderMonumentPreviewModal(fullRecord);
+    } catch (error) {
+      console.error("Failed to load monument preview from map:", error);
+      alert(error.message || "Could not load monument preview");
+    } finally {
+      setMonumentsLoading(false);
+    }
+  }
+
+  function handleMonumentPointHover(e) {
+    cancelClearMonumentPointHover();
+
+    const feature = e.features?.[0];
+    if (!feature || !feature.geometry?.coordinates) return;
+
+    const clickedId = Number(feature.properties?.id);
+    const clickedScope = feature.properties?.source_scope;
+
+    const record = monumentMapRecords.find(
+      (r) =>
+        Number(r.identity?.id) === clickedId &&
+        String(r.source?.scope || "") === String(clickedScope || "")
+    ) || monumentMapRecords.find(
+      (r) => Number(r.identity?.id) === clickedId
+    );
+
+    if (!record) return;
+
+    if (!monumentHoverPopup) {
+      monumentHoverPopup = new maplibregl.Popup({
+        closeButton: false,
+        closeOnClick: false,
+        offset: 10
+      });
+    }
+
+    monumentHoverPopup
+      .setLngLat(feature.geometry.coordinates)
       .setHTML(`
         <div class="map-popup">
           <button
             type="button"
-            class="map-popup-title-btn"
+            class="map-popup-title-btn map-hover-preview-btn"
             data-monument-id="${record.identity?.id}"
             data-monument-scope="${record.source?.scope || ""}"
           >
@@ -2206,43 +2803,54 @@ function bindMonumentLayerEvents() {
       .addTo(map);
 
     setTimeout(() => {
-      const popupTitleBtn = document.querySelector(
-        `.map-popup-title-btn[data-monument-id="${record.identity?.id}"][data-monument-scope="${record.source?.scope || ""}"]`
+      const popupEl = monumentHoverPopup?.getElement?.();
+      if (!popupEl) return;
+
+      popupEl.addEventListener("mouseenter", cancelClearMonumentPointHover);
+      popupEl.addEventListener("mouseleave", scheduleClearMonumentPointHover);
+
+      const popupTitleBtn = popupEl.querySelector(
+        `.map-hover-preview-btn[data-monument-id="${record.identity?.id}"][data-monument-scope="${record.source?.scope || ""}"]`
       );
 
-      if (!popupTitleBtn) return;
+      if (!popupTitleBtn || popupTitleBtn.dataset.previewWired === "true") return;
 
-      popupTitleBtn.addEventListener("click", async () => {
-        if (!monumentConfirmLoseChanges()) return;
+      popupTitleBtn.dataset.previewWired = "true";
 
-        setMonumentsLoading(true, mLabel("Loading full record...", "Loading full record..."));
-
-        try {
-          const fullRecord = await loadFullMonumentRecord(record);
-
-          monumentIsEditMode = false;
-          monumentSyncModeVisualState();
-          monumentPendingNewRecord = null;
-          monumentSelectedRecord = fullRecord;
-
-          renderMonumentRecordDetails(fullRecord);
-          updateSelectedResultCard();
-
-          if (fullRecord.geometry?.coordinates) {
-            drawSelectedMonumentHighlight(fullRecord);
-          } else if (record.geometry?.coordinates) {
-            drawSelectedMonumentHighlight(record);
-          }
-
-          renderMonumentLegend();
-        } catch (error) {
-          console.error("Failed to load full monument record from map click:", error);
-          alert(error.message || "Could not load full monument record");
-        } finally {
-          setMonumentsLoading(false);
-        }
+      popupTitleBtn.addEventListener("click", async (event) => {
+        event.stopPropagation();
+        clearMonumentPointHover();
+        await openMapMonumentPreview(record);
       });
     }, 0);
+  }
+
+  function scheduleClearMonumentPointHover() {
+    if (monumentHoverCloseTimer) {
+      clearTimeout(monumentHoverCloseTimer);
+    }
+
+    monumentHoverCloseTimer = setTimeout(() => {
+      clearMonumentPointHover();
+    }, 250);
+  }
+
+  function cancelClearMonumentPointHover() {
+    if (monumentHoverCloseTimer) {
+      clearTimeout(monumentHoverCloseTimer);
+      monumentHoverCloseTimer = null;
+    }
+  }
+
+  function clearMonumentPointHover() {
+    if (monumentHoverCloseTimer) {
+      clearTimeout(monumentHoverCloseTimer);
+      monumentHoverCloseTimer = null;
+    }
+
+    if (monumentHoverPopup) {
+      monumentHoverPopup.remove();
+    }
   }
 
   [
@@ -2252,15 +2860,18 @@ function bindMonumentLayerEvents() {
   ].forEach((layerId) => {
     map.on("click", layerId, handleMonumentPointClick);
 
-    map.on("mouseenter", layerId, () => {
+    map.on("mouseenter", layerId, (e) => {
       map.getCanvas().style.cursor = "pointer";
+      handleMonumentPointHover(e);
     });
+
+    map.on("mousemove", layerId, handleMonumentPointHover);
 
     map.on("mouseleave", layerId, () => {
       map.getCanvas().style.cursor = "";
+      scheduleClearMonumentPointHover();
     });
   });
-
   monumentsLayerEventsBound = true;
 }
 
@@ -2268,15 +2879,15 @@ function drawMonumentRecords(records) {
   if (!map || !mapLoaded) return;
 
   const workspaceRecords = records.filter(
-    (r) => r.source?.scope === "workspace"
+    (r) => monumentDisplayScope(r) === "workspace"
   );
 
   const nationalRecords = records.filter(
-    (r) => r.source?.scope === "national_ref"
+    (r) => monumentDisplayScope(r) === "national_ref"
   );
 
   const allCaalRecords = records.filter(
-    (r) => r.source?.scope === "all_caal"
+    (r) => monumentDisplayScope(r) === "all_caal"
   );
 
   const nationalGeojson = {
@@ -2319,7 +2930,7 @@ function drawMonumentRecords(records) {
     if (map.getLayer("monuments-workspace-layer")) {
       map.moveLayer("monuments-workspace-layer");
     }
-
+    bringMonumentOverlaysToFront();
     renderMonumentLegend();
     return;
   }
@@ -2468,7 +3079,7 @@ function drawMonumentRecords(records) {
   if (map.getLayer("monuments-workspace-layer")) {
     map.moveLayer("monuments-workspace-layer");
   }
-
+  bringMonumentOverlaysToFront();
   bindMonumentLayerEvents();
   renderMonumentLegend();
   updateShowResultsOnMapButton();
@@ -2510,7 +3121,7 @@ function renderMonumentResultsList(records) {
       >
         <div class="result-card-topline">
           <strong>${mSafeValue(mSummary(record, "primary_name"))}</strong>
-          <span class="scope-badge">${mSafeValue(monumentScopeLabel(record.source?.scope))}</span>
+          <span class="scope-badge">${mSafeValue(monumentScopeLabel(monumentDisplayScope(record)))}</span>
         </div>
 
         <div class="result-card-meta">${mSafeValue(mIdentity(record, "caal_id"))}</div>
@@ -2701,6 +3312,18 @@ function renderMonumentDisplayMode(record) {
     ? `<span class="record-status-badge record-status-editable">${mLabel("Editable", "Editable")}</span>`
     : `<span class="record-status-badge record-status-readonly">${mLabel("Read only", "Read only")}</span>`;
     
+  const locationHtml = [
+    mRenderDetailItem(mLabel("Longitude", "Longitude"), mSummary(record, "longitude")),
+    mRenderDetailItem(mLabel("Latitude", "Latitude"), mSummary(record, "latitude")),
+    mRenderDetailItem(mLabel("Altitude", "Altitude"), mRaw(record, "Altitude")),
+    mRenderDetailItem(
+      mLabel("Location Confidence", "Location Confidence"),
+      mLookupLabel("location_confidence", mRaw(record, "Location Confidence"))
+    ),
+    mRenderDetailItem(mLabel("Location Notes", "Location Notes"), mRaw(record, "Location Notes"), true),
+    mRenderDetailItem(mLabel("Primary Address", "Primary Address"), mRaw(record, "Primary Address"), true)
+  ].join("");
+
   const basicHtml = [
     mRenderDetailItem(mLabel("Primary Name", "Primary Name"), mSummary(record, "primary_name"), true),
     mRenderDetailItem(mLabel("Primary Name (English)", "Primary Name (English)"), mSummary(record, "primary_name_english"), true),
@@ -2741,12 +3364,6 @@ function renderMonumentDisplayMode(record) {
   ].join("");
 
   const adminHtml = [
-    mRenderDetailItem(mLabel("Primary Address", "Primary Address"), mRaw(record, "Primary Address"), true),
-    mRenderDetailItem(mLabel("Longitude", "Longitude"), mSummary(record, "longitude")),
-    mRenderDetailItem(mLabel("Latitude", "Latitude"), mSummary(record, "latitude")),
-    mRenderDetailItem(mLabel("Altitude", "Altitude"), mRaw(record, "Altitude")),
-    mRenderDetailItem(mLabel("Location Confidence", "Location Confidence"), mLookupLabel("location_confidence", mRaw(record, "Location Confidence"))),
-    mRenderDetailItem(mLabel("Location Notes", "Location Notes"), mRaw(record, "Location Notes"), true),
     mRenderDetailItem(mLabel("Administrative Subdivision Name1", "Administrative Subdivision Name1"), mRaw(record, "Administrative Subdivision Name1")),
     mRenderDetailItem(mLabel("Administrative Subdivision Type1", "Administrative Subdivision Type1"), mLookupLabel("admin_subdivision_type", mRaw(record, "Administrative Subdivision Type1"))),
     mRenderDetailItem(mLabel("Administrative Subdivision Name2", "Administrative Subdivision Name2"), mRaw(record, "Administrative Subdivision Name2")),
@@ -2764,20 +3381,83 @@ function renderMonumentDisplayMode(record) {
   ${mRenderMeasurementDisplaySet(4, record)}
 `;
 
-const measurementsHasValues = measurementsHtml.trim() !== "";
+  const measurementsHasValues = measurementsHtml.trim() !== "";
+
+  const relatedIds = [
+    ...parseRelatedIds(mRaw(record, "Monument is part of")),
+    ...parseRelatedIds(mRaw(record, "Monument contains")),
+    ...parseRelatedIds(mRaw(record, "Monument is associated with"))
+  ];
+
+  const hasRelatedIds = relatedIds.length > 0;
+
+  const relatedHtml = [
+    `
+      <div class="detail-item full-width related-map-actions">
+        <div class="related-map-actions-text">
+          <strong>${mLabel("Relationship map", "Relationship map")}</strong>
+          <p>
+            ${hasRelatedIds
+              ? mLabel(
+                  "Show this monument together with its linked monument records on the map.",
+                  "Show this monument together with its linked monument records on the map."
+                )
+              : mLabel(
+                  "No related IDs are recorded for this monument.",
+                  "No related IDs are recorded for this monument."
+                )
+            }
+          </p>
+        </div>
+
+        <button
+          type="button"
+          class="action-btn"
+          id="showRelatedMonumentsOnMapBtn"
+          ${hasRelatedIds ? "" : "disabled"}
+        >
+          ${mLabel("Show relationships on map", "Show relationships on map")}
+        </button>
+
+        <button
+          type="button"
+          class="action-btn"
+          id="clearRelatedMonumentsMapBtn"
+          hidden
+        >
+          ${mLabel("Clear relationship map", "Clear relationship map")}
+        </button>
+      </div>
+    `,
+
+    mRenderRelatedIdList(
+      mLabel("Monument is part of", "Monument is part of"),
+      mRaw(record, "Monument is part of"),
+      true
+    ),
+
+    mRenderRelatedIdList(
+      mLabel("Monument contains", "Monument contains"),
+      mRaw(record, "Monument contains"),
+      true
+    ),
+
+    mRenderRelatedIdList(
+      mLabel("Monument is associated with", "Monument is associated with"),
+      mRaw(record, "Monument is associated with"),
+      true
+    )
+  ].join("");
 
   const metadataHtml = [
     mRenderDetailItem(mLabel("Preferred Language", "Preferred Language"), mRaw(record, "Preferred Language")),
     mRenderDetailItem(mLabel("Recorder", "Recorder"), mSummary(record, "recorder")),
-    mRenderDetailItem(mLabel("Date of Recording", "Date of Recording"), mSummary(record, "date_of_recording")),
-    mRenderDetailItem(mLabel("Tstamp", "Tstamp"), mRaw(record, "Tstamp")),
+    mRenderDetailItem(
+      mLabel("Date of Recording", "Date of Recording"),
+      mDateOnly(mSummary(record, "date_of_recording"))
+    ),
+    mRenderDetailItem(mLabel("Tstamp", "Tstamp"), mDateOnly(mRaw(record, "Tstamp"))),
     mRenderDetailItem(mLabel("MasterID", "MasterID"), mRaw(record, "MasterID"))
-  ].join("");
-
-  const relatedHtml = [
-    mRenderRelatedIdList(mLabel("Monument is part of", "Monument is part of"), mRaw(record, "Monument is part of"), true),
-    mRenderRelatedIdList(mLabel("Monument contains", "Monument contains"), mRaw(record, "Monument contains"), true),
-    mRenderRelatedIdList(mLabel("Monument is associated with", "Monument is associated with"), mRaw(record, "Monument is associated with"), true)
   ].join("");
 
   recordDetails.innerHTML = `
@@ -2794,12 +3474,13 @@ const measurementsHasValues = measurementsHtml.trim() !== "";
     </div>
 
     <div class="group-stack">
+      ${mRenderGroupBlock(mLabel("Location", "Location"), locationHtml, true)}
       ${mRenderGroupBlock(mLabel("Basic", "Basic"), basicHtml, true)}
       ${mRenderGroupBlock(mLabel("Monument", "Monument"), monumentHtml, true)}
       ${mRenderGroupBlock(mLabel("Administration", "Administration"), adminHtml, true)}
       ${mRenderGroupBlock(mLabel("Measurements", "Measurements"), measurementsHtml, measurementsHasValues)}
-      ${mRenderGroupBlock(mLabel("Metadata", "Metadata"), metadataHtml, true)}
       ${mRenderGroupBlock(mLabel("Related resources", "Related resources"), relatedHtml, true)}
+      ${mRenderGroupBlock(mLabel("Metadata", "Metadata"), metadataHtml, true)}
     </div>
   `;
   const zoomBtn = document.getElementById("zoomToSelectedMonumentBtn");
@@ -2818,6 +3499,222 @@ const measurementsHasValues = measurementsHtml.trim() !== "";
     });
   }
   wireRelatedRecordChips();
+
+  const showRelatedMapBtn = document.getElementById("showRelatedMonumentsOnMapBtn");
+  const clearRelatedMapBtn = document.getElementById("clearRelatedMonumentsMapBtn");
+
+  if (showRelatedMapBtn) {
+    showRelatedMapBtn.addEventListener("click", async () => {
+      await showRelatedMonumentsOnMap(record);
+
+      if (clearRelatedMapBtn) {
+        clearRelatedMapBtn.hidden = false;
+      }
+    });
+  }
+
+  if (clearRelatedMapBtn) {
+    clearRelatedMapBtn.addEventListener("click", () => {
+      clearRelatedMonumentsMap();
+
+      clearRelatedMapBtn.hidden = true;
+    });
+  }
+  validateDisplayedRelatedIds();
+}
+
+async function showRelatedMonumentsOnMap(record = monumentSelectedRecord) {
+  if (!map || !record) return;
+
+  const relatedIds = [
+    ...parseRelatedIds(mRaw(record, "Monument is part of")),
+    ...parseRelatedIds(mRaw(record, "Monument contains")),
+    ...parseRelatedIds(mRaw(record, "Monument is associated with"))
+  ];
+
+  const uniqueIds = Array.from(new Set(relatedIds));
+
+  if (!record?.geometry?.coordinates && uniqueIds.length === 0) return;
+
+  const resolved = await Promise.all(
+    uniqueIds.map((caalId) => resolveRelatedRecordStatus(caalId))
+  );
+
+  const relatedMonuments = resolved.filter(
+    (item) =>
+      item.status === "found" &&
+      item.recordType === "monument" &&
+      Array.isArray(item.record?.geometry?.coordinates)
+  );
+
+  const features = [];
+
+  if (record?.geometry?.coordinates) {
+    features.push({
+      type: "Feature",
+      geometry: record.geometry,
+      properties: {
+        role: "selected",
+        caal_id: record.identity?.caal_id || ""
+      }
+    });
+  }
+
+  relatedMonuments.forEach((item) => {
+    features.push({
+      type: "Feature",
+      geometry: item.record.geometry,
+      properties: {
+        role: "related",
+        caal_id: item.caalId
+      }
+    });
+  });
+
+  if (record?.geometry?.coordinates) {
+    relatedMonuments.forEach((item) => {
+      features.push({
+        type: "Feature",
+        geometry: {
+          type: "LineString",
+          coordinates: [
+            record.geometry.coordinates,
+            item.record.geometry.coordinates
+          ]
+        },
+        properties: {
+          role: "relationship",
+          caal_id: item.caalId
+        }
+      });
+    });
+  }
+
+  if (!features.length) {
+    alert(mLabel("No related monument locations found.", "No related monument locations found."));
+    return;
+  }
+
+  const geojson = {
+    type: "FeatureCollection",
+    features
+  };
+
+  if (map.getSource("monument-related-selection")) {
+    map.getSource("monument-related-selection").setData(geojson);
+  } else {
+    map.addSource("monument-related-selection", {
+      type: "geojson",
+      data: geojson
+    });
+  }
+
+  if (!map.getLayer("monument-related-lines")) {
+    map.addLayer({
+      id: "monument-related-lines",
+      type: "line",
+      source: "monument-related-selection",
+      filter: ["==", ["geometry-type"], "LineString"],
+      paint: {
+        "line-width": 2,
+        "line-opacity": 0.65,
+        "line-color": "#7c3aed"
+      }
+    });
+  } else {
+    map.setPaintProperty("monument-related-lines", "line-color", "#7c3aed");
+    map.setPaintProperty("monument-related-lines", "line-opacity", 0.65);
+    map.setPaintProperty("monument-related-lines", "line-width", 2);
+  }
+
+  if (!map.getLayer("monument-related-selected-halo")) {
+    map.addLayer({
+      id: "monument-related-selected-halo",
+      type: "circle",
+      source: "monument-related-selection",
+      filter: [
+        "all",
+        ["==", ["geometry-type"], "Point"],
+        ["==", ["get", "role"], "selected"]
+      ],
+      paint: {
+        "circle-radius": 13,
+        "circle-color": "rgba(255, 213, 79, 0)",
+        "circle-stroke-width": 3,
+        "circle-stroke-color": "#ffd54f"
+      }
+    });
+  } else {
+    map.setPaintProperty("monument-related-selected-halo", "circle-radius", 13);
+    map.setPaintProperty("monument-related-selected-halo", "circle-color", "rgba(255, 213, 79, 0)");
+    map.setPaintProperty("monument-related-selected-halo", "circle-stroke-width", 3);
+    map.setPaintProperty("monument-related-selected-halo", "circle-stroke-color", "#ffd54f");
+  }
+
+  if (!map.getLayer("monument-related-points")) {
+    map.addLayer({
+      id: "monument-related-points",
+      type: "circle",
+      source: "monument-related-selection",
+      filter: [
+        "all",
+        ["==", ["geometry-type"], "Point"],
+        ["==", ["get", "role"], "related"]
+      ],
+      paint: {
+        "circle-radius": 7,
+        "circle-color": "#7c3aed",
+        "circle-opacity": 0.9,
+        "circle-stroke-width": 2,
+        "circle-stroke-color": "#ffffff"
+      }
+    });
+  } else {
+    map.setFilter("monument-related-points", [
+      "all",
+      ["==", ["geometry-type"], "Point"],
+      ["==", ["get", "role"], "related"]
+    ]);
+
+    map.setPaintProperty("monument-related-points", "circle-radius", 7);
+    map.setPaintProperty("monument-related-points", "circle-color", "#7c3aed");
+    map.setPaintProperty("monument-related-points", "circle-opacity", 0.9);
+    map.setPaintProperty("monument-related-points", "circle-stroke-width", 2);
+    map.setPaintProperty("monument-related-points", "circle-stroke-color", "#ffffff");
+  }
+
+  [
+    "monument-related-lines",
+    "monument-related-selected-halo",
+    "monument-related-points"
+  ].forEach((layerId) => {
+    if (map.getLayer(layerId)) {
+      map.moveLayer(layerId);
+    }
+  });
+
+  const coords = features
+    .map((feature) => feature.geometry?.coordinates)
+    .filter((coords) => Array.isArray(coords) && coords.length === 2);
+
+  if (coords.length) {
+    const bounds = coords.reduce(
+      (b, coords) => b.extend(coords),
+      new maplibregl.LngLatBounds(coords[0], coords[0])
+    );
+
+    map.fitBounds(bounds, {
+      padding: 90,
+      maxZoom: 10,
+      duration: 700
+    });
+  }
+
+  bringMonumentOverlaysToFront();
+
+ // drawSelectedMonumentHighlight(record);
+  bringMonumentOverlaysToFront();
+  renderMonumentLegend();
 }
 
 // --------------------------------------------------------
@@ -2863,6 +3760,36 @@ function renderMonumentEditMode(record) {
     </div>
 
     <div class="group-stack">
+
+      <div class="group-block">
+        <div class="group-grid">
+          <div class="detail-item full-width section-header">
+            <span class="detail-section-title">${mLabel("Location", "Location")}</span>
+          </div>
+
+          <div class="detail-item full-width">
+            <button type="button" class="action-btn primary" id="monumentInlinePickPointBtn">
+              ${mLabel("Select point on map", "Select point on map")}
+            </button>
+
+            <button type="button" class="action-btn" id="monumentInlineCancelPickPointBtn" hidden>
+              ${mLabel("Cancel point selection", "Cancel point selection")}
+            </button>
+
+            <p id="monumentLocationPickNotice" class="filter-help" hidden>
+              ${mLabel("Click the map to set this monument location.", "Click the map to set this monument location.")}
+            </p>
+          </div>
+
+          ${mRenderNumberInput("Longitude", mLabel("Longitude", "Longitude"), mRaw(record, "Longitude"), "0.000001")}
+          ${mRenderNumberInput("Latitude", mLabel("Latitude", "Latitude"), mRaw(record, "Latitude"), "0.000001")}
+          ${mRenderNumberInput("Altitude", mLabel("Altitude", "Altitude"), mRaw(record, "Altitude"), "any")}
+          ${mRenderSelect("Location Confidence", mLabel("Location Confidence", "Location Confidence"), "location_confidence", mRaw(record, "Location Confidence"))}
+          ${mRenderTextarea("Location Notes", mLabel("Location Notes", "Location Notes"), mRaw(record, "Location Notes"), true)}
+          ${mRenderTextInput("Primary Address", mLabel("Primary Address", "Primary Address"), mRaw(record, "Primary Address"), true)}
+        </div>
+      </div>
+
       <div class="group-block">
         <div class="group-grid">
           <div class="detail-item full-width section-header">
@@ -2929,15 +3856,6 @@ function renderMonumentEditMode(record) {
           <div class="detail-item full-width section-header">
             <span class="detail-section-title">${mLabel("Administration", "Administration")}</span>
           </div>
-
-          ${mRenderTextInput("Primary Address", mLabel("Primary Address", "Primary Address"), mRaw(record, "Primary Address"), true)}
-          ${mRenderNumberInput("Longitude", mLabel("Longitude", "Longitude"), mRaw(record, "Longitude"), "0.000001")}
-          ${mRenderNumberInput("Latitude", mLabel("Latitude", "Latitude"), mRaw(record, "Latitude"), "0.000001")}
-          ${mRenderNumberInput("Altitude", mLabel("Altitude", "Altitude"), mRaw(record, "Altitude"), "any")}
-          ${mRenderSelect("Location Confidence", mLabel("Location Confidence", "Location Confidence"), "location_confidence", mRaw(record, "Location Confidence"))}
-
-          ${mRenderTextarea("Location Notes", mLabel("Location Notes", "Location Notes"), mRaw(record, "Location Notes"), true)}
-
           ${mRenderTextInput("Administrative Subdivision Name1", mLabel("Administrative Subdivision Name1", "Administrative Subdivision Name1"), mRaw(record, "Administrative Subdivision Name1"))}
           ${mRenderSelect("Administrative Subdivision Type1", mLabel("Administrative Subdivision Type1", "Administrative Subdivision Type1"), "admin_subdivision_type", mRaw(record, "Administrative Subdivision Type1"))}
           ${mRenderTextInput("Administrative Subdivision Name2", mLabel("Administrative Subdivision Name2", "Administrative Subdivision Name2"), mRaw(record, "Administrative Subdivision Name2"))}
@@ -2964,26 +3882,26 @@ function renderMonumentEditMode(record) {
       <div class="group-block">
         <div class="group-grid">
           <div class="detail-item full-width section-header">
-            <span class="detail-section-title">${mLabel("Metadata", "Metadata")}</span>
-          </div>
-
-          ${mRenderReadOnlyItem(mLabel("Preferred Language", "Preferred Language"), mRaw(record, "Preferred Language"))}
-          ${mRenderReadOnlyItem(mLabel("Recorder", "Recorder"), mRaw(record, "Recorder"))}
-          ${mRenderReadOnlyItem(mLabel("Date of Recording", "Date of Recording"), mRaw(record, "Date of Recording") || mLabel("Set automatically on save", "Set automatically on save"))}
-          ${mRenderReadOnlyItem(mLabel("Tstamp", "Tstamp"), mRaw(record, "Tstamp"))}
-          ${mRenderTextInput("MasterID", mLabel("MasterID", "MasterID"), mRaw(record, "MasterID"))}
-        </div>
-      </div>
-
-      <div class="group-block">
-        <div class="group-grid">
-          <div class="detail-item full-width section-header">
             <span class="detail-section-title">${mLabel("Related resources", "Related resources")}</span>
           </div>
 
           ${mRenderTextInput("Monument is part of", mLabel("Monument is part of", "Monument is part of"), mRaw(record, "Monument is part of"), true)}
           ${mRenderTextInput("Monument contains", mLabel("Monument contains", "Monument contains"), mRaw(record, "Monument contains"), true)}
           ${mRenderTextInput("Monument is associated with", mLabel("Monument is associated with", "Monument is associated with"), mRaw(record, "Monument is associated with"), true)}
+        </div>
+      </div>
+
+      <div class="group-block">
+        <div class="group-grid">
+          <div class="detail-item full-width section-header">
+            <span class="detail-section-title">${mLabel("Metadata", "Metadata")}</span>
+          </div>
+
+          ${mRenderReadOnlyItem(mLabel("Preferred Language", "Preferred Language"), mRaw(record, "Preferred Language"))}
+          ${mRenderReadOnlyItem(mLabel("Recorder", "Recorder"), mRaw(record, "Recorder"))}
+          ${mRenderReadOnlyItem(mLabel("Date of Recording", "Date of Recording"), mDateOnly(mRaw(record, "Date of Recording")) || mLabel("Set automatically on save", "Set automatically on save"))}
+          ${mRenderReadOnlyItem(mLabel("Tstamp", "Tstamp"), mDateOnly(mRaw(record, "Tstamp")))}
+          ${mRenderTextInput("MasterID", mLabel("MasterID", "MasterID"), mRaw(record, "MasterID"))}
         </div>
       </div>
     </div>
@@ -3013,6 +3931,8 @@ if (endDateInput) endDateInput.readOnly = true;
   bindMonumentDirtyTracking();
   wireMonumentCulturalPeriodDateRecalc();
   recalculateMonumentDates(record);
+  wireInlineLocationButtons();
+  updateAddModeUI();
 }
 
 
@@ -3135,23 +4055,51 @@ function makeNewBlankMonumentRecord() {
   };
 }
 
+function startMonumentPointSelection() {
+  if (!monumentSelectedRecord) return;
+
+  monumentIsAddMode = true;
+  updateAddModeUI();
+}
+
+function cancelMonumentPointSelection() {
+  monumentIsAddMode = false;
+  clearPendingPickPoint();
+  updateAddModeUI();
+}
+
+function wireInlineLocationButtons() {
+  const inlinePickBtn = document.getElementById("monumentInlinePickPointBtn");
+  const inlineCancelBtn = document.getElementById("monumentInlineCancelPickPointBtn");
+
+  if (inlinePickBtn) {
+    inlinePickBtn.addEventListener("click", startMonumentPointSelection);
+  }
+
+  if (inlineCancelBtn) {
+    inlineCancelBtn.addEventListener("click", cancelMonumentPointSelection);
+  }
+}
+
 function updateAddModeUI() {
   if (map) {
     map.getContainer().style.cursor = monumentIsAddMode ? "crosshair" : "";
   }
 
-  const showMapActions = monumentIsEditMode || !!monumentPendingNewRecord;
+  const inlinePickBtn = document.getElementById("monumentInlinePickPointBtn");
+  const inlineCancelBtn = document.getElementById("monumentInlineCancelPickPointBtn");
+  const inlineNotice = document.getElementById("monumentLocationPickNotice");
 
-  if (monumentMapActionBar) {
-    monumentMapActionBar.hidden = !showMapActions;
+  if (inlinePickBtn) {
+    inlinePickBtn.hidden = monumentIsAddMode;
   }
 
-  if (monumentPickPointBtn) {
-    monumentPickPointBtn.hidden = monumentIsAddMode || !showMapActions;
+  if (inlineCancelBtn) {
+    inlineCancelBtn.hidden = !monumentIsAddMode;
   }
 
-  if (monumentCancelPickPointBtn) {
-    monumentCancelPickPointBtn.hidden = !monumentIsAddMode || !showMapActions;
+  if (inlineNotice) {
+    inlineNotice.hidden = !monumentIsAddMode;
   }
 }
 
@@ -3558,6 +4506,12 @@ if (clearFiltersBtn) {
   });
 }
 
+if (downloadMapBtn) {
+  downloadMapBtn.addEventListener("click", () => {
+    downloadCurrentMapImage();
+  });
+}
+
 if (addMonumentBtn) {
   addMonumentBtn.addEventListener("click", () => {
     if (!monumentConfirmLoseChanges()) return;
@@ -3585,22 +4539,6 @@ if (monumentEditBtn) {
     monumentIsDirty = false;
     renderMonumentRecordDetails(monumentSelectedRecord);
     updateSelectedResultCard();
-  });
-}
-
-if (monumentPickPointBtn) {
-  monumentPickPointBtn.addEventListener("click", () => {
-    if (!monumentSelectedRecord) return;
-
-    monumentIsAddMode = true;
-    updateAddModeUI();
-  });
-}
-
-if (monumentCancelPickPointBtn) {
-  monumentCancelPickPointBtn.addEventListener("click", () => {
-    monumentIsAddMode = false;
-    updateAddModeUI();
   });
 }
 
@@ -3863,7 +4801,8 @@ document.addEventListener("DOMContentLoaded", async () => {
       container: "map",
       style: getBasemapStyle(initialBasemap),
       center: directLinkedRecord?.geometry?.coordinates || [66.9, 48.2],
-      zoom: directLinkedRecord?.geometry?.coordinates ? 8 : 4.2
+      zoom: directLinkedRecord?.geometry?.coordinates ? 8 : 4.2,
+      preserveDrawingBuffer: true
     });
 
     map.addControl(new maplibregl.NavigationControl(), "top-right");
@@ -3872,7 +4811,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     map.on("click", (event) => {
       if (!monumentIsAddMode) return;
 
-      drawPendingPickPoint(event.lngLat);
       applyMapClickToSelectedRecord(event.lngLat);
 
       monumentIsAddMode = false;

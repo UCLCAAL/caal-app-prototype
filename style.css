@@ -236,7 +236,11 @@ body {
 .map-actions {
   display: flex;
   align-items: center;
-  gap: 0.5rem;
+  gap: 0.75rem;
+}
+
+#downloadMapBtn {
+  white-space: nowrap;
 }
 
 .search-box {
@@ -1510,17 +1514,27 @@ Popup preview */
   }
 }
 
+.map-popup-title-btn,
+.map-popup-title-btn:focus,
+.map-popup-title-btn:focus-visible,
+.map-popup-title-btn:active {
+  outline: none;
+  box-shadow: none;
+  border: 0;
+}
+
 .map-popup-title-btn {
   appearance: none;
-  border: 0;
-  background: none;
+  background: transparent;
   padding: 0;
-  margin: 0 0 0.35rem 0;
-  font: inherit;
+  margin: 0 0 0.25rem;
+  color: #2f557f;
   font-weight: 700;
-  color: #1f5f8b;
-  cursor: pointer;
+  font-size: 0.95rem;
+  line-height: 1.25;
   text-align: left;
+  cursor: pointer;
+  text-decoration: none;
 }
 
 .map-popup-title-btn:hover {
@@ -1530,6 +1544,24 @@ Popup preview */
 .map-popup-title-btn::after {
   content: " ›";
   opacity: 0.6;
+}
+
+.map-hover-popup {
+  font-size: 0.82rem;
+  line-height: 1.25;
+  max-width: 220px;
+}
+
+.map-hover-popup strong {
+  display: inline-block;
+  margin-bottom: 0.15rem;
+}
+
+.preview-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  margin-top: 0.65rem;
 }
 
 .result-card.is-selected {
@@ -1605,6 +1637,71 @@ Popup preview */
 .related-id-chip:hover {
   background: #eef6fa;
   text-decoration: underline;
+}
+
+.related-id-chip-invalid {
+  cursor: default;
+  color: #991b1b;
+  background: #fff1f2;
+  border-color: #fecaca;
+  text-decoration: none;
+}
+
+.related-id-chip-invalid::after {
+  content: " !";
+  font-weight: 700;
+}
+
+.related-id-chip-missing {
+  cursor: default;
+  color: #92400e;
+  background: #fffbeb;
+  border-color: #fde68a;
+  text-decoration: none;
+}
+
+.related-id-chip-missing::after {
+  content: " ?";
+  font-weight: 700;
+}
+
+.related-map-actions {
+  display: grid;
+  gap: 0.65rem;
+  align-items: start;
+}
+
+.related-map-actions-text p {
+  margin: 0.25rem 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.4;
+}
+
+.related-map-actions .action-btn {
+  width: fit-content;
+}
+
+.related-map-actions .action-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.legend-related {
+  width: 13px;
+  height: 13px;
+  border-radius: 50%;
+  background: #7c3aed;
+  border: 2px solid #ffffff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
+}
+
+.legend-related-selected {
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  background: #ffd54f;
+  border: 2px solid #1f2937;
 }
 
 .related-record-type-badge {
