@@ -139,11 +139,16 @@ function setStoredLanguage(lang) {
   }
 }
 
-function resolveInitialLanguage() {
+function resolveInitialLanguage({ preferSession = false } = {}) {
+  const sessionLang = window.appSession?.profile?.preferred_language;
   const stored = getStoredLanguage();
+
+  if (preferSession && sessionLang && translations[sessionLang]) {
+    return sessionLang;
+  }
+
   if (stored && translations[stored]) return stored;
 
-  const sessionLang = window.appSession?.profile?.preferred_language;
   if (sessionLang && translations[sessionLang]) return sessionLang;
 
   return "en";
@@ -626,17 +631,11 @@ if (languageSelect) {
 // Initial language/session load
 // --------------------------------------------------------
 document.addEventListener("DOMContentLoaded", async () => {
-  currentLang = resolveInitialLanguage();
   bindLogoutButtons();
-  applyLanguage();
-  initialiseLanguageSelector();
 
   await loadBackendSession();
 
-  const resolvedAfterSession = resolveInitialLanguage();
-  if (resolvedAfterSession !== currentLang) {
-    currentLang = resolvedAfterSession;
-    applyLanguage();
-    initialiseLanguageSelector();
-  }
+  currentLang = resolveInitialLanguage({ preferSession: true });
+  applyLanguage();
+  initialiseLanguageSelector();
 });

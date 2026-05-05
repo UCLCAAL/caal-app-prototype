@@ -207,35 +207,87 @@
       </div>
     </aside>
 
-    <!-- ============         CENTRE PANE: MAP         
-    Keeps map id so existing Leaflet logic can still run
-         ========================================================== -->
-    <section class="workspace-pane map-pane">
-      <div class="pane-header pane-header-inline">
-        <div>
-          <h2>Map</h2>
-          <p data-i18n="click_prompt">Click a monument on the map</p>
-        </div>
+<!-- ============ CENTRE PANE: MAP
+     Keeps map id so existing Leaflet logic can still run
+     ========================================================== -->
+<section class="workspace-pane map-pane">
+  <div class="pane-header pane-header-inline">
+    <div>
+      <h2>Map</h2>
+      <p data-i18n="click_prompt">Click a monument on the map</p>
+    </div>
 
-        <div class="map-actions">
-          <button type="button" class="action-btn" id="downloadMapBtn">
-            Download map
-          </button>
-          
-          <select id="basemapSelect" class="form-control" style="width: 180px;">
-            <option value="osm">OpenStreetMap</option>
-            <option value="maptiler-hybrid">MapTiler Satellite Hybrid</option>
-            <option value="maptiler-streets">MapTiler Streets</option>
-            <option value="maptiler-satellite">MapTiler Satellite</option>
-            <option value="maptiler-topo">MapTiler Topographic</option>
-          </select>
-        </div>
-      </div>
+    <div class="map-actions">
+      <button type="button" class="action-btn" id="mapOptionsBtn">
+        Map options
+      </button>
 
-      <div class="map-pane-body">
-        <div id="map"></div>
-      </div>
-    </section>
+      <button type="button" class="action-btn" id="downloadMapBtn">
+        Download map
+      </button>
+    </div>
+  </div>
+
+  <div class="map-options-panel" id="mapOptionsPanel" hidden>
+    <div class="map-options-header">
+      <strong>Map options</strong>
+      <button type="button" class="icon-btn" id="closeMapOptionsBtn" aria-label="Close map options">
+        ×
+      </button>
+    </div>
+
+    <div class="map-options-section">
+      <label for="basemapSelect">Basemap</label>
+      <select id="basemapSelect" class="form-control">
+        <option value="osm">OpenStreetMap</option>
+        <option value="maptiler-hybrid">MapTiler Satellite Hybrid</option>
+        <option value="maptiler-streets">MapTiler Streets</option>
+        <option value="maptiler-satellite">MapTiler Satellite</option>
+        <option value="maptiler-topo">MapTiler Topographic</option>
+      </select>
+    </div>
+
+    <div class="map-options-section">
+      <label for="mapLabelScopeSelect">Labels</label>
+      <select id="mapLabelScopeSelect" class="form-control">
+        <option value="none">No labels</option>
+        <option value="results">Current results</option>
+        <option value="selected">Selected record</option>
+        <option value="selected_related">Selected + related</option>
+      </select>
+      <p class="map-options-help" id="mapLabelScopeHelp">
+        Labels are off.
+      </p>
+    </div>
+
+    <div class="map-options-section">
+      <label for="mapLabelModeSelect">Label text</label>
+      <select id="mapLabelModeSelect" class="form-control">
+        <option value="name" selected>Name</option>
+        <option value="caal_id">CAAL_ID</option>
+        <option value="name_caal_id">Name + CAAL_ID</option>
+      </select>
+    </div>
+
+    <div class="map-options-section" id="relationshipMapOptions" hidden>
+      <span class="map-options-section-title">Related resources</span>
+
+      <label class="map-options-check">
+        <input type="checkbox" id="showRelatedPointsCheckbox" checked>
+        Show related monuments
+      </label>
+
+      <label class="map-options-check">
+        <input type="checkbox" id="showRelationshipLinesCheckbox" checked>
+        Show relationship lines
+      </label>
+    </div>
+  </div>
+
+  <div class="map-pane-body">
+    <div id="map"></div>
+  </div>
+</section>
 
     <!-- =====================================
          RIGHT PANE: ACTIVE RECORD
@@ -244,8 +296,6 @@
     <aside class="workspace-pane detail-pane" id="monumentDetailPane">
       <div class="pane-header">
         <h2 data-i18n="record_details">Record Details</h2>
-        <p>Selected monument record</p>
-        <p></p>
         <div class="detail-action-bar" id="monumentsActionBar">
           <button type="button" class="action-btn primary" id="addMonumentBtn">Add record</button>
           <button type="button" class="action-btn" id="monumentEditBtn" hidden>Edit record</button>

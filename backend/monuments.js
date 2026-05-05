@@ -346,8 +346,8 @@ function getRepeatedValues(row, fieldNames) {
 }
 
 function buildGeometry(row) {
-  const lng = firstDefined(row["Longitude"], row.longitude);
-  const lat = firstDefined(row["Latitude"], row.latitude);
+  const lng = firstDefined(row["Longitude"], row.longitude, row.geom_lng);
+  const lat = firstDefined(row["Latitude"], row.latitude, row.geom_lat);
 
   if (
     lng === null || lng === undefined || lng === "" ||
@@ -386,8 +386,8 @@ function buildMonumentRecord(row, lang, currentAppUserId = null, canEditCaal = f
       monument_type1: pickLangValue(row, "monument_type1", lang, ["Monument Type1"]),
       cultural_period1: pickLangValue(row, "cultural_period1", lang, ["Cultural Period1"]),
       religion1: pickLangValue(row, "religion1", lang, ["Religion1"]),
-      longitude: firstDefined(row["Longitude"], row.longitude),
-      latitude: firstDefined(row["Latitude"], row.latitude),
+      longitude: firstDefined(row["Longitude"], row.longitude, row.geom_lng),
+      latitude: firstDefined(row["Latitude"], row.latitude, row.geom_lat),
       recorder: firstDefined(row["Recorder"], row.recorder),
       date_of_recording: firstDefined(row["Date of Recording"], row.date_of_recording)
     },
@@ -449,8 +449,8 @@ function buildMonumentListRecord(row, lang, currentAppUserId = null, canEditCaal
       primary_name_english: row["Primary Name (English)"],
       classification: row.classification_display || row["Classification"],
       monument_type1: row.monument_type1_display || row["Monument Type1"],
-      longitude: row["Longitude"],
-      latitude: row["Latitude"]
+      longitude: firstDefined(row["Longitude"], row.longitude, row.geom_lng),
+      latitude: firstDefined(row["Latitude"], row.latitude, row.geom_lat)
     },
 
     raw,
@@ -516,8 +516,8 @@ function buildMonumentMapRecord(row, lang, currentAppUserId = null, canEditCaal 
       monument_type1: row.monument_type1_display || row["Monument Type1"],
       cultural_period1: row.cultural_period1_display || row["Cultural Period1"],
       religion1: row.religion1_display || row["Religion1"],
-      longitude: row["Longitude"],
-      latitude: row["Latitude"]
+      longitude: firstDefined(row["Longitude"], row.longitude, row.geom_lng),
+      latitude: firstDefined(row["Latitude"], row.latitude, row.geom_lat)
     },
 
     raw,
@@ -1452,15 +1452,43 @@ function normaliseMonumentPayload(input = {}) {
 
 async function fetchMonumentRowById(id) {
   const result = await pool.query(
-    `SELECT * FROM ${MONUMENTS_VIEW} WHERE id = $1`,
+    `
+    SELECT
+      v.*,
+      CASE
+        WHEN v.geom IS NOT NULL THEN ST_X(v.geom::geometry)
+        ELSE NULL
+      END AS geom_lng,
+      CASE
+        WHEN v.geom IS NOT NULL THEN ST_Y(v.geom::geometry)
+        ELSE NULL
+      END AS geom_lat
+    FROM ${MONUMENTS_VIEW} v
+    WHERE v.id = $1
+    `,
     [id]
   );
+
   return result.rows[0] || null;
 }
 
 async function fetchPublicMonumentRowById(id) {
   const result = await pool.query(
-    `SELECT *, 'all_caal'::text AS source_scope FROM ui.mv_monuments_caal WHERE id = $1`,
+    `
+    SELECT
+      m.*,
+      'all_caal'::text AS source_scope,
+      CASE
+        WHEN m.geom IS NOT NULL THEN ST_X(m.geom::geometry)
+        ELSE NULL
+      END AS geom_lng,
+      CASE
+        WHEN m.geom IS NOT NULL THEN ST_Y(m.geom::geometry)
+        ELSE NULL
+      END AS geom_lat
+    FROM ui.mv_monuments_caal m
+    WHERE m.id = $1
+    `,
     [id]
   );
 

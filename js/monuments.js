@@ -24,9 +24,20 @@ const filterCountry = document.getElementById("filterCountry");
 
 const resultsList = document.getElementById("resultsList");
 const resultsCount = document.getElementById("resultsCount");
-//map
+//map controls
 const downloadMapBtn = document.getElementById("downloadMapBtn");
+const mapOptionsBtn = document.getElementById("mapOptionsBtn");
+const closeMapOptionsBtn = document.getElementById("closeMapOptionsBtn");
+const mapOptionsPanel = document.getElementById("mapOptionsPanel");
+
 const basemapSelect = document.getElementById("basemapSelect");
+const mapLabelScopeSelect = document.getElementById("mapLabelScopeSelect");
+const mapLabelModeSelect = document.getElementById("mapLabelModeSelect");
+const mapLabelScopeHelp = document.getElementById("mapLabelScopeHelp");
+
+const relationshipMapOptions = document.getElementById("relationshipMapOptions");
+const showRelatedPointsCheckbox = document.getElementById("showRelatedPointsCheckbox");
+const showRelationshipLinesCheckbox = document.getElementById("showRelationshipLinesCheckbox");
 
 const showWorkspaceRecords = document.getElementById("showWorkspaceRecords");
 const showNationalRecords = document.getElementById("showNationalRecords");
@@ -82,6 +93,7 @@ let monumentMapRequestSeq = 0;
 
 let monumentTotalIsExact = true;
 let monumentMapIsStale = false;
+let monumentRelatedSelectionGeojson = null;
 
 
 // --------------------------------------------------------
@@ -103,44 +115,121 @@ function drawSelectedMonumentHighlight(record) {
         geometry: record.geometry,
         properties: {
           id: record.identity?.id,
-          caal_id: record.identity?.caal_id,
-          primary_name: record.summary?.primary_name
+          caal_id: record.identity?.caal_id || "",
+          label:
+            mSummary(record, "primary_name") ||
+            mSummary(record, "primary_name_english") ||
+            record.identity?.caal_id ||
+            "",
+          primary_name:
+            mSummary(record, "primary_name") ||
+            mSummary(record, "primary_name_english") ||
+            ""
         }
       }
     ]
   };
 
-  if (map.getLayer("monument-selected-ring")) {
-    map.removeLayer("monument-selected-ring");
-  }
-  if (map.getSource("monument-selected")) {
-    map.removeSource("monument-selected");
+  const existingSource = map.getSource("monument-selected");
+
+  if (existingSource && typeof existingSource.setData === "function") {
+    existingSource.setData(feature);
+  } else {
+    map.addSource("monument-selected", {
+      type: "geojson",
+      data: feature
+    });
   }
 
-  map.addSource("monument-selected", {
-    type: "geojson",
-    data: feature
-  });
+  if (!map.getLayer("monument-selected-ring")) {
+    map.addLayer({
+      id: "monument-selected-ring",
+      type: "circle",
+      source: "monument-selected",
+      paint: {
+        "circle-radius": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          4, 7,
+          8, 9,
+          12, 11
+        ],
+        "circle-color": "rgba(0, 229, 255, 0.12)",
+        "circle-stroke-width": 4,
+        "circle-stroke-color": "#00e5ff"
+      }
+    });
+  }
 
-  map.addLayer({
-    id: "monument-selected-ring",
-    type: "circle",
-    source: "monument-selected",
-    paint: {
-      "circle-radius": [
-        "interpolate",
-        ["linear"],
-        ["zoom"],
-        4, 7,
-        8, 9,
-        12, 11
-      ],
-      "circle-color": "rgba(0,0,0,0)",
-      "circle-stroke-width": 2,
-      "circle-stroke-color": "#ffd54f"
-    }
-  });
+  bringMonumentOverlaysToFront();
+  renderLiveMapLabels();
+  updateMapOptionsState();
   renderMonumentLegend();
+}
+
+function drawFocusedResultHighlight(record) {
+  if (!map || !mapLoaded || !record?.geometry?.coordinates) return;
+
+  const feature = {
+    type: "FeatureCollection",
+    features: [
+      {
+        type: "Feature",
+        geometry: record.geometry,
+        properties: {
+          id: record.identity?.id,
+          caal_id: record.identity?.caal_id || ""
+        }
+      }
+    ]
+  };
+
+  const existingSource = map.getSource("monument-result-focus");
+
+  if (existingSource && typeof existingSource.setData === "function") {
+    existingSource.setData(feature);
+  } else {
+    map.addSource("monument-result-focus", {
+      type: "geojson",
+      data: feature
+    });
+  }
+
+  if (!map.getLayer("monument-result-focus-ring")) {
+    map.addLayer({
+      id: "monument-result-focus-ring",
+      type: "circle",
+      source: "monument-result-focus",
+      paint: {
+        "circle-radius": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          4, 8,
+          8, 10,
+          12, 12
+        ],
+        "circle-color": "rgba(255, 255, 255, 0)",
+        "circle-stroke-width": 3,
+        "circle-stroke-color": "rgba(40, 40, 40, 0.45)"
+      }
+    });
+  }
+
+  bringMonumentOverlaysToFront();
+}
+
+function clearFocusedResultHighlight() {
+  if (!map || !mapLoaded) return;
+
+  if (map.getLayer("monument-result-focus-ring")) {
+    map.removeLayer("monument-result-focus-ring");
+  }
+
+  if (map.getSource("monument-result-focus")) {
+    map.removeSource("monument-result-focus");
+  }
 }
 
 function ensureRecordVisibleOnMap(record) {
@@ -402,7 +491,7 @@ function getCurrentMapLegendItems() {
   }
 
   if (hasSelected) {
-    items.push({ label: "Selected record", color: "#ffd54f", type: "ring" });
+    items.push({ label: "Selected record", color: "#00e5ff", type: "ring" });
   }
 
   if (hasPending) {
@@ -452,7 +541,11 @@ function calculateMapScaleBar() {
   };
 }
 
-function downloadCurrentMapImage() {
+function downloadCurrentMapImage(options = {}) {
+  const {
+    labelScope = "none",
+    labelMode = "name"
+  } = options;
   if (!map) return;
 
   map.once("idle", () => {
@@ -475,6 +568,8 @@ function downloadCurrentMapImage() {
     function scaled(px) {
       return Math.round(px * uiScale);
     }
+
+    drawExportMapLabels(ctx, labelScope, labelMode);
 
     // Shared styles
     ctx.font = "23px Arial, sans-serif";
@@ -660,15 +755,162 @@ function downloadCurrentMapImage() {
   map.triggerRepaint();
 }
 
+function getExportRecordLabel(record, mode = "name") {
+  const name =
+    mSummary(record, "primary_name") ||
+    mSummary(record, "primary_name_english") ||
+    "";
+
+  const caalId = mIdentity(record, "caal_id") || "";
+
+  if (mode === "caal_id") return caalId;
+
+  if (mode === "name_caal_id") {
+    if (name && caalId) return `${name} (${caalId})`;
+    return name || caalId;
+  }
+
+  return name || caalId;
+}
+
+function getExportLabelFeatures(labelScope = "none", labelMode = "name") {
+  const labelFeatures = [];
+
+  if (labelScope === "none") {
+    return labelFeatures;
+  }
+
+  if (labelScope === "results") {
+    monumentListRecords.forEach((record) => {
+      if (!record?.geometry?.coordinates) return;
+
+      labelFeatures.push({
+        role: "results",
+        coordinates: record.geometry.coordinates,
+        label: getExportRecordLabel(record, labelMode)
+      });
+    });
+
+    return labelFeatures;
+  }
+
+  if (
+    (labelScope === "selected" || labelScope === "selected_related") &&
+    monumentSelectedRecord?.geometry?.coordinates
+  ) {
+    labelFeatures.push({
+      role: "selected",
+      coordinates: monumentSelectedRecord.geometry.coordinates,
+      label: getExportRecordLabel(monumentSelectedRecord, labelMode)
+    });
+  }
+
+  if (labelScope === "selected_related" && monumentRelatedSelectionGeojson?.features?.length) {
+    monumentRelatedSelectionGeojson.features.forEach((feature) => {
+      if (
+        feature?.geometry?.type !== "Point" ||
+        feature?.properties?.role !== "related"
+      ) {
+        return;
+      }
+
+      labelFeatures.push({
+        role: "related",
+        coordinates: feature.geometry.coordinates,
+        label:
+          labelMode === "caal_id"
+            ? feature.properties?.caal_id
+            : labelMode === "name_caal_id"
+              ? `${feature.properties?.label || feature.properties?.caal_id} (${feature.properties?.caal_id})`
+              : feature.properties?.label || feature.properties?.caal_id
+      });
+    });
+  }
+
+  return labelFeatures.filter((item) => item.label);
+}
+
+function drawExportMapLabels(ctx, labelScope = "none", labelMode = "name") {
+  if (!map || labelScope === "none") return;
+
+  const labels = getExportLabelFeatures(labelScope, labelMode);
+  if (!labels.length) return;
+
+  const canvas = map.getCanvas();
+  const width = canvas.width;
+  const uiScale = Math.max(1, width / 1400);
+
+  function scaled(px) {
+    return Math.round(px * uiScale);
+  }
+
+  ctx.save();
+  ctx.textBaseline = "middle";
+
+  labels.forEach((item, index) => {
+    const point = map.project(item.coordinates);
+    const label = String(item.label || "").trim();
+    if (!label) return;
+
+    const fontSize =
+      item.role === "selected"
+        ? scaled(18)
+        : scaled(16);
+
+    const paddingX = scaled(8);
+    const paddingY = scaled(5);
+    const offsetX = scaled(12);
+    const offsetY =
+      item.role === "selected"
+        ? scaled(-16)
+        : scaled(14 + (index % 3) * 6);
+
+    ctx.font = `bold ${fontSize}px Arial, sans-serif`;
+
+    const textW = ctx.measureText(label).width;
+    const boxW = textW + paddingX * 2;
+    const boxH = fontSize + paddingY * 2;
+
+    const x = point.x + offsetX;
+    const y = point.y + offsetY;
+
+    ctx.fillStyle =
+      item.role === "selected"
+        ? "rgba(255, 248, 210, 0.96)"
+        : item.role === "related"
+          ? "rgba(245, 240, 255, 0.96)"
+          : "rgba(255, 255, 255, 0.94)";
+
+    ctx.strokeStyle =
+      item.role === "selected"
+        ? "rgba(148, 118, 0, 0.55)"
+        : item.role === "related"
+          ? "rgba(80, 45, 150, 0.55)"
+          : "rgba(0, 0, 0, 0.22)";
+
+    ctx.lineWidth = scaled(1);
+
+    ctx.beginPath();
+    ctx.roundRect(x, y - boxH / 2, boxW, boxH, scaled(6));
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = "#263238";
+    ctx.fillText(label, x + paddingX, y);
+  });
+
+  ctx.restore();
+}
 // --------------------------------------------------------
 // Helpers
 // --------------------------------------------------------
+//map helpers
 function showCurrentMonumentResultsOnMap() {
-  if (!map || !Array.isArray(monumentMapRecords) || monumentMapRecords.length === 0) {
+  if (!map || !Array.isArray(monumentListRecords) || monumentListRecords.length === 0) {
     return;
   }
 
-  const coordinates = monumentMapRecords
+  const coordinates = monumentListRecords
     .map((record) => record?.geometry?.coordinates)
     .filter((coords) =>
       Array.isArray(coords) &&
@@ -693,19 +935,304 @@ function showCurrentMonumentResultsOnMap() {
     maxZoom: 10,
     duration: 700
   });
+
+  if (mapLabelScopeSelect && mapLabelScopeSelect.value === "none") {
+    mapLabelScopeSelect.value = "results";
+    updateMapLabelHelpText();
+  }
+
+  renderLiveMapLabels();
+  updateMapOptionsState();
 }
 
 function updateShowResultsOnMapButton() {
   if (!showResultsOnMapBtn) return;
 
-  const hasMappableResults = monumentMapRecords.some(
-    (record) => Array.isArray(record?.geometry?.coordinates)
-  );
+  const hasMappableResults =
+    Array.isArray(monumentListRecords) &&
+    monumentListRecords.some((record) => Array.isArray(record?.geometry?.coordinates));
 
   showResultsOnMapBtn.disabled = !hasMappableResults;
   showResultsOnMapBtn.classList.toggle("is-disabled", !hasMappableResults);
 }
 
+function setOptionEnabled(selectEl, value, enabled) {
+  if (!selectEl) return;
+
+  const option = Array.from(selectEl.options).find((opt) => opt.value === value);
+  if (option) {
+    option.disabled = !enabled;
+  }
+}
+
+function updateMapLabelHelpText() {
+  if (!mapLabelScopeHelp || !mapLabelScopeSelect) return;
+
+  const messages = {
+    none: mLabel("Labels are off.", "Labels are off."),
+    results: mLabel(
+      "Labels apply to the current result set in the left pane.",
+      "Labels apply to the current result set in the left pane."
+    ),
+    selected: mLabel(
+      "Labels apply to the open record in the details pane.",
+      "Labels apply to the open record in the details pane."
+    ),
+    selected_related: mLabel(
+      "Labels apply to the open record and its related monuments currently shown on the map.",
+      "Labels apply to the open record and its related monuments currently shown on the map."
+    )
+  };
+
+  mapLabelScopeHelp.textContent = messages[mapLabelScopeSelect.value] || messages.none;
+}
+
+function updateMapOptionsState() {
+  const hasResults =
+    Array.isArray(monumentListRecords) &&
+    monumentListRecords.some((record) => Array.isArray(record?.geometry?.coordinates));
+
+  const hasSelected = !!monumentSelectedRecord?.geometry?.coordinates;
+
+  const hasRelated =
+    !!monumentRelatedSelectionGeojson?.features?.some(
+      (feature) =>
+        feature?.geometry?.type === "Point" &&
+        feature?.properties?.role === "related"
+    );
+
+  setOptionEnabled(mapLabelScopeSelect, "results", hasResults);
+  setOptionEnabled(mapLabelScopeSelect, "selected", hasSelected);
+  setOptionEnabled(mapLabelScopeSelect, "selected_related", hasSelected && hasRelated);
+
+  if (relationshipMapOptions) {
+    relationshipMapOptions.hidden = !hasRelated;
+    relationshipMapOptions.classList.toggle("is-disabled", !hasRelated);
+  }
+
+  if (showRelatedPointsCheckbox) {
+    showRelatedPointsCheckbox.disabled = !hasRelated;
+    showRelatedPointsCheckbox.closest("label")?.classList.toggle("is-disabled", !hasRelated);
+  }
+
+  if (showRelationshipLinesCheckbox) {
+    showRelationshipLinesCheckbox.disabled = !hasRelated;
+    showRelationshipLinesCheckbox.closest("label")?.classList.toggle("is-disabled", !hasRelated);
+  }
+
+  if (!hasRelated) {
+    if (showRelatedPointsCheckbox) {
+      showRelatedPointsCheckbox.checked = false;
+    }
+
+    if (showRelationshipLinesCheckbox) {
+      showRelationshipLinesCheckbox.checked = false;
+    }
+  } else {
+    if (showRelatedPointsCheckbox && showRelatedPointsCheckbox.dataset.userChanged !== "true") {
+      showRelatedPointsCheckbox.checked = true;
+    }
+
+    if (showRelationshipLinesCheckbox && showRelationshipLinesCheckbox.dataset.userChanged !== "true") {
+      showRelationshipLinesCheckbox.checked = true;
+    }
+  }
+
+  if (mapLabelScopeSelect) {
+    if (mapLabelScopeSelect.value === "results" && !hasResults) {
+      mapLabelScopeSelect.value = "none";
+    }
+
+    if (mapLabelScopeSelect.value === "selected" && !hasSelected) {
+      mapLabelScopeSelect.value = "none";
+    }
+
+    if (mapLabelScopeSelect.value === "selected_related" && !(hasSelected && hasRelated)) {
+      mapLabelScopeSelect.value = hasSelected ? "selected" : "none";
+    }
+  }
+
+  updateMapLabelHelpText();
+}
+
+function setRelationshipLayerVisibility() {
+  if (!map) return;
+
+  const showPoints = showRelatedPointsCheckbox?.checked !== false;
+  const showLines = showRelationshipLinesCheckbox?.checked !== false;
+
+  if (map.getLayer("monument-related-points")) {
+    map.setLayoutProperty(
+      "monument-related-points",
+      "visibility",
+      showPoints ? "visible" : "none"
+    );
+  }
+
+  [
+    "monument-related-lines-halo",
+    "monument-related-lines"
+  ].forEach((layerId) => {
+    if (map.getLayer(layerId)) {
+      map.setLayoutProperty(
+        layerId,
+        "visibility",
+        showLines ? "visible" : "none"
+      );
+    }
+  });
+}
+
+function getLiveMapLabelExpression() {
+  const mode = mapLabelModeSelect?.value || "name";
+
+  if (mode === "caal_id") {
+    return ["coalesce", ["get", "caal_id"], ""];
+  }
+
+  if (mode === "name_caal_id") {
+    return [
+      "case",
+      ["all", ["has", "label"], ["has", "caal_id"]],
+      ["concat", ["get", "label"], " (", ["get", "caal_id"], ")"],
+      ["coalesce", ["get", "label"], ["get", "caal_id"], ""]
+    ];
+  }
+
+  return ["coalesce", ["get", "label"], ["get", "caal_id"], ""];
+}
+
+function renderLiveMapLabels() {
+  if (!map || !mapLoaded) return;
+
+  if (map.getLayer("monument-live-labels")) {
+    map.removeLayer("monument-live-labels");
+  }
+
+  const scope = mapLabelScopeSelect?.value || "none";
+
+  if (scope === "none") {
+    return;
+  }
+
+  let sourceId = null;
+  let filter = null;
+
+  if (scope === "results") {
+    const hasResultsSource = refreshCurrentResultsLabelSource();
+    if (!hasResultsSource) return;
+
+    sourceId = "monument-results-labels";
+    filter = ["==", ["geometry-type"], "Point"];
+  } else if (scope === "selected_related") {
+    if (!map.getSource("monument-related-selection")) return;
+
+    sourceId = "monument-related-selection";
+    filter = [
+      "all",
+      ["==", ["geometry-type"], "Point"],
+      ["in", ["get", "role"], ["literal", ["selected", "related"]]]
+    ];
+  } else if (scope === "selected") {
+    if (!map.getSource("monument-selected")) return;
+
+    sourceId = "monument-selected";
+    filter = ["==", ["geometry-type"], "Point"];
+  } else {
+    return;
+  }
+
+  map.addLayer({
+    id: "monument-live-labels",
+    type: "symbol",
+    source: sourceId,
+    filter,
+    layout: {
+      "text-field": getLiveMapLabelExpression(),
+      "text-size": [
+        "case",
+        ["==", ["get", "role"], "selected"],
+        13,
+        ["==", ["get", "role"], "related"],
+        11,
+        11
+      ],
+      "text-font": ["Open Sans Semibold", "Arial Unicode MS Bold"],
+      "text-anchor": "left",
+      "text-offset": [0.9, -0.8],
+      "text-allow-overlap": false,
+      "text-ignore-placement": false
+    },
+    paint: {
+      "text-color": "#1f2933",
+      "text-halo-color": "rgba(255,255,255,0.88)",
+      "text-halo-width": 1.2
+    }
+  });
+
+  bringMonumentOverlaysToFront();
+
+  if (map.getLayer("monument-live-labels")) {
+    map.moveLayer("monument-live-labels");
+  }
+}
+
+function monumentRecordToLiveLabelFeature(record) {
+  if (!record?.geometry?.coordinates) return null;
+
+  return {
+    type: "Feature",
+    geometry: record.geometry,
+    properties: {
+      role: "results",
+      id: record.identity?.id,
+      caal_id: record.identity?.caal_id || "",
+      label:
+        mSummary(record, "primary_name") ||
+        mSummary(record, "primary_name_english") ||
+        record.identity?.caal_id ||
+        ""
+    }
+  };
+}
+
+function getCurrentResultsLabelGeojson() {
+  return {
+    type: "FeatureCollection",
+    features: monumentListRecords
+      .map(monumentRecordToLiveLabelFeature)
+      .filter(Boolean)
+  };
+}
+
+function refreshCurrentResultsLabelSource() {
+  if (!map || !mapLoaded) return false;
+
+  const geojson = getCurrentResultsLabelGeojson();
+
+  if (!geojson.features.length) {
+    if (map.getSource("monument-results-labels")) {
+      map.getSource("monument-results-labels").setData(geojson);
+    }
+
+    return false;
+  }
+
+  const existingSource = map.getSource("monument-results-labels");
+
+  if (existingSource && typeof existingSource.setData === "function") {
+    existingSource.setData(geojson);
+  } else {
+    map.addSource("monument-results-labels", {
+      type: "geojson",
+      data: geojson
+    });
+  }
+
+  return true;
+}
+
+//results
 function updateSelectedResultCard() {
   if (!resultsList) return;
 
@@ -889,6 +1416,26 @@ function mIdentity(record, fieldName) {
 
 function mGeometry(record) {
   return record?.geometry ?? null;
+}
+
+function mDisplayLongitude(record) {
+  const value =
+    mSummary(record, "longitude") ??
+    mRaw(record, "Longitude") ??
+    record?.geometry?.coordinates?.[0] ??
+    null;
+
+  return value;
+}
+
+function mDisplayLatitude(record) {
+  const value =
+    mSummary(record, "latitude") ??
+    mRaw(record, "Latitude") ??
+    record?.geometry?.coordinates?.[1] ??
+    null;
+
+  return value;
 }
 
 function mLookupOptions(lookupName) {
@@ -1675,23 +2222,145 @@ async function validateDisplayedRelatedIds() {
   }));
 }
 
-function clearRelatedMonumentsMap() {
-  if (!map) return;
+function clearRelationshipStateForNewSelection() {
+  clearRelatedMonumentsMap();
 
-  [
-    "monument-related-lines",
-    "monument-related-selected-halo",
-    "monument-related-points"
-  ].forEach((layerId) => {
-    if (map.getLayer(layerId)) {
-      map.removeLayer(layerId);
-    }
-  });
-
-  if (map.getSource("monument-related-selection")) {
-    map.removeSource("monument-related-selection");
+  if (mapLabelScopeSelect && mapLabelScopeSelect.value === "selected_related") {
+    mapLabelScopeSelect.value = "selected";
+    updateMapLabelHelpText();
   }
 
+  renderLiveMapLabels();
+  updateMapOptionsState();
+}
+
+function clearRelatedMonumentsMap() {
+  if (map) {
+    [
+      "monument-live-labels",
+      "monument-related-lines-halo",
+      "monument-related-lines",
+      "monument-related-points"
+    ].forEach((layerId) => {
+      if (map.getLayer(layerId)) {
+        map.removeLayer(layerId);
+      }
+    });
+
+    if (map.getSource("monument-related-selection")) {
+      map.removeSource("monument-related-selection");
+    }
+  }
+
+  monumentRelatedSelectionGeojson = null;
+  updateMapOptionsState();
+  renderLiveMapLabels();
+  renderMonumentLegend();
+}
+
+function renderRelatedMonumentsMapOverlay() {
+  if (!map || !mapLoaded || !monumentRelatedSelectionGeojson?.features?.length) {
+    return;
+  }
+
+  const existingSource = map.getSource("monument-related-selection");
+
+  if (existingSource && typeof existingSource.setData === "function") {
+    existingSource.setData(monumentRelatedSelectionGeojson);
+  } else {
+    map.addSource("monument-related-selection", {
+      type: "geojson",
+      data: monumentRelatedSelectionGeojson
+    });
+  }
+
+  // White underlay for relationship lines
+  if (!map.getLayer("monument-related-lines-halo")) {
+    map.addLayer({
+      id: "monument-related-lines-halo",
+      type: "line",
+      source: "monument-related-selection",
+      filter: ["==", ["geometry-type"], "LineString"],
+      paint: {
+        "line-width": 5,
+        "line-opacity": 0.55,
+        "line-color": "#ffffff"
+      }
+    });
+  }
+
+  // Purple relationship lines
+  if (!map.getLayer("monument-related-lines")) {
+    map.addLayer({
+      id: "monument-related-lines",
+      type: "line",
+      source: "monument-related-selection",
+      filter: ["==", ["geometry-type"], "LineString"],
+      paint: {
+        "line-width": 2.5,
+        "line-opacity": 0.85,
+        "line-color": "#7c3aed"
+      }
+    });
+  }
+
+  // Related monument points only.
+  // The selected/open record is already shown by monument-selected-ring.
+  if (!map.getLayer("monument-related-points")) {
+    map.addLayer({
+      id: "monument-related-points",
+      type: "circle",
+      source: "monument-related-selection",
+      filter: [
+        "all",
+        ["==", ["geometry-type"], "Point"],
+        ["==", ["get", "role"], "related"]
+      ],
+      paint: {
+        "circle-radius": 7,
+        "circle-color": "#7c3aed",
+        "circle-opacity": 0.9,
+        "circle-stroke-width": 2,
+        "circle-stroke-color": "#ffffff"
+      }
+    });
+  }
+
+  renderLiveMapLabels();
+  setRelationshipLayerVisibility();
+  bringMonumentOverlaysToFront();
+  updateMapOptionsState();
+  renderMonumentLegend();
+}
+
+function clearSelectedMonumentRecord() {
+  if (!monumentConfirmLoseChanges()) return;
+
+  monumentSelectedRecord = null;
+  monumentPendingNewRecord = null;
+  monumentIsEditMode = false;
+  monumentIsDirty = false;
+  monumentIsAddMode = false;
+
+  monumentSyncModeVisualState();
+  updateAddModeUI();
+  updateMonumentActionBar();
+  updateSelectedResultCard();
+
+  if (map) {
+    if (map.getLayer("monument-selected-ring")) {
+      map.removeLayer("monument-selected-ring");
+    }
+
+    if (map.getSource("monument-selected")) {
+      map.removeSource("monument-selected");
+    }
+  }
+  clearRelatedMonumentsMap();
+  clearPendingPickPoint();
+  renderMonumentEmptyState();
+
+  updateMapOptionsState();
   renderMonumentLegend();
 }
 
@@ -1699,11 +2368,14 @@ function bringMonumentOverlaysToFront() {
   if (!map) return;
 
   [
+    "monument-related-lines-halo",
     "monument-related-lines",
-    "monument-related-selected-halo",
     "monument-related-points",
     "monument-selected-ring",
-    "monument-pick-point-layer"
+    "monument-pick-point-layer",
+    "monument-hover-ring",
+    "monument-result-focus-ring",
+    "monument-live-labels"
   ].forEach((layerId) => {
     if (map.getLayer(layerId)) {
       map.moveLayer(layerId);
@@ -1858,6 +2530,7 @@ function renderMonumentPreviewModal(record) {
       monumentSyncModeVisualState();
       monumentPendingNewRecord = null;
       monumentSelectedRecord = record;
+      clearRelationshipStateForNewSelection();
 
       renderMonumentRecordDetails(record);
       updateSelectedResultCard();
@@ -1881,6 +2554,7 @@ function renderMonumentPreviewModal(record) {
 
       drawSelectedMonumentHighlight(record);
       renderMonumentLegend();
+      updateMapOptionsState();
 
       map.easeTo({
         center: record.geometry.coordinates,
@@ -2395,6 +3069,7 @@ async function loadMonumentMapRecords() {
   if (!scopes.length) {
     monumentMapRecords = [];
     drawMonumentRecords([]);
+    updateMapOptionsState();
     setMapStaleState(false);
     return;
   }
@@ -2426,6 +3101,7 @@ async function loadMonumentMapRecords() {
 
     monumentMapRecords = data.records || [];
     drawMonumentRecords(monumentMapRecords);
+    updateMapOptionsState();
   } finally {
     if (requestSeq === monumentMapRequestSeq) {
       setMapStaleState(false);
@@ -2442,6 +3118,9 @@ async function loadMonumentListRecords() {
     monumentTotalCount = 0;
     monumentTotalIsExact = true;
     renderMonumentResultsList([]);
+    updateShowResultsOnMapButton();
+    renderLiveMapLabels();
+    updateMapOptionsState();
     renderMonumentEmptyState();
     return;
   }
@@ -2470,6 +3149,9 @@ async function loadMonumentListRecords() {
   monumentTotalIsExact = data.total_is_exact !== false;
 
   renderMonumentResultsList(monumentListRecords);
+  updateShowResultsOnMapButton();
+  renderLiveMapLabels();
+  updateMapOptionsState();
   renderMonumentPageInfo();
 }
 
@@ -2579,6 +3261,8 @@ async function applyMonumentFilters({ includeMap = true, listFirst = true } = {}
       map.removeSource("monument-selected");
     }
   }
+  clearRelatedMonumentsMap();
+  updateMapOptionsState();
 
   setMonumentsLoading(true, mLabel("Updating results...", "Updating results..."));
 
@@ -2932,6 +3616,8 @@ function drawMonumentRecords(records) {
     }
     bringMonumentOverlaysToFront();
     renderMonumentLegend();
+    updateShowResultsOnMapButton();
+    updateMapOptionsState();
     return;
   }
 
@@ -3083,6 +3769,7 @@ function drawMonumentRecords(records) {
   bindMonumentLayerEvents();
   renderMonumentLegend();
   updateShowResultsOnMapButton();
+  updateMapOptionsState();
 }
 
 
@@ -3159,6 +3846,9 @@ function renderMonumentResultsList(records) {
         monumentSyncModeVisualState();
         monumentPendingNewRecord = null;
         monumentSelectedRecord = fullRecord;
+        clearRelatedMonumentsMap();
+
+        clearRelationshipStateForNewSelection();
 
         renderMonumentRecordDetails(fullRecord);
         updateSelectedResultCard();
@@ -3176,13 +3866,6 @@ function renderMonumentResultsList(records) {
       }
     });
 
-    card.addEventListener("mouseenter", () => {
-      const idx = Number(card.dataset.resultIndex);
-      const record = records[idx];
-      if (!record?.geometry?.coordinates) return;
-
-      drawSelectedMonumentHighlight(record);
-    });
   });
   Array.from(resultsList.querySelectorAll(".result-preview-btn")).forEach((btn) => {
     btn.addEventListener("click", async (event) => {
@@ -3222,6 +3905,7 @@ function renderMonumentEmptyState() {
   updateMonumentActionBar();
   clearPendingPickPoint();
   updateAddModeUI();
+  updateMapOptionsState();
 }
 
 // --------------------------------------------------------
@@ -3252,6 +3936,8 @@ async function moveSelection(direction) {
     const fullRecord = await loadFullMonumentRecord(lightRecord);
 
     monumentSelectedRecord = fullRecord;
+    clearRelationshipStateForNewSelection();
+    clearRelatedMonumentsMap();
     renderMonumentRecordDetails(fullRecord);
     updateSelectedResultCard();
 
@@ -3279,6 +3965,7 @@ function renderMonumentRecordDetails(record) {
 
   updateMonumentActionBar();
   updateAddModeUI();
+  updateMapOptionsState();
 }
 
 function renderMonumentDisplayMode(record) {
@@ -3313,8 +4000,8 @@ function renderMonumentDisplayMode(record) {
     : `<span class="record-status-badge record-status-readonly">${mLabel("Read only", "Read only")}</span>`;
     
   const locationHtml = [
-    mRenderDetailItem(mLabel("Longitude", "Longitude"), mSummary(record, "longitude")),
-    mRenderDetailItem(mLabel("Latitude", "Latitude"), mSummary(record, "latitude")),
+    mRenderDetailItem(mLabel("Longitude", "Longitude"), mDisplayLongitude(record)),
+    mRenderDetailItem(mLabel("Latitude", "Latitude"), mDisplayLatitude(record)),
     mRenderDetailItem(mLabel("Altitude", "Altitude"), mRaw(record, "Altitude")),
     mRenderDetailItem(
       mLabel("Location Confidence", "Location Confidence"),
@@ -3468,9 +4155,15 @@ function renderMonumentDisplayMode(record) {
       </div>
       <p>${mSafeValue(mIdentity(record, "caal_id"))}</p>
       <p></p>
-      <button type="button" class="action-btn" id="zoomToSelectedMonumentBtn">
-        Centre on map
-      </button>
+      <div class="record-title-actions">
+        <button type="button" class="action-btn" id="zoomToSelectedMonumentBtn">
+          ${mLabel("Centre on map", "Centre on map")}
+        </button>
+
+        <button type="button" class="action-btn" id="clearSelectedMonumentBtn">
+          ${mLabel("Close record", "Close record")}
+        </button>
+      </div>
     </div>
 
     <div class="group-stack">
@@ -3497,6 +4190,11 @@ function renderMonumentDisplayMode(record) {
         duration: 600
       });
     });
+  }
+  const clearSelectedBtn = document.getElementById("clearSelectedMonumentBtn");
+
+  if (clearSelectedBtn) {
+    clearSelectedBtn.addEventListener("click", clearSelectedMonumentRecord);
   }
   wireRelatedRecordChips();
 
@@ -3555,7 +4253,12 @@ async function showRelatedMonumentsOnMap(record = monumentSelectedRecord) {
       geometry: record.geometry,
       properties: {
         role: "selected",
-        caal_id: record.identity?.caal_id || ""
+        caal_id: record.identity?.caal_id || "",
+        label:
+          mSummary(record, "primary_name") ||
+          mSummary(record, "primary_name_english") ||
+          record.identity?.caal_id ||
+          ""
       }
     });
   }
@@ -3566,7 +4269,11 @@ async function showRelatedMonumentsOnMap(record = monumentSelectedRecord) {
       geometry: item.record.geometry,
       properties: {
         role: "related",
-        caal_id: item.caalId
+        caal_id: item.caalId,
+        label:
+          mSummary(item.record, "primary_name") ||
+          mSummary(item.record, "primary_name_english") ||
+          item.caalId
       }
     });
   });
@@ -3595,105 +4302,27 @@ async function showRelatedMonumentsOnMap(record = monumentSelectedRecord) {
     return;
   }
 
-  const geojson = {
+    const geojson = {
     type: "FeatureCollection",
     features
   };
 
-  if (map.getSource("monument-related-selection")) {
-    map.getSource("monument-related-selection").setData(geojson);
-  } else {
-    map.addSource("monument-related-selection", {
-      type: "geojson",
-      data: geojson
-    });
+  if (showRelatedPointsCheckbox) {
+    showRelatedPointsCheckbox.dataset.userChanged = "false";
+    showRelatedPointsCheckbox.checked = true;
   }
 
-  if (!map.getLayer("monument-related-lines")) {
-    map.addLayer({
-      id: "monument-related-lines",
-      type: "line",
-      source: "monument-related-selection",
-      filter: ["==", ["geometry-type"], "LineString"],
-      paint: {
-        "line-width": 2,
-        "line-opacity": 0.65,
-        "line-color": "#7c3aed"
-      }
-    });
-  } else {
-    map.setPaintProperty("monument-related-lines", "line-color", "#7c3aed");
-    map.setPaintProperty("monument-related-lines", "line-opacity", 0.65);
-    map.setPaintProperty("monument-related-lines", "line-width", 2);
+  if (showRelationshipLinesCheckbox) {
+    showRelationshipLinesCheckbox.dataset.userChanged = "false";
+    showRelationshipLinesCheckbox.checked = true;
   }
 
-  if (!map.getLayer("monument-related-selected-halo")) {
-    map.addLayer({
-      id: "monument-related-selected-halo",
-      type: "circle",
-      source: "monument-related-selection",
-      filter: [
-        "all",
-        ["==", ["geometry-type"], "Point"],
-        ["==", ["get", "role"], "selected"]
-      ],
-      paint: {
-        "circle-radius": 13,
-        "circle-color": "rgba(255, 213, 79, 0)",
-        "circle-stroke-width": 3,
-        "circle-stroke-color": "#ffd54f"
-      }
-    });
-  } else {
-    map.setPaintProperty("monument-related-selected-halo", "circle-radius", 13);
-    map.setPaintProperty("monument-related-selected-halo", "circle-color", "rgba(255, 213, 79, 0)");
-    map.setPaintProperty("monument-related-selected-halo", "circle-stroke-width", 3);
-    map.setPaintProperty("monument-related-selected-halo", "circle-stroke-color", "#ffd54f");
-  }
+  monumentRelatedSelectionGeojson = geojson;
 
-  if (!map.getLayer("monument-related-points")) {
-    map.addLayer({
-      id: "monument-related-points",
-      type: "circle",
-      source: "monument-related-selection",
-      filter: [
-        "all",
-        ["==", ["geometry-type"], "Point"],
-        ["==", ["get", "role"], "related"]
-      ],
-      paint: {
-        "circle-radius": 7,
-        "circle-color": "#7c3aed",
-        "circle-opacity": 0.9,
-        "circle-stroke-width": 2,
-        "circle-stroke-color": "#ffffff"
-      }
-    });
-  } else {
-    map.setFilter("monument-related-points", [
-      "all",
-      ["==", ["geometry-type"], "Point"],
-      ["==", ["get", "role"], "related"]
-    ]);
-
-    map.setPaintProperty("monument-related-points", "circle-radius", 7);
-    map.setPaintProperty("monument-related-points", "circle-color", "#7c3aed");
-    map.setPaintProperty("monument-related-points", "circle-opacity", 0.9);
-    map.setPaintProperty("monument-related-points", "circle-stroke-width", 2);
-    map.setPaintProperty("monument-related-points", "circle-stroke-color", "#ffffff");
-  }
-
-  [
-    "monument-related-lines",
-    "monument-related-selected-halo",
-    "monument-related-points"
-  ].forEach((layerId) => {
-    if (map.getLayer(layerId)) {
-      map.moveLayer(layerId);
-    }
-  });
+  renderRelatedMonumentsMapOverlay();
 
   const coords = features
+    .filter((feature) => feature?.geometry?.type === "Point")
     .map((feature) => feature.geometry?.coordinates)
     .filter((coords) => Array.isArray(coords) && coords.length === 2);
 
@@ -3710,10 +4339,7 @@ async function showRelatedMonumentsOnMap(record = monumentSelectedRecord) {
     });
   }
 
-  bringMonumentOverlaysToFront();
-
- // drawSelectedMonumentHighlight(record);
-  bringMonumentOverlaysToFront();
+  updateMapOptionsState();
   renderMonumentLegend();
 }
 
@@ -4281,6 +4907,7 @@ async function saveCurrentMonumentRecord() {
       const fullRecord = await loadFullMonumentRecord(refreshed);
 
       monumentSelectedRecord = fullRecord;
+      clearRelationshipStateForNewSelection();
       renderMonumentRecordDetails(fullRecord);
       updateSelectedResultCard();
 
@@ -4295,6 +4922,7 @@ async function saveCurrentMonumentRecord() {
       const fullRecord = await loadFullMonumentRecord(data.record);
 
       monumentSelectedRecord = fullRecord;
+      clearRelationshipStateForNewSelection();
       renderMonumentRecordDetails(fullRecord);
       updateSelectedResultCard();
 
@@ -4508,7 +5136,10 @@ if (clearFiltersBtn) {
 
 if (downloadMapBtn) {
   downloadMapBtn.addEventListener("click", () => {
-    downloadCurrentMapImage();
+    downloadCurrentMapImage({
+      labelScope: mapLabelScopeSelect?.value || "none",
+      labelMode: mapLabelModeSelect?.value || "name"
+    });
   });
 }
 
@@ -4556,6 +5187,46 @@ if (monumentCancelEditBtn) {
 
 if (monumentDeleteBtn) {
   monumentDeleteBtn.onclick = monumentDeleteCurrentRecord;
+}
+
+if (mapOptionsBtn && mapOptionsPanel) {
+  mapOptionsBtn.addEventListener("click", () => {
+    updateMapOptionsState();
+    mapOptionsPanel.hidden = !mapOptionsPanel.hidden;
+  });
+}
+
+if (closeMapOptionsBtn && mapOptionsPanel) {
+  closeMapOptionsBtn.addEventListener("click", () => {
+    mapOptionsPanel.hidden = true;
+  });
+}
+
+if (mapLabelScopeSelect) {
+  mapLabelScopeSelect.addEventListener("change", () => {
+    updateMapLabelHelpText();
+    renderLiveMapLabels();
+  });
+}
+
+if (mapLabelModeSelect) {
+  mapLabelModeSelect.addEventListener("change", () => {
+    renderLiveMapLabels();
+  });
+}
+
+if (showRelatedPointsCheckbox) {
+  showRelatedPointsCheckbox.addEventListener("change", () => {
+    showRelatedPointsCheckbox.dataset.userChanged = "true";
+    setRelationshipLayerVisibility();
+  });
+}
+
+if (showRelationshipLinesCheckbox) {
+  showRelationshipLinesCheckbox.addEventListener("change", () => {
+    showRelationshipLinesCheckbox.dataset.userChanged = "true";
+    setRelationshipLayerVisibility();
+  });
 }
 
 document.addEventListener("keydown", async (event) => {
@@ -4685,6 +5356,8 @@ document.addEventListener("app:languageChanged", async () => {
           map.removeSource("monument-selected");
         }
       }
+      clearRelatedMonumentsMap();
+      updateMapOptionsState();
 
       setMonumentsLoading(true, mLabel("Updating scope...", "Updating scope..."));
 
@@ -4887,13 +5560,19 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         map.once("style.load", () => {
           mapLoaded = true;
+
           drawMonumentRecords(monumentMapRecords);
 
           if (monumentSelectedRecord?.geometry?.coordinates) {
             drawSelectedMonumentHighlight(monumentSelectedRecord);
           }
 
+          renderRelatedMonumentsMapOverlay();
+          renderLiveMapLabels();
+
           updateAddModeUI();
+          updateMapOptionsState();
+          renderMonumentLegend();
         });
       });
     }
