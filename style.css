@@ -479,6 +479,24 @@ body {
   justify-content: flex-end;
 }
 
+.filter-live-results-summary {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  margin: 0.75rem 0 0.85rem;
+  padding: 0.65rem 0.85rem;
+  border: 1px solid #d6dde3;
+  border-radius: 12px;
+  background: #f8fafc;
+  color: #5f6f7a;
+  font-size: 0.95rem;
+}
+
+.filter-live-results-summary strong {
+  color: #1f2933;
+  font-weight: 700;
+}
+
 .results-list {
   display: flex;
   flex-direction: column;
@@ -951,7 +969,7 @@ body {
   height: 17px;
   border-radius: 50%;
   background: transparent;
-  border: 3px solid #ffd54f;
+  border: 3px solid #00e5ff;
 }
 
 .legend-national {

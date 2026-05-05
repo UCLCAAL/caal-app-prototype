@@ -24,6 +24,7 @@ const filterCountry = document.getElementById("filterCountry");
 
 const resultsList = document.getElementById("resultsList");
 const resultsCount = document.getElementById("resultsCount");
+const filterResultsCount = document.getElementById("filterResultsCount");
 //map controls
 const downloadMapBtn = document.getElementById("downloadMapBtn");
 const mapOptionsBtn = document.getElementById("mapOptionsBtn");
@@ -669,7 +670,7 @@ function downloadCurrentMapImage(options = {}) {
         if (item.type === "ring") {
           ctx.beginPath();
           ctx.arc(symbolX, y, symbolRadius + scaled(1), 0, Math.PI * 2);
-          ctx.fillStyle = "rgba(255, 213, 79, 0)";
+          ctx.fillStyle = "rgba(0, 229, 255, 0)";
           ctx.fill();
           ctx.strokeStyle = item.color;
           ctx.lineWidth = scaled(3);
@@ -1284,11 +1285,26 @@ function setMonumentsLoading(isLoading, message = "") {
   });
 }
 
-function setResultsCountLoading(message = null) {
-  if (!resultsCount) return;
+function setMonumentResultsCountText(text) {
+  if (resultsCount) {
+    resultsCount.textContent = text;
+  }
 
+  if (filterResultsCount) {
+    filterResultsCount.textContent = text;
+  }
+}
+
+function setResultsCountLoading(message = null) {
   const label = message || mLabel("Searching...", "Searching...");
-  resultsCount.innerHTML = `<span class="mini-spinner"></span>${label}`;
+
+  if (resultsCount) {
+    resultsCount.innerHTML = `<span class="mini-spinner"></span>${label}`;
+  }
+
+  if (filterResultsCount) {
+    filterResultsCount.innerHTML = `<span class="mini-spinner"></span>${label}`;
+  }
 }
 
 function setMapStaleState(isStale, message = null) {
@@ -3779,16 +3795,14 @@ function drawMonumentRecords(records) {
 function renderMonumentResultsList(records) {
   if (!resultsList) return;
 
-  if (resultsCount) {
-    const start = records.length === 0 ? 0 : monumentPageOffset + 1;
-    const end = monumentPageOffset + records.length;
+  const start = records.length === 0 ? 0 : monumentPageOffset + 1;
+  const end = monumentPageOffset + records.length;
 
-    if (monumentTotalIsExact) {
-      resultsCount.textContent = `${start}-${end} (${monumentTotalCount} total)`;
-    } else {
-      resultsCount.textContent = `${start}-${end} matching records`;
-    }
-  }
+  const countText = monumentTotalIsExact
+    ? `${start}-${end} (${monumentTotalCount} total)`
+    : `${start}-${end} matching records`;
+
+  setMonumentResultsCountText(countText);
 
   if (records.length === 0) {
     resultsList.innerHTML = `
