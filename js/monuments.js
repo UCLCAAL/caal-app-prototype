@@ -972,8 +972,8 @@ function updateMapLabelHelpText() {
   const messages = {
     none: mLabel("Labels are off.", "Labels are off."),
     results: mLabel(
-      "Labels apply to the current result set in the left pane.",
-      "Labels apply to the current result set in the left pane."
+      "Labels apply to records currently drawn on the map.",
+      "Labels apply to records currently drawn on the map."
     ),
     selected: mLabel(
       "Labels apply to the open record in the details pane.",
@@ -1200,7 +1200,7 @@ function monumentRecordToLiveLabelFeature(record) {
 function getCurrentResultsLabelGeojson() {
   return {
     type: "FeatureCollection",
-    features: monumentListRecords
+    features: monumentMapRecords
       .map(monumentRecordToLiveLabelFeature)
       .filter(Boolean)
   };
@@ -3117,6 +3117,7 @@ async function loadMonumentMapRecords() {
 
     monumentMapRecords = data.records || [];
     drawMonumentRecords(monumentMapRecords);
+    renderLiveMapLabels();
     updateMapOptionsState();
   } finally {
     if (requestSeq === monumentMapRequestSeq) {
