@@ -95,6 +95,8 @@ let monumentMoveDebounceTimer = null;
 let monumentFilterDebounceTimer = null;
 let monumentScopeChangeDebounceTimer = null;
 
+let suppressNextMapMoveReload = false;
+
 let monumentListRequestSeq = 0;
 let monumentMapRequestSeq = 0;
 
@@ -559,14 +561,19 @@ function calculateMapScaleBar() {
   };
 }
 
-function downloadCurrentMapImage(options = {}) {
+async function downloadCurrentMapImage(options = {}) {
   const {
     labelScope = "none",
     labelMode = "name"
   } = options;
+
   if (!map) return;
 
-  map.once("idle", () => {
+  const previousLiveLabelVisibility = temporarilyHideLiveMapLabelsForExport();
+
+  await waitForMapIdle();
+
+  try {
     const mapCanvas = map.getCanvas();
 
     const exportCanvas = document.createElement("canvas");
@@ -575,7 +582,7 @@ function downloadCurrentMapImage(options = {}) {
 
     const ctx = exportCanvas.getContext("2d");
 
-    // Draw MapLibre canvas
+    // Draw MapLibre canvas without the live label layer.
     ctx.drawImage(mapCanvas, 0, 0);
 
     const width = exportCanvas.width;
@@ -587,7 +594,8 @@ function downloadCurrentMapImage(options = {}) {
       return Math.round(px * uiScale);
     }
 
-    drawExportMapLabels(ctx, labelScope, labelMode);
+    // Draw only the export labels.
+    drawExportMapLabels(ctx, exportCanvas, labelScope, labelMode);
 
     // Shared styles
     ctx.font = "23px Arial, sans-serif";
@@ -768,9 +776,10 @@ function downloadCurrentMapImage(options = {}) {
     link.href = exportCanvas.toDataURL("image/png");
     link.download = `caal_distribution_map_${new Date().toISOString().slice(0, 10)}.png`;
     link.click();
-  });
 
-  map.triggerRepaint();
+   } finally {
+    restoreLiveMapLabelsAfterExport(previousLiveLabelVisibility);
+  }
 }
 
 function getExportRecordLabel(record, mode = "name") {
@@ -791,6 +800,102 @@ function getExportRecordLabel(record, mode = "name") {
   return name || caalId;
 }
 
+function temporarilyHideLiveMapLabelsForExport() {
+  if (!map || !map.getLayer("monument-live-labels")) {
+    return null;
+  }
+
+  const previousVisibility =
+    map.getLayoutProperty("monument-live-labels", "visibility") || "visible";
+
+  map.setLayoutProperty("monument-live-labels", "visibility", "none");
+
+  return previousVisibility;
+}
+
+function restoreLiveMapLabelsAfterExport(previousVisibility) {
+  if (!map || !map.getLayer("monument-live-labels") || previousVisibility === null) {
+    return;
+  }
+
+  map.setLayoutProperty("monument-live-labels", "visibility", previousVisibility);
+}
+
+function waitForMapIdle() {
+  return new Promise((resolve) => {
+    if (!map) {
+      resolve();
+      return;
+    }
+
+    map.once("idle", resolve);
+    map.triggerRepaint();
+  });
+}
+
+function getRenderedExportPointFeatures() {
+  if (!map) return [];
+
+  const pointLayerIds = [
+    "monuments-workspace-layer",
+    "monuments-national-layer",
+    "monuments-all-caal-layer"
+  ].filter((layerId) => map.getLayer(layerId));
+
+  if (!pointLayerIds.length) return [];
+
+  const features = map.queryRenderedFeatures({
+    layers: pointLayerIds
+  });
+
+  const seen = new Set();
+
+  return features.filter((feature) => {
+    const id = feature.properties?.id;
+    const scope = feature.properties?.source_scope || "";
+    const key = `${scope}:${id}`;
+
+    if (!id || seen.has(key)) return false;
+
+    seen.add(key);
+    return true;
+  });
+}
+
+function getRenderedExportClusterFeatures() {
+  if (!map) return [];
+
+  const clusterLayerIds = [
+    "monument-national-clusters",
+    "monument-all-caal-clusters"
+  ].filter((layerId) => map.getLayer(layerId));
+
+  if (!clusterLayerIds.length) return [];
+
+  const features = map.queryRenderedFeatures({
+    layers: clusterLayerIds
+  });
+
+  const seen = new Set();
+
+  return features.filter((feature) => {
+    const clusterId = feature.properties?.cluster_id;
+    const source =
+      feature.source ||
+      feature.layer?.source ||
+      "";
+
+    const key = `${source}:${clusterId}`;
+
+    if (clusterId === undefined || clusterId === null || seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  });
+}
+
 function getExportLabelFeatures(labelScope = "none", labelMode = "name") {
   const labelFeatures = [];
 
@@ -799,12 +904,29 @@ function getExportLabelFeatures(labelScope = "none", labelMode = "name") {
   }
 
   if (labelScope === "results") {
-    monumentMapRecords.forEach((record) => {
-      if (!record?.geometry?.coordinates) return;
+    const renderedPointFeatures = getRenderedExportPointFeatures();
+
+    renderedPointFeatures.forEach((feature) => {
+      if (!feature?.geometry?.coordinates) return;
+
+      const clickedId = Number(feature.properties?.id);
+      const clickedScope = feature.properties?.source_scope;
+
+      const record =
+        monumentMapRecords.find(
+          (r) =>
+            Number(r.identity?.id) === clickedId &&
+            String(r.source?.scope || "") === String(clickedScope || "")
+        ) ||
+        monumentMapRecords.find(
+          (r) => Number(r.identity?.id) === clickedId
+        );
+
+      if (!record) return;
 
       labelFeatures.push({
         role: "results",
-        coordinates: record.geometry.coordinates,
+        coordinates: feature.geometry.coordinates,
         label: getExportRecordLabel(record, labelMode)
       });
     });
@@ -848,15 +970,21 @@ function getExportLabelFeatures(labelScope = "none", labelMode = "name") {
   return labelFeatures.filter((item) => item.label);
 }
 
-function drawExportMapLabels(ctx, labelScope = "none", labelMode = "name") {
+function drawExportMapLabels(ctx, exportCanvas, labelScope = "none", labelMode = "name") {
   if (!map || labelScope === "none") return;
 
   const labels = getExportLabelFeatures(labelScope, labelMode);
   if (!labels.length) return;
 
-  const canvas = map.getCanvas();
-  const width = canvas.width;
-  const uiScale = Math.max(1, width / 1400);
+  const mapCanvas = map.getCanvas();
+
+  const cssWidth = mapCanvas.clientWidth || mapCanvas.width;
+  const cssHeight = mapCanvas.clientHeight || mapCanvas.height;
+
+  const scaleX = exportCanvas.width / cssWidth;
+  const scaleY = exportCanvas.height / cssHeight;
+
+  const uiScale = Math.max(1, exportCanvas.width / 1400);
 
   function scaled(px) {
     return Math.round(px * uiScale);
@@ -864,9 +992,12 @@ function drawExportMapLabels(ctx, labelScope = "none", labelMode = "name") {
 
   ctx.save();
   ctx.textBaseline = "middle";
+  ctx.lineJoin = "round";
+
+  const placedBoxes = [];
 
   labels.forEach((item, index) => {
-    const point = map.project(item.coordinates);
+    const projected = map.project(item.coordinates);
     const label = String(item.label || "").trim();
     if (!label) return;
 
@@ -878,7 +1009,8 @@ function drawExportMapLabels(ctx, labelScope = "none", labelMode = "name") {
     const paddingX = scaled(8);
     const paddingY = scaled(5);
     const offsetX = scaled(12);
-    const offsetY =
+
+    const baseOffsetY =
       item.role === "selected"
         ? scaled(-16)
         : scaled(14 + (index % 3) * 6);
@@ -889,8 +1021,59 @@ function drawExportMapLabels(ctx, labelScope = "none", labelMode = "name") {
     const boxW = textW + paddingX * 2;
     const boxH = fontSize + paddingY * 2;
 
-    const x = point.x + offsetX;
-    const y = point.y + offsetY;
+    // map.project() returns CSS pixels.
+    // Export canvas uses physical canvas pixels.
+    let x = projected.x * scaleX + offsetX;
+    let y = projected.y * scaleY + baseOffsetY;
+
+    let box = {
+      x,
+      y: y - boxH / 2,
+      w: boxW,
+      h: boxH
+    };
+
+    // Small, conservative collision handling.
+    // This avoids exact overlaps without sending labels far away.
+    const candidates = [
+      [scaled(12), scaled(-16)],
+      [scaled(12), scaled(18)],
+      [scaled(-boxW - 12), scaled(-16)],
+      [scaled(-boxW - 12), scaled(18)],
+      [scaled(12), scaled(42)],
+      [scaled(-boxW - 12), scaled(42)]
+    ];
+
+    for (const [candidateOffsetX, candidateOffsetY] of candidates) {
+      const candidateX = projected.x * scaleX + candidateOffsetX;
+      const candidateY = projected.y * scaleY + candidateOffsetY;
+
+      const candidateBox = {
+        x: candidateX,
+        y: candidateY - boxH / 2,
+        w: boxW,
+        h: boxH
+      };
+
+      const overlaps = placedBoxes.some((existing) =>
+        boxesOverlap(candidateBox, existing)
+      );
+
+      const insideCanvas =
+        candidateBox.x >= 0 &&
+        candidateBox.y >= 0 &&
+        candidateBox.x + candidateBox.w <= exportCanvas.width &&
+        candidateBox.y + candidateBox.h <= exportCanvas.height;
+
+      if (!overlaps && insideCanvas) {
+        x = candidateX;
+        y = candidateY;
+        box = candidateBox;
+        break;
+      }
+    }
+
+    placedBoxes.push(box);
 
     ctx.fillStyle =
       item.role === "selected"
@@ -909,16 +1092,26 @@ function drawExportMapLabels(ctx, labelScope = "none", labelMode = "name") {
     ctx.lineWidth = scaled(1);
 
     ctx.beginPath();
-    ctx.roundRect(x, y - boxH / 2, boxW, boxH, scaled(6));
+    ctx.roundRect(box.x, box.y, box.w, box.h, scaled(6));
     ctx.fill();
     ctx.stroke();
 
     ctx.fillStyle = "#263238";
-    ctx.fillText(label, x + paddingX, y);
+    ctx.fillText(label, box.x + paddingX, box.y + box.h / 2);
   });
 
   ctx.restore();
 }
+
+function boxesOverlap(a, b) {
+  return !(
+    a.x + a.w < b.x ||
+    b.x + b.w < a.x ||
+    a.y + a.h < b.y ||
+    b.y + b.h < a.y
+  );
+}
+
 // --------------------------------------------------------
 // Helpers
 // --------------------------------------------------------
@@ -999,7 +1192,7 @@ function updateMapStatusLine() {
     ).replace("{mapped}", formatCount(mappedCount));
 }
 
-function showCurrentMonumentResultsOnMap() {
+async function showCurrentMonumentResultsOnMap() {
   if (!map || !Array.isArray(monumentListRecords) || monumentListRecords.length === 0) {
     return;
   }
@@ -1019,19 +1212,44 @@ function showCurrentMonumentResultsOnMap() {
     return b.extend(coords);
   }, new maplibregl.LngLatBounds(coordinates[0], coordinates[0]));
 
-  map.fitBounds(bounds, {
-    padding: {
-      top: 70,
-      right: 70,
-      bottom: 70,
-      left: 70
-    },
-    maxZoom: 10,
-    duration: 700
+  setMapStaleState(true, t("redrawing_map", "Redrawing map..."));
+
+  suppressNextMapMoveReload = true;
+
+  await new Promise((resolve) => {
+    let resolved = false;
+
+    function finish() {
+      if (resolved) return;
+      resolved = true;
+      resolve();
+    }
+
+    map.once("moveend", finish);
+
+    map.fitBounds(bounds, {
+      padding: {
+        top: 70,
+        right: 70,
+        bottom: 70,
+        left: 70
+      },
+      maxZoom: 10,
+      duration: 700
+    });
+
+    setTimeout(finish, 900);
   });
+
+  try {
+    await loadMonumentMapRecords();
+  } catch (error) {
+    console.error("Failed to reload monuments after showing results on map:", error);
+  }
 
   renderLiveMapLabels();
   updateMapOptionsState();
+  updateMapStatusLine();
 }
 
 function updateShowResultsOnMapButton() {
@@ -3651,28 +3869,85 @@ function monumentRecordToFeature(record) {
 function bindMonumentLayerEvents() {
  if (!map || monumentsLayerEventsBound) return;
 
-  function handleClusterClick(sourceId, clusterLayerId) {
-     map.on("click", clusterLayerId, (e) => {
-       const features = map.queryRenderedFeatures(e.point, {
-         layers: [clusterLayerId]
-       });
+  function handleClusterClick(sourceId, clusterLayerIds) {
+    clusterLayerIds.forEach((clusterLayerId) => {
+      if (!map.getLayer(clusterLayerId)) return;
 
-       const clusterId = features[0]?.properties?.cluster_id;
-       if (clusterId == null) return;
+      map.on("click", clusterLayerId, async (e) => {
+        const activeClusterLayers = clusterLayerIds.filter((layerId) =>
+          map.getLayer(layerId)
+        );
 
-       map.getSource(sourceId).getClusterExpansionZoom(clusterId, (err, zoom) => {
-         if (err) return;
+        const features = map.queryRenderedFeatures(e.point, {
+          layers: activeClusterLayers
+        });
 
-         map.easeTo({
-           center: features[0].geometry.coordinates,
-           zoom
-         });
-       });
-     });
+        const clusterFeature = features.find((feature) =>
+          feature?.properties?.cluster === true ||
+          feature?.properties?.cluster === "true" ||
+          feature?.properties?.cluster_id !== undefined
+        );
+
+        const clusterId = clusterFeature?.properties?.cluster_id;
+
+        if (clusterId === undefined || clusterId === null) {
+          console.warn("Cluster clicked but no cluster_id found", {
+            sourceId,
+            clusterLayerId,
+            features
+          });
+          return;
+        }
+
+        const source = map.getSource(sourceId);
+
+        if (!source || typeof source.getClusterExpansionZoom !== "function") {
+          console.warn("Cluster source not available or not clustered", {
+            sourceId,
+            source
+          });
+          return;
+        }
+
+        const coordinates = clusterFeature.geometry?.coordinates;
+
+        if (!Array.isArray(coordinates)) {
+          console.warn("Cluster feature has no coordinates", clusterFeature);
+          return;
+        }
+
+        try {
+          const zoom = await source.getClusterExpansionZoom(Number(clusterId));
+
+          map.easeTo({
+            center: coordinates,
+            zoom: Math.min(zoom, 12),
+            duration: 500
+          });
+        } catch (error) {
+          console.error("Could not get cluster expansion zoom:", error);
+        }
+      });
+
+      map.on("mouseenter", clusterLayerId, () => {
+        map.getCanvas().style.cursor = "pointer";
+      });
+
+      map.on("mouseleave", clusterLayerId, () => {
+        map.getCanvas().style.cursor = "";
+      });
+    });
   }
 
-    handleClusterClick("monuments-national", "monument-national-clusters");
-    handleClusterClick("monuments-all-caal", "monument-all-caal-clusters");
+  handleClusterClick("monuments-national", [
+    "monument-national-clusters",
+    "monument-national-cluster-count"
+  ]);
+
+  handleClusterClick("monuments-all-caal", [
+    "monument-all-caal-clusters",
+    "monument-all-caal-cluster-count"
+  ]);
 
   async function handleMonumentPointClick(e) {
     const feature = e.features?.[0];
@@ -5858,6 +6133,11 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
 
     map.on("moveend", () => {
+      if (suppressNextMapMoveReload) {
+        suppressNextMapMoveReload = false;
+        return;
+      }
+
       if (monumentMoveDebounceTimer) {
         clearTimeout(monumentMoveDebounceTimer);
       }
@@ -5867,6 +6147,9 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         const filters = getMonumentCurrentFilters();
 
+        // Free-text and CAAL_ID searches are expensive.
+        // Do not automatically refetch on every pan/zoom.
+        // Use "Show results on map" for an explicit filtered map refresh.
         if (filters.text || filters.caalId) {
           return;
         }
@@ -5889,6 +6172,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         map.once("style.load", () => {
           mapLoaded = true;
 
+          monumentsLayerEventsBound = false;
           drawMonumentRecords(monumentMapRecords);
 
           if (monumentSelectedRecord?.geometry?.coordinates) {
