@@ -83,4 +83,58 @@ router.get("/labels", async (req, res) => {
   }
 });
 
+router.get("/translations", async (req, res) => {
+  const requestedLanguage = normaliseLanguage(
+    req.query.lang || req.query.language || "en"
+  );
+
+  const fallbackLanguage =
+    ["kk", "ky", "tg", "tk", "uz"].includes(requestedLanguage)
+      ? "ru"
+      : "en";
+
+  try {
+    const result = await pool.query(`
+      SELECT
+        key,
+        display_en,
+        display_ru,
+        display_zh,
+        display_kk,
+        display_ky,
+        display_tg,
+        display_tk,
+        display_uz
+      FROM ui.app_translations
+      ORDER BY key
+    `);
+
+    const translations = {};
+
+    for (const row of result.rows) {
+      translations[row.key] =
+        row[`display_${requestedLanguage}`] ||
+        row[`display_${fallbackLanguage}`] ||
+        row.display_en ||
+        row.key;
+    }
+
+    return res.json({
+      ok: true,
+      language: requestedLanguage,
+      translations
+    });
+  } catch (error) {
+    console.error("UI translations lookup failed:");
+    console.error(error);
+
+    return res.status(500).json({
+      ok: false,
+      error: "Failed to load translations",
+      detail: error.message
+    });
+  }
+});
+
 module.exports = router;
+

@@ -8,9 +8,7 @@ form.addEventListener("submit", async (e) => {
   const password = document.getElementById("password").value;
 
   try {
-    //const res = await fetch(`${API_BASE}/api/auth/login`, {
-      //const res = await fetch("http://localhost:3000/api/auth/login", {
-      const res = await fetch("/api/auth/login", {
+    const res = await fetch("/api/auth/login", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       credentials: "include",
@@ -20,15 +18,32 @@ form.addEventListener("submit", async (e) => {
     const data = await res.json();
 
     if (!res.ok || !data.ok) {
-      errorBox.textContent = data.error || "Login failed";
+      errorBox.textContent = data.error || t("login_failed", "Login failed");
       return;
     }
 
-    // redirect to home
-    window.location.href = "home.html";
+    // Login page language is temporary only.
+    // After login, home.html should use the logged-in user's preferred language.
+    window.clearStoredLanguage?.();
+    window.setStoredLanguageUserId?.(null);
 
+    // bootstrap langauge before redirecting to home
+    const preferredLang =
+      data.session?.profile?.preferred_language ||
+      data.profile?.preferred_language ||
+      data.user?.preferred_language ||
+      null;
+
+    window.clearStoredLanguage?.();
+    window.setStoredLanguageUserId?.(null);
+
+    if (preferredLang) {
+      localStorage.setItem("caal_ui_language_bootstrap", preferredLang);
+    }
+
+    window.location.href = "home.html";
   } catch (err) {
-    errorBox.textContent = "Server error";
+    errorBox.textContent = t("server_error", "Server error");
     console.error(err);
   }
 });

@@ -36,6 +36,11 @@ const mapLabelScopeSelect = document.getElementById("mapLabelScopeSelect");
 const mapLabelModeSelect = document.getElementById("mapLabelModeSelect");
 const mapLabelScopeHelp = document.getElementById("mapLabelScopeHelp");
 
+const resetMapBtn = document.getElementById("resetMapBtn");
+const mapStatusLine = document.getElementById("mapStatusLine");
+const mapLabelWarning = document.getElementById("mapLabelWarning");
+const showRelatedFromMapOptionsBtn = document.getElementById("showRelatedFromMapOptionsBtn");
+
 const relationshipMapOptions = document.getElementById("relationshipMapOptions");
 const showRelatedPointsCheckbox = document.getElementById("showRelatedPointsCheckbox");
 const showRelationshipLinesCheckbox = document.getElementById("showRelationshipLinesCheckbox");
@@ -88,6 +93,7 @@ let monumentsIsLoading = false;
 
 let monumentMoveDebounceTimer = null;
 let monumentFilterDebounceTimer = null;
+let monumentScopeChangeDebounceTimer = null;
 
 let monumentListRequestSeq = 0;
 let monumentMapRequestSeq = 0;
@@ -238,7 +244,9 @@ function ensureRecordVisibleOnMap(record) {
 
   const [lng, lat] = record.geometry.coordinates;
   const bounds = map.getBounds();
-  const isSatellite = basemapSelect?.value === "satellite";
+  const isSatellite =
+    basemapSelect?.value === "maptiler-hybrid" ||
+    basemapSelect?.value === "maptiler-satellite";
   const targetZoom = isSatellite ? 4.5 : 5;
 
   if (!bounds.contains([lng, lat])) {
@@ -378,7 +386,7 @@ function renderMonumentLegend() {
     rows.push(`
       <div class="legend-row">
         <span class="legend-symbol legend-workspace"></span>
-        <span>Workspace records</span>
+        <span>${t("monuments_workspace_records", "Workspace records")}</span>
       </div>
     `);
   }
@@ -387,7 +395,7 @@ function renderMonumentLegend() {
     rows.push(`
       <div class="legend-row">
         <span class="legend-symbol legend-national"></span>
-        <span>National CAAL records</span>
+        <span>${t("monuments_national_records", "National CAAL records")}</span>
       </div>
     `);
   }
@@ -396,7 +404,7 @@ function renderMonumentLegend() {
     rows.push(`
       <div class="legend-row">
         <span class="legend-symbol legend-reference"></span>
-        <span>Other CAAL records</span>
+        <span>${t("other_caal_records", "Other CAAL records")}</span>
       </div>
     `);
   }
@@ -405,7 +413,7 @@ function renderMonumentLegend() {
     rows.push(`
       <div class="legend-row">
         <span class="legend-symbol legend-selected"></span>
-        <span>Selected record</span>
+        <span>${t("selected_record", "Selected record")}</span>
       </div>
     `);
   }
@@ -414,7 +422,7 @@ function renderMonumentLegend() {
     rows.push(`
       <div class="legend-row">
         <span class="legend-symbol legend-pending"></span>
-        <span>New / moved point</span>
+        <span>${t("new_or_moved_point", "New / moved point")}</span>
       </div>
     `);
   }
@@ -423,7 +431,7 @@ function renderMonumentLegend() {
     rows.push(`
       <div class="legend-row">
         <span class="legend-symbol legend-related"></span>
-        <span>Related monument</span>
+        <span>${t("related_monument", "Related monument")}</span>
       </div>
     `);
   }
@@ -431,7 +439,7 @@ function renderMonumentLegend() {
   monumentLegendEl.hidden = rows.length === 0;
 
   monumentLegendEl.innerHTML = `
-    <div class="legend-title">Map key</div>
+    <div class="legend-title">${t("map_key", "Map key")}</div>
     ${rows.join("")}
   `;
 }
@@ -480,27 +488,36 @@ function getCurrentMapLegendItems() {
     !!map.getSource("monument-related-selection");
 
   if (hasWorkspace) {
-    items.push({ label: "Workspace records", color: "#2e7d32", type: "circle" });
+    items.push({
+      label: t("monuments_workspace_records", "My workspace records"),
+      color: "#2e7d32",
+      type: "circle"
+    });
   }
 
   if (hasNational) {
-    items.push({ label: "National CAAL records", color: "#0f766e", type: "circle" });
+    items.push({ label: t("monuments_national_records", "National CAAL records"),
+      color: "#0f766e", type: "circle" });
   }
 
   if (hasAllCaal) {
-    items.push({ label: "Other CAAL records", color: "#c95a4a", type: "circle" });
+    items.push({ label: t("other_caal_records", "Other CAAL records"),
+      color: "#c95a4a", type: "circle" });
   }
 
   if (hasSelected) {
-    items.push({ label: "Selected record", color: "#00e5ff", type: "ring" });
+    items.push({ label: t("selected_record", "Selected record"),
+      color: "#263238", type: "ring" });
   }
 
   if (hasPending) {
-    items.push({ label: "New / moved point", color: "#1d4ed8", type: "circle" });
+    items.push({ label: t("new_or_moved_point", "New / moved point"),
+      color: "#1d4ed8", type: "circle" });
   }
 
   if (hasRelatedMap) {
-    items.push({ label: "Related monument", color: "#7c3aed", type: "circle" });
+    items.push({ label: t("related_monument", "Related monument"),
+      color: "#7c3aed", type: "circle" });
   }
 
   return items;
@@ -625,7 +642,7 @@ function downloadCurrentMapImage(options = {}) {
       const symbolGap = scaled(16);
 
       ctx.font = `bold ${legendTitleSize}px Arial, sans-serif`;
-      const titleText = "Map key";
+      const titleText = t("map_key", "Map key");
 
       ctx.font = `${legendTextSize}px Arial, sans-serif`;
       const maxLabelWidth = Math.max(
@@ -782,7 +799,7 @@ function getExportLabelFeatures(labelScope = "none", labelMode = "name") {
   }
 
   if (labelScope === "results") {
-    monumentListRecords.forEach((record) => {
+    monumentMapRecords.forEach((record) => {
       if (!record?.geometry?.coordinates) return;
 
       labelFeatures.push({
@@ -877,14 +894,14 @@ function drawExportMapLabels(ctx, labelScope = "none", labelMode = "name") {
 
     ctx.fillStyle =
       item.role === "selected"
-        ? "rgba(255, 248, 210, 0.96)"
+        ? "rgba(255, 255, 255, 0.96)"
         : item.role === "related"
           ? "rgba(245, 240, 255, 0.96)"
           : "rgba(255, 255, 255, 0.94)";
 
     ctx.strokeStyle =
       item.role === "selected"
-        ? "rgba(148, 118, 0, 0.55)"
+        ? "rgba(38, 50, 56, 0.72)"
         : item.role === "related"
           ? "rgba(80, 45, 150, 0.55)"
           : "rgba(0, 0, 0, 0.22)";
@@ -906,6 +923,82 @@ function drawExportMapLabels(ctx, labelScope = "none", labelMode = "name") {
 // Helpers
 // --------------------------------------------------------
 //map helpers
+function resetMapView() {
+  if (!map) return;
+
+  const recordsWithCoords = monumentMapRecords.filter(
+    (record) => Array.isArray(record?.geometry?.coordinates)
+  );
+
+  if (recordsWithCoords.length) {
+    const coordinates = recordsWithCoords.map((record) => record.geometry.coordinates);
+
+    const bounds = coordinates.reduce(
+      (b, coords) => b.extend(coords),
+      new maplibregl.LngLatBounds(coordinates[0], coordinates[0])
+    );
+
+    map.fitBounds(bounds, {
+      padding: 80,
+      maxZoom: 8,
+      duration: 700
+    });
+
+    return;
+  }
+
+  map.easeTo({
+    center: [66.9, 48.2],
+    zoom: 4.2,
+    duration: 700
+  });
+}
+
+function formatCount(value) {
+  const number = Number(value);
+
+  if (!Number.isFinite(number)) {
+    return "0";
+  }
+
+  return number.toLocaleString();
+}
+
+function updateMapStatusLine() {
+  if (!mapStatusLine) return;
+
+  const mappedCount = Array.isArray(monumentMapRecords)
+    ? monumentMapRecords.filter((record) => Array.isArray(record?.geometry?.coordinates)).length
+    : 0;
+
+  const totalCount = Number(monumentTotalCount || 0);
+
+  if (!mappedCount && !totalCount) {
+    mapStatusLine.textContent = t(
+      "no_matching_records_on_map",
+      "No matching records are currently shown on the map."
+    );
+    return;
+  }
+
+  if (totalCount && mappedCount < totalCount) {
+    mapStatusLine.textContent =
+      t(
+        "mapped_records_partial_status",
+        "Showing {mapped} mapped records from {total} matching records. Zoom or pan to load records for the current map view."
+      )
+        .replace("{mapped}", formatCount(mappedCount))
+        .replace("{total}", formatCount(totalCount));
+    return;
+  }
+
+  mapStatusLine.textContent =
+    t(
+      "mapped_records_full_status",
+      "Showing {mapped} matching records on the map."
+    ).replace("{mapped}", formatCount(mappedCount));
+}
+
 function showCurrentMonumentResultsOnMap() {
   if (!map || !Array.isArray(monumentListRecords) || monumentListRecords.length === 0) {
     return;
@@ -937,11 +1030,6 @@ function showCurrentMonumentResultsOnMap() {
     duration: 700
   });
 
-  if (mapLabelScopeSelect && mapLabelScopeSelect.value === "none") {
-    mapLabelScopeSelect.value = "results";
-    updateMapLabelHelpText();
-  }
-
   renderLiveMapLabels();
   updateMapOptionsState();
 }
@@ -970,17 +1058,17 @@ function updateMapLabelHelpText() {
   if (!mapLabelScopeHelp || !mapLabelScopeSelect) return;
 
   const messages = {
-    none: mLabel("Labels are off.", "Labels are off."),
-    results: mLabel(
-      "Labels apply to records currently drawn on the map.",
+    none: t("labels_are_off", "Labels are off."),
+    results: t(
+      "labels_apply_to_results",
       "Labels apply to records currently drawn on the map."
     ),
-    selected: mLabel(
-      "Labels apply to the open record in the details pane.",
+    selected: t(
+      "labels_apply_to_selected",
       "Labels apply to the open record in the details pane."
     ),
-    selected_related: mLabel(
-      "Labels apply to the open record and its related monuments currently shown on the map.",
+    selected_related: t(
+      "labels_apply_to_selected_related",
       "Labels apply to the open record and its related monuments currently shown on the map."
     )
   };
@@ -990,46 +1078,27 @@ function updateMapLabelHelpText() {
 
 function updateMapOptionsState() {
   const hasResults =
-    Array.isArray(monumentListRecords) &&
-    monumentListRecords.some((record) => Array.isArray(record?.geometry?.coordinates));
+    Array.isArray(monumentMapRecords) &&
+    monumentMapRecords.some((record) => Array.isArray(record?.geometry?.coordinates));
 
   const hasSelected = !!monumentSelectedRecord?.geometry?.coordinates;
-
-  const hasRelated =
-    !!monumentRelatedSelectionGeojson?.features?.some(
-      (feature) =>
-        feature?.geometry?.type === "Point" &&
-        feature?.properties?.role === "related"
-    );
+  const selectedHasRelatedIds = selectedRecordHasRelatedIds();
+  const hasRelatedOverlay = relatedOverlayExists();
 
   setOptionEnabled(mapLabelScopeSelect, "results", hasResults);
   setOptionEnabled(mapLabelScopeSelect, "selected", hasSelected);
-  setOptionEnabled(mapLabelScopeSelect, "selected_related", hasSelected && hasRelated);
+  setOptionEnabled(mapLabelScopeSelect, "selected_related", hasSelected && hasRelatedOverlay);
+
+  if (showRelatedFromMapOptionsBtn) {
+    showRelatedFromMapOptionsBtn.disabled = !selectedHasRelatedIds;
+    showRelatedFromMapOptionsBtn.classList.toggle("is-disabled", !selectedHasRelatedIds);
+  }
 
   if (relationshipMapOptions) {
-    relationshipMapOptions.hidden = !hasRelated;
-    relationshipMapOptions.classList.toggle("is-disabled", !hasRelated);
+    relationshipMapOptions.hidden = !hasRelatedOverlay;
   }
 
-  if (showRelatedPointsCheckbox) {
-    showRelatedPointsCheckbox.disabled = !hasRelated;
-    showRelatedPointsCheckbox.closest("label")?.classList.toggle("is-disabled", !hasRelated);
-  }
-
-  if (showRelationshipLinesCheckbox) {
-    showRelationshipLinesCheckbox.disabled = !hasRelated;
-    showRelationshipLinesCheckbox.closest("label")?.classList.toggle("is-disabled", !hasRelated);
-  }
-
-  if (!hasRelated) {
-    if (showRelatedPointsCheckbox) {
-      showRelatedPointsCheckbox.checked = false;
-    }
-
-    if (showRelationshipLinesCheckbox) {
-      showRelationshipLinesCheckbox.checked = false;
-    }
-  } else {
+  if (hasRelatedOverlay) {
     if (showRelatedPointsCheckbox && showRelatedPointsCheckbox.dataset.userChanged !== "true") {
       showRelatedPointsCheckbox.checked = true;
     }
@@ -1048,7 +1117,10 @@ function updateMapOptionsState() {
       mapLabelScopeSelect.value = "none";
     }
 
-    if (mapLabelScopeSelect.value === "selected_related" && !(hasSelected && hasRelated)) {
+    if (
+      mapLabelScopeSelect.value === "selected_related" &&
+      !(hasSelected && hasRelatedOverlay)
+    ) {
       mapLabelScopeSelect.value = hasSelected ? "selected" : "none";
     }
   }
@@ -1082,6 +1154,27 @@ function setRelationshipLayerVisibility() {
       );
     }
   });
+}
+
+function selectedRecordHasRelatedIds(record = monumentSelectedRecord) {
+  if (!record) return false;
+
+  const relatedIds = [
+    ...parseRelatedIds(mRaw(record, "Monument is part of")),
+    ...parseRelatedIds(mRaw(record, "Monument contains")),
+    ...parseRelatedIds(mRaw(record, "Monument is associated with"))
+  ];
+
+  return relatedIds.length > 0;
+}
+
+function relatedOverlayExists() {
+  return !!monumentSelectedRecord?.geometry?.coordinates &&
+    !!monumentRelatedSelectionGeojson?.features?.some(
+      (feature) =>
+        feature?.geometry?.type === "Point" &&
+        feature?.properties?.role === "related"
+    );
 }
 
 function getLiveMapLabelExpression() {
@@ -1270,7 +1363,7 @@ function setMonumentsLoading(isLoading, message = "") {
   if (indicator) {
     indicator.hidden = !isLoading;
     indicator.innerHTML = isLoading
-      ? `<span class="spinner"></span><span>${message || "Loading..."}</span>`
+      ? `<span class="spinner"></span><span>${message || t("loading", "Loading...")}</span>`
       : "";
   }
 
@@ -1296,7 +1389,7 @@ function setMonumentResultsCountText(text) {
 }
 
 function setResultsCountLoading(message = null) {
-  const label = message || mLabel("Searching...", "Searching...");
+  const label = message || t("searching", "Searching...");
 
   if (resultsCount) {
     resultsCount.innerHTML = `<span class="mini-spinner"></span>${label}`;
@@ -1326,7 +1419,7 @@ function setMapStaleState(isStale, message = null) {
 
   notice.hidden = !isStale;
   notice.innerHTML = isStale
-    ? `<span class="mini-spinner"></span>${message || mLabel("Redrawing map...", "Redrawing map...")}`
+    ? `<span class="mini-spinner"></span>${message || t("redrawing_map", "Redrawing map...")}`
     : "";
 }
 
@@ -1336,11 +1429,14 @@ function scheduleMonumentSearchAndMapRedraw() {
   }
 
   setResultsCountLoading();
-  setMapStaleState(true, mLabel("Map will update after search...", "Map will update after search..."));
+  setMapStaleState(
+    true,
+    t("map_will_update_after_search", "Map will update after search...")
+  );
 
   monumentFilterDebounceTimer = setTimeout(async () => {
     await applyMonumentFilters({ includeMap: true, listFirst: true });
-  }, 500);
+  }, 1000);
 }
 
 function mLabel(name, fallback = null) {
@@ -1379,6 +1475,14 @@ function mDateOnly(value) {
 
 function mHasValue(value) {
   return value !== null && value !== undefined && value !== "";
+}
+
+function getMonumentMasterId(record) {
+  return String(mRaw(record, "MasterID") || "").trim();
+}
+
+function monumentHasMasterId(record) {
+  return getMonumentMasterId(record).length > 0;
 }
 
 function mNormalizeSearchText(value) {
@@ -1499,7 +1603,7 @@ function mRecordSearchText(record) {
 }
 
 function mBuildSavePayload() {
-  return {
+  const payload = {
     "Primary Name": mGetInputValue("Primary Name"),
     "Primary Name (English)": mGetInputValue("Primary Name (English)"),
     "Other Names": mGetInputValue("Other Names"),
@@ -1560,9 +1664,14 @@ function mBuildSavePayload() {
     "World Heritage Site Name": mGetInputValue("World Heritage Site Name"),
     "Monument is part of": normaliseRelatedIdList(mGetInputValue("Monument is part of")),
     "Monument contains": normaliseRelatedIdList(mGetInputValue("Monument contains")),
-    "Monument is associated with": normaliseRelatedIdList(mGetInputValue("Monument is associated with")),
-    "MasterID": normaliseRelatedIdList(mGetInputValue("MasterID"))
+    "Monument is associated with": normaliseRelatedIdList(mGetInputValue("Monument is associated with"))
   };
+
+  if (monumentUserCanEditMasterId()) {
+    payload["MasterID"] = normaliseRelatedIdList(mGetInputValue("MasterID"));
+  }
+
+  return payload;
 }
 
 function mSectionHasValues(values) {
@@ -1747,7 +1856,6 @@ function updateMonumentActionBar() {
     monumentDeleteBtn.hidden = !canDelete;
   }
 }
-
 function canEditMonumentRecord(record) {
   if (!record) return false;
 
@@ -1767,10 +1875,21 @@ function canEditMonumentRecord(record) {
     record?.source?.scope === "national_ref" ||
     record?.source?.scope === "all_caal";
 
-  return (
-    (isWorkspaceRecord && (isOwner || isSuperUser)) ||
-    (isCaalRecord && isSuperUser)
-  );
+  // Superusers can edit MasterID-linked records.
+  if (isSuperUser) {
+    return isWorkspaceRecord || isCaalRecord;
+  }
+
+  // Normal users cannot edit records assigned to a MasterID.
+  if (monumentHasMasterId(record)) {
+    return false;
+  }
+
+  return isWorkspaceRecord && isOwner;
+}
+
+function monumentUserCanEditMasterId() {
+  return window.appSession?.permissions?.can_edit_caal === true;
 }
 
 function getMonumentEnabledScopes() {
@@ -1950,8 +2069,8 @@ if (window.appSession?.permissions?.can_edit_caal && refreshMonumentsCacheBtn) {
 
   refreshMonumentsCacheBtn.addEventListener("click", async () => {
     refreshMonumentsCacheBtn.disabled = true;
-    refreshMonumentsCacheBtn.textContent = "Refreshing...";
-    setMonumentsLoading(true, "Refreshing CAAL cache...");
+    refreshMonumentsCacheBtn.textContent = t("refreshing", "Refreshing...");
+    setMonumentsLoading(true, t("refreshing_caal_cache", "Refreshing CAAL cache..."));
 
     try {
       const response = await fetch("/api/monuments/admin/refresh-caal-cache", {
@@ -1962,20 +2081,20 @@ if (window.appSession?.permissions?.can_edit_caal && refreshMonumentsCacheBtn) {
       const data = await response.json();
 
       if (!response.ok || !data.ok) {
-        alert(data.detail || data.error || "Cache refresh failed");
+        alert(data.detail || data.error || t("cache_refresh_failed", "Cache refresh failed"));
         return;
       }
 
-      showToast("CAAL cache refreshed");
+      showToast(t("caal_cache_refreshed", "CAAL cache refreshed"));
 
       await loadMonumentMapRecords();
       await loadMonumentListRecords();
     } catch (error) {
       console.error("Cache refresh failed:", error);
-      alert(error.message || "Cache refresh failed");
+      alert(error.message || t("cache_refresh_failed", "Cache refresh failed"));
     } finally {
       refreshMonumentsCacheBtn.disabled = false;
-      refreshMonumentsCacheBtn.textContent = "Refresh cache";
+      refreshMonumentsCacheBtn.textContent = t("refresh_cache", "Refresh cache");
       setMonumentsLoading(false);
     }
   });
@@ -1984,25 +2103,27 @@ if (window.appSession?.permissions?.can_edit_caal && refreshMonumentsCacheBtn) {
 /// related resource helpers
 // ----------------------------------------------
 
-function parseRelatedIds(value) {
-  if (!value) return [];
-
-  return String(value)
-    .split(/[,;\n]+/)
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
 function normaliseRelatedIdList(value) {
   return Array.from(new Set(parseRelatedIds(value))).join(", ");
 }
 
-function isLikelyRelatedId(value) {
-  return /^[^\s,;]+-\d+$/.test(String(value).trim());
+function parseRelatedIds(text) {
+  return String(text || "")
+    .split(/[,\n;]+/)
+    .map((v) => v.trim())
+    .filter(Boolean);
+}
+
+function looksLikeRelatedIdList(text) {
+  const ids = parseRelatedIds(text);
+
+  if (!ids.length) return false;
+
+  return ids.every((id) => /^[A-Za-z0-9_./-]+$/.test(id));
 }
 
 function getInvalidRelatedIds(value) {
-  return parseRelatedIds(value).filter((id) => !isLikelyRelatedId(id));
+  return parseRelatedIds(value).filter((id) => !looksLikeRelatedIdList(id));
 }
 
 function mRenderRelatedIdList(label, value, fullWidth = true) {
@@ -2010,7 +2131,7 @@ function mRenderRelatedIdList(label, value, fullWidth = true) {
 
   const inner = ids.length
     ? ids.map((id) => {
-        const looksValid = isLikelyRelatedId(id);
+        const looksValid = looksLikeRelatedIdList(id);
 
         if (!looksValid) {
           return `
@@ -2046,6 +2167,29 @@ function mRenderRelatedIdList(label, value, fullWidth = true) {
   `;
 }
 
+function renderMasterIdChip(record) {
+  const masterId = getMonumentMasterId(record);
+
+  if (!masterId) return "";
+
+  return `
+    <div class="master-id-title-row related-id-list">
+      <strong>${mLabel("MasterID", "MasterID")}:</strong>
+      <button
+        type="button"
+        class="related-id-chip monument-master-id-chip"
+        data-master-id="${masterId}"
+        title="${t("open_master_record", "Open master record")}"
+      >
+        ${masterId}
+      </button>
+      <span class="master-id-note">
+        ${t("master_id_readonly_note", "This record is linked to a master record and is read-only.")}
+      </span>
+    </div>
+  `;
+}
+
 function wireRelatedRecordChips() {
   Array.from(document.querySelectorAll(".related-id-chip")).forEach((btn) => {
     btn.addEventListener("click", async () => {
@@ -2057,16 +2201,94 @@ function wireRelatedRecordChips() {
   });
 }
 
+function wireMasterIdChip() {
+  const chip = document.querySelector(".monument-master-id-chip");
+  if (!chip || chip.dataset.masterWired === "true") return;
+
+  chip.dataset.masterWired = "true";
+
+  chip.addEventListener("click", async () => {
+    const masterId = chip.dataset.masterId;
+    if (!masterId) return;
+
+    await openMasterRecordInDetails(masterId);
+  });
+}
+
+async function openMasterRecordInDetails(masterId) {
+  if (!monumentConfirmLoseChanges()) return;
+
+  setMonumentsLoading(true, t("loading_full_record", "Loading full record..."));
+
+  try {
+    const lang =
+      (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
+      window.appSession?.profile?.preferred_language ||
+      "en";
+
+    const response = await fetch(
+      `/api/records/resolve?caal_id=${encodeURIComponent(masterId)}&lang=${encodeURIComponent(lang)}`,
+      {
+        method: "GET",
+        credentials: "include"
+      }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok || !data.ok || !data.record) {
+      alert(data.error || t("could_not_load_master_record", "Could not load master record"));
+      return;
+    }
+
+    if (data.record_type !== "monument") {
+      alert(t("master_record_not_monument", "The master record is not a monument record."));
+      return;
+    }
+
+    const fullRecord = data.record;
+
+    monumentPendingNewRecord = null;
+    monumentIsEditMode = false;
+    monumentIsDirty = false;
+    monumentIsAddMode = false;
+    monumentSelectedRecord = fullRecord;
+
+    monumentSyncModeVisualState();
+    updateAddModeUI();
+    clearPendingPickPoint();
+    clearRelationshipStateForNewSelection();
+
+    renderMonumentRecordDetails(fullRecord);
+    updateSelectedResultCard();
+
+    if (map && fullRecord.geometry?.coordinates) {
+      drawSelectedMonumentHighlight(fullRecord);
+      ensureRecordVisibleOnMap(fullRecord);
+    }
+  } catch (error) {
+    console.error("Could not load master record:", error);
+    alert(error.message || t("could_not_load_master_record", "Could not load master record"));
+  } finally {
+    setMonumentsLoading(false);
+  }
+}
+
 async function openRelatedRecordPreview(caalId) {
+  const lang =
+    (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
+    window.appSession?.profile?.preferred_language ||
+    "en";
+
   const response = await fetch(
-    `/api/records/resolve?caal_id=${encodeURIComponent(caalId)}`,
+    `/api/records/resolve?caal_id=${encodeURIComponent(caalId)}&lang=${encodeURIComponent(lang)}`,
     { method: "GET", credentials: "include" }
   );
 
   const data = await response.json();
 
   if (!response.ok || !data.ok) {
-    alert(data.error || "Could not load related record");
+    alert(data.error || t("could_not_load_related_record", "Could not load related record"));
     return;
   }
 
@@ -2078,9 +2300,12 @@ function validateRelatedFieldsBeforeSave() {
   const fields = [
     "Monument is part of",
     "Monument contains",
-    "Monument is associated with",
-    "MasterID"
+    "Monument is associated with"
   ];
+
+  if (monumentUserCanEditMasterId()) {
+    fields.push("MasterID");
+  }
 
   const invalid = [];
 
@@ -2093,9 +2318,11 @@ function validateRelatedFieldsBeforeSave() {
 
   if (invalid.length) {
     alert(
-      "Some related IDs do not look valid:\n\n" +
+      t("invalid_related_ids_intro", "Some related IDs do not look valid:") +
+      "\n\n" +
       invalid.join("\n") +
-      "\n\nPlease use comma-separated CAAL IDs."
+      "\n\n" +
+      t("invalid_related_ids_instruction", "Please use comma-separated CAAL IDs.")
     );
     return false;
   }
@@ -2163,15 +2390,20 @@ async function resolveRelatedRecordStatus(caalId) {
     return relatedRecordStatusCache.get(caalId);
   }
 
-  if (!isLikelyRelatedId(caalId)) {
+  if (!looksLikeRelatedIdList(caalId)) {
     const result = { status: "invalid", caalId };
     relatedRecordStatusCache.set(caalId, result);
     return result;
   }
 
   try {
+    const lang =
+      (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
+      window.appSession?.profile?.preferred_language ||
+      "en";
+
     const response = await fetch(
-      `/api/records/resolve?caal_id=${encodeURIComponent(caalId)}`,
+      `/api/records/resolve?caal_id=${encodeURIComponent(caalId)}&lang=${encodeURIComponent(lang)}`,
       { method: "GET", credentials: "include" }
     );
 
@@ -2476,13 +2708,13 @@ function renderMonumentPreviewModal(record) {
 
       <div class="preview-action-row">
         <button type="button" class="action-btn primary" id="previewOpenInDetailsBtn">
-          ${mLabel("Open in details pane", "Open in details pane")}
+          ${t("open_in_details_pane", "Open in details pane")}
         </button>
 
         ${
           record?.geometry?.coordinates
             ? `<button type="button" class="action-btn" id="previewCentreOnMapBtn">
-                Centre on map
+                ${t("centre_on_map", "Centre on map")}
               </button>`
             : ""
         }
@@ -2623,7 +2855,7 @@ function renderRelatedRecordModal(record, recordType, caalId) {
       ${
         fullRecordUrl
           ? `<button type="button" class="action-btn" id="openRelatedFullRecordBtn">
-              ${mLabel("Open full record", "Open full record")}
+              ${t("open_full_record", "Open full record")}
             </button>`
           : ""
       }
@@ -2678,7 +2910,7 @@ function renderRelatedMonumentModal(record, caalId, fullRecordUrl) {
       ${
         fullRecordUrl
           ? `<button type="button" class="action-btn" id="openRelatedFullRecordBtn">
-              ${mLabel("Open full record", "Open full record")}
+              ${t("open_full_record", "Open full record")}
             </button>`
           : ""
       }
@@ -2748,7 +2980,7 @@ function renderRelatedArchiveModal(record, caalId, fullRecordUrl) {
       ${
         fullRecordUrl
           ? `<button type="button" class="action-btn" id="openRelatedFullRecordBtn">
-              ${mLabel("Open full record", "Open full record")}
+              ${t("open_full_record", "Open full record")}
             </button>`
           : ""
       }
@@ -2891,6 +3123,13 @@ function closeMonumentPreviewModal() {
 // --------------------------------------------------------
 // Labels + lookups API
 // --------------------------------------------------------
+function applyMonumentStaticLabels() {
+  document.querySelectorAll("[data-monument-label]").forEach((el) => {
+    const key = el.dataset.monumentLabel;
+    el.textContent = mLabel(key, el.textContent);
+  });
+}
+
 async function loadMonumentLabels() {
   const lang =
     (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
@@ -2929,6 +3168,8 @@ async function loadMonumentLookups() {
   }
 
   monumentLookups = data.lookups || {};
+  window.sharedLookups = window.sharedLookups || {};
+  window.sharedLookups.language_display = monumentLookups.language_display || [];
   buildCulturalPeriodLookup();
 }
 
@@ -2993,7 +3234,7 @@ function renderFilterChipsForSelect(selectEl, chipsId) {
   if (!selected.length) {
     const empty = document.createElement("span");
     empty.className = "filter-chip-empty";
-    empty.textContent = "No values selected";
+    empty.textContent = t("no_values_selected", "No values selected");
     chipsEl.appendChild(empty);
     return;
   }
@@ -3086,6 +3327,7 @@ async function loadMonumentMapRecords() {
     monumentMapRecords = [];
     drawMonumentRecords([]);
     updateMapOptionsState();
+    updateMapStatusLine();
     setMapStaleState(false);
     return;
   }
@@ -3097,7 +3339,7 @@ async function loadMonumentMapRecords() {
     params.set("bbox", bbox);
   }
 
-  setMapStaleState(true, mLabel("Redrawing map...", "Redrawing map..."));
+  setMapStaleState(true, t("redrawing_map", "Redrawing map..."));
 
   try {
     const response = await fetch(`/api/monuments/map?${params.toString()}`, {
@@ -3116,9 +3358,12 @@ async function loadMonumentMapRecords() {
     }
 
     monumentMapRecords = data.records || [];
+
     drawMonumentRecords(monumentMapRecords);
+
     renderLiveMapLabels();
     updateMapOptionsState();
+    updateMapStatusLine();
   } finally {
     if (requestSeq === monumentMapRequestSeq) {
       setMapStaleState(false);
@@ -3139,6 +3384,7 @@ async function loadMonumentListRecords() {
     renderLiveMapLabels();
     updateMapOptionsState();
     renderMonumentEmptyState();
+    updateMapStatusLine();
     return;
   }
 
@@ -3170,6 +3416,7 @@ async function loadMonumentListRecords() {
   renderLiveMapLabels();
   updateMapOptionsState();
   renderMonumentPageInfo();
+  updateMapStatusLine();
 }
 
 async function loadFullMonumentRecord(record) {
@@ -3179,8 +3426,13 @@ async function loadFullMonumentRecord(record) {
     return record;
   }
 
+  const lang =
+    (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
+    window.appSession?.profile?.preferred_language ||
+    "en";
+
   const response = await fetch(
-    `/api/records/resolve?caal_id=${encodeURIComponent(caalId)}`,
+    `/api/records/resolve?caal_id=${encodeURIComponent(caalId)}&lang=${encodeURIComponent(lang)}`,
     {
       method: "GET",
       credentials: "include"
@@ -3190,16 +3442,16 @@ async function loadFullMonumentRecord(record) {
   const data = await response.json();
 
   if (!response.ok || !data.ok) {
-    throw new Error(data.detail || data.error || "Could not load full monument record");
+    throw new Error(data.detail || data.error || t("could_not_load_full_monument_record", "Could not load full monument record"));
   }
 
   if (data.record_type !== "monument" || !data.record) {
-    throw new Error("Resolved record is not a monument");
+    throw new Error(t("resolved_record_not_monument", "Resolved record is not a monument"));
   }
 
   data.record.source = data.record.source || {};
   data.record.source.is_editable = canEditMonumentRecord(data.record);
-  
+
   return data.record;
 }
 
@@ -3211,9 +3463,12 @@ function renderMonumentPageInfo() {
   const pageNumber = Math.floor(monumentPageOffset / monumentPageLimit) + 1;
 
   if (monumentTotalIsExact) {
-    pageInfo.textContent = `Page ${pageNumber} of ${totalPages}`;
+    pageInfo.textContent = t("page_x_of_y", "Page {page} of {total}")
+      .replace("{page}", pageNumber)
+      .replace("{total}", totalPages);
   } else {
-    pageInfo.textContent = `Page ${pageNumber}`;
+    pageInfo.textContent = t("page_x", "Page {page}")
+     .replace("{page}", pageNumber);
   }
 }
 
@@ -3278,17 +3533,18 @@ async function applyMonumentFilters({ includeMap = true, listFirst = true } = {}
       map.removeSource("monument-selected");
     }
   }
+
   clearRelatedMonumentsMap();
   updateMapOptionsState();
 
-  setMonumentsLoading(true, mLabel("Updating results...", "Updating results..."));
+  setMonumentsLoading(true, t("updating_results", "Updating results..."));
 
   try {
     if (listFirst) {
       await loadMonumentListRecords();
 
       if (includeMap) {
-        setMonumentsLoading(true, mLabel("Redrawing map...", "Redrawing map..."));
+        setMonumentsLoading(true, t("redrawing_map", "Redrawing map..."));
         await loadMonumentMapRecords();
       }
     } else {
@@ -3444,14 +3700,14 @@ function bindMonumentLayerEvents() {
   async function openMapMonumentPreview(record) {
     if (!record) return;
 
-    setMonumentsLoading(true, mLabel("Loading preview...", "Loading preview..."));
+    setMonumentsLoading(true, t("loading_preview", "Loading preview..."));
 
     try {
       const fullRecord = await loadFullMonumentRecord(record);
       renderMonumentPreviewModal(fullRecord);
     } catch (error) {
       console.error("Failed to load monument preview from map:", error);
-      alert(error.message || "Could not load monument preview");
+      alert(error.message || t("could_not_load_monument_preview", "Could not load monument preview"));
     } finally {
       setMonumentsLoading(false);
     }
@@ -3800,15 +4056,20 @@ function renderMonumentResultsList(records) {
   const end = monumentPageOffset + records.length;
 
   const countText = monumentTotalIsExact
-    ? `${start}-${end} (${monumentTotalCount} total)`
-    : `${start}-${end} matching records`;
+    ? t("results_count_total", "{start}-{end} ({total} total)")
+        .replace("{start}", start)
+        .replace("{end}", end)
+        .replace("{total}", monumentTotalCount)
+    : t("results_count_matching", "{start}-{end} matching records")
+        .replace("{start}", start)
+        .replace("{end}", end);
 
   setMonumentResultsCountText(countText);
 
   if (records.length === 0) {
     resultsList.innerHTML = `
       <div class="results-empty">
-        <p>${mLabel("No matching records.", "No matching records.")}</p>
+        <p>${t("no_matching_records", "No matching records.")}</p>
       </div>
     `;
     return;
@@ -3836,7 +4097,7 @@ function renderMonumentResultsList(records) {
             class="action-btn result-preview-btn"
             data-preview-index="${index}"
           >
-            ${mLabel("Preview", "Preview")}
+            ${t("preview", "Preview")}
           </button>
         </div>
       </div>
@@ -3852,7 +4113,7 @@ function renderMonumentResultsList(records) {
       const lightRecord = records[idx];
       if (!lightRecord) return;
 
-      setMonumentsLoading(true, mLabel("Loading full record...", "Loading full record..."));
+      setMonumentsLoading(true, t("loading_full_record", "Loading full record..."));
 
       try {
         const fullRecord = await loadFullMonumentRecord(lightRecord);
@@ -3890,14 +4151,14 @@ function renderMonumentResultsList(records) {
       const lightRecord = records[idx];
       if (!lightRecord) return;
 
-      setMonumentsLoading(true, mLabel("Loading preview...", "Loading preview..."));
+      setMonumentsLoading(true, t("loading_preview", "Loading preview..."));
 
       try {
         const fullRecord = await loadFullMonumentRecord(lightRecord);
         renderMonumentPreviewModal(fullRecord);
       } catch (error) {
         console.error("Failed to load monument preview:", error);
-        alert(error.message || "Could not load monument preview");
+        alert(error.message || t("could_not_load_monument_preview", "Could not load monument preview"));
       } finally {
         setMonumentsLoading(false);
       }
@@ -3908,12 +4169,16 @@ function renderMonumentResultsList(records) {
 // --------------------------------------------------------
 // Empty state
 // --------------------------------------------------------
-function renderMonumentEmptyState() {
+function renderMonumentEmptyState({ preserveSelection = false } = {}) {
   if (!recordDetails) return;
+
+  if (!preserveSelection) {
+    monumentSelectedRecord = null;
+  }
 
   recordDetails.innerHTML = `
     <div class="empty-state">
-      <p>${mLabel("No record selected yet.", "No record selected yet.")}</p>
+      <p>${t("no_record_selected", "No record selected yet.")}</p>
     </div>
   `;
 
@@ -3945,7 +4210,7 @@ async function moveSelection(direction) {
   const lightRecord = monumentListRecords[newIndex];
   if (!lightRecord) return;
 
-  setMonumentsLoading(true, mLabel("Loading full record...", "Loading full record..."));
+  setMonumentsLoading(true, t("loading_full_record", "Loading full record..."));
 
   try {
     const fullRecord = await loadFullMonumentRecord(lightRecord);
@@ -3963,7 +4228,7 @@ async function moveSelection(direction) {
     }
   } catch (error) {
     console.error("Failed to load full monument record:", error);
-    alert(error.message || "Could not load full monument record");
+    alert(error.message || t("could_not_load_full_monument_record", "Could not load full monument record"));
   } finally {
     setMonumentsLoading(false);
   }
@@ -4152,14 +4417,26 @@ function renderMonumentDisplayMode(record) {
   ].join("");
 
   const metadataHtml = [
-    mRenderDetailItem(mLabel("Preferred Language", "Preferred Language"), mRaw(record, "Preferred Language")),
-    mRenderDetailItem(mLabel("Recorder", "Recorder"), mSummary(record, "recorder")),
+    mRenderDetailItem(
+      mLabel("Preferred Language", "Preferred Language"),
+      displayLanguageName(mRaw(record, "Preferred Language"))
+    ),
+    mRenderDetailItem(
+      mLabel("Recorder", "Recorder"),
+      mRaw(record, "Recorder") || mSummary(record, "recorder")
+    ),
     mRenderDetailItem(
       mLabel("Date of Recording", "Date of Recording"),
-      mDateOnly(mSummary(record, "date_of_recording"))
+      mDateOnly(mRaw(record, "Date of Recording") || mSummary(record, "date_of_recording"))
     ),
-    mRenderDetailItem(mLabel("Tstamp", "Tstamp"), mDateOnly(mRaw(record, "Tstamp"))),
-    mRenderDetailItem(mLabel("MasterID", "MasterID"), mRaw(record, "MasterID"))
+    mRenderDetailItem(
+      mLabel("Tstamp", "Tstamp"),
+      mDateOnly(mRaw(record, "Tstamp"))
+    ),
+    mRenderDetailItem(
+      mLabel("MasterID", "MasterID"),
+      mRaw(record, "MasterID")
+    )
   ].join("");
 
   recordDetails.innerHTML = `
@@ -4168,8 +4445,11 @@ function renderMonumentDisplayMode(record) {
         <h3>${mSafeValue(mSummary(record, "primary_name"))}</h3>
         ${statusBadge}
       </div>
+
       <p>${mSafeValue(mIdentity(record, "caal_id"))}</p>
-      <p></p>
+
+      ${renderMasterIdChip(record)}
+
       <div class="record-title-actions">
         <button type="button" class="action-btn" id="zoomToSelectedMonumentBtn">
           ${mLabel("Centre on map", "Centre on map")}
@@ -4212,6 +4492,7 @@ function renderMonumentDisplayMode(record) {
     clearSelectedBtn.addEventListener("click", clearSelectedMonumentRecord);
   }
   wireRelatedRecordChips();
+  wireMasterIdChip();
 
   const showRelatedMapBtn = document.getElementById("showRelatedMonumentsOnMapBtn");
   const clearRelatedMapBtn = document.getElementById("clearRelatedMonumentsMapBtn");
@@ -4313,7 +4594,7 @@ async function showRelatedMonumentsOnMap(record = monumentSelectedRecord) {
   }
 
   if (!features.length) {
-    alert(mLabel("No related monument locations found.", "No related monument locations found."));
+    alert(t("no_related_monument_locations_found", "No related monument locations found."));
     return;
   }
 
@@ -4538,11 +4819,15 @@ function renderMonumentEditMode(record) {
             <span class="detail-section-title">${mLabel("Metadata", "Metadata")}</span>
           </div>
 
-          ${mRenderReadOnlyItem(mLabel("Preferred Language", "Preferred Language"), mRaw(record, "Preferred Language"))}
+          ${mRenderReadOnlyItem(mLabel("Preferred Language", "Preferred Language"),displayLanguageName(mRaw(record, "Preferred Language")))}
           ${mRenderReadOnlyItem(mLabel("Recorder", "Recorder"), mRaw(record, "Recorder"))}
           ${mRenderReadOnlyItem(mLabel("Date of Recording", "Date of Recording"), mDateOnly(mRaw(record, "Date of Recording")) || mLabel("Set automatically on save", "Set automatically on save"))}
           ${mRenderReadOnlyItem(mLabel("Tstamp", "Tstamp"), mDateOnly(mRaw(record, "Tstamp")))}
-          ${mRenderTextInput("MasterID", mLabel("MasterID", "MasterID"), mRaw(record, "MasterID"))}
+          ${
+            monumentUserCanEditMasterId()
+              ? mRenderTextInput("MasterID", mLabel("MasterID", "MasterID"), mRaw(record, "MasterID"))
+              : mRenderReadOnlyItem(mLabel("MasterID", "MasterID"), mRaw(record, "MasterID"))
+          }
         </div>
       </div>
     </div>
@@ -4874,7 +5159,7 @@ async function saveCurrentMonumentRecord() {
     return;
   }
 
-  setMonumentsLoading(true, "Saving record...");
+  setMonumentsLoading(true, t("saving_record", "Saving record..."));
 
   try {
     const lang =
@@ -4898,11 +5183,11 @@ async function saveCurrentMonumentRecord() {
     const data = await response.json();
 
     if (!response.ok || !data.ok) {
-      alert(data.detail || data.error || "Monument save failed");
+      alert(data.detail || data.error || t("monument_save_failed", "Monument save failed"));
       return;
     }
 
-    showToast("Record saved");
+    showToast(t("record_saved", "Record saved"));
     monumentPendingNewRecord = null;
     monumentIsEditMode = false;
     monumentSyncModeVisualState();
@@ -4950,7 +5235,7 @@ async function saveCurrentMonumentRecord() {
     }
   } catch (error) {
     console.error("Monument save failed:", error);
-    alert(error.message || "Monument save failed");
+    alert(error.message || t("monument_save_failed", "Monument save failed"));
   } finally {
     setMonumentsLoading(false);
   }
@@ -5013,7 +5298,7 @@ async function monumentDeleteCurrentRecord() {
     ""
   );
 
-  setMonumentsLoading(true, mLabel("Deleting record...", "Deleting record..."));
+  setMonumentsLoading(true, t("deleting_record", "Deleting record..."));
 
   try {
     const response = await fetch(`/api/monuments/${record.identity.id}`, {
@@ -5030,7 +5315,7 @@ async function monumentDeleteCurrentRecord() {
     const data = await response.json();
 
     if (!response.ok || !data.ok) {
-      alert(data.detail || data.error || "Monument delete failed");
+      alert(data.detail || data.error || t("monument_delete_failed", "Monument delete failed"));
       return;
     }
 
@@ -5046,14 +5331,14 @@ async function monumentDeleteCurrentRecord() {
     clearPendingPickPoint();
 
     if (typeof showToast === "function") {
-      showToast(mLabel("Monument record deleted", "Monument record deleted"));
+      showToast(t("monument_record_deleted", "Monument record deleted"));
     }
 
     await applyMonumentFilters({ includeMap: true, listFirst: true });
     renderMonumentEmptyState();
   } catch (error) {
     console.error("Monument delete failed:", error);
-    alert(error.message || "Monument delete failed");
+    alert(error.message || t("monument_delete_failed", "Monument delete failed"));
   } finally {
     setMonumentsLoading(false);
   }
@@ -5062,6 +5347,26 @@ async function monumentDeleteCurrentRecord() {
 // --------------------------------------------------------
 // Events
 // --------------------------------------------------------
+if (resetMapBtn) {
+  resetMapBtn.addEventListener("click", resetMapView);
+}
+
+if (showRelatedFromMapOptionsBtn) {
+  showRelatedFromMapOptionsBtn.addEventListener("click", async () => {
+    if (!selectedRecordHasRelatedIds()) return;
+
+    await showRelatedMonumentsOnMap(monumentSelectedRecord);
+
+    if (mapLabelScopeSelect && mapLabelScopeSelect.value === "none") {
+      mapLabelScopeSelect.value = "selected_related";
+      updateMapLabelHelpText();
+    }
+
+    renderLiveMapLabels();
+    updateMapOptionsState();
+  });
+}
+
 if (monumentPreviewCloseBtn) {
   monumentPreviewCloseBtn.addEventListener("click", () => {
     closeMonumentPreviewModal();
@@ -5102,8 +5407,8 @@ if (toggleFiltersBtn && filtersPanel) {
     const isHidden = filtersPanel.hidden;
     filtersPanel.hidden = !isHidden;
     toggleFiltersBtn.textContent = isHidden
-      ? mLabel("Hide advanced filters", "Hide advanced filters")
-      : mLabel("Advanced filters", "Advanced filters");
+      ? t("hide_advanced_filters", "Hide advanced filters")
+      : t("advanced_filters", "Advanced filters");
   });
 }
 
@@ -5114,7 +5419,7 @@ if (monumentPrevBtn) {
 
     monumentPageOffset = Math.max(0, monumentPageOffset - monumentPageLimit);
 
-    setMonumentsLoading(true, "Loading page...");
+    setMonumentsLoading(true, t("loading_page", "Loading page..."));
     try {
       await loadMonumentListRecords();
     } catch (error) {
@@ -5132,7 +5437,7 @@ if (monumentNextBtn) {
 
     monumentPageOffset += monumentPageLimit;
 
-    setMonumentsLoading(true, "Loading page...");
+    setMonumentsLoading(true, t("loading_page", "Loading page..."));
     try {
       await loadMonumentListRecords();
     } catch (error) {
@@ -5278,10 +5583,11 @@ document.addEventListener("app:languageChanged", async () => {
   const wasEditing = monumentIsEditMode;
   const pendingNew = monumentPendingNewRecord;
 
-  setMonumentsLoading(true, mLabel("Switching language...", "Switching language..."));
+  setMonumentsLoading(true, t("switching_language", "Switching language..."));
 
   try {
     await loadMonumentLabels();
+    applyMonumentStaticLabels();
     await loadMonumentLookups();
     populateMonumentFilterLookups();
 
@@ -5371,15 +5677,16 @@ document.addEventListener("app:languageChanged", async () => {
           map.removeSource("monument-selected");
         }
       }
+
       clearRelatedMonumentsMap();
       updateMapOptionsState();
 
-      setMonumentsLoading(true, mLabel("Updating scope...", "Updating scope..."));
+      setMonumentsLoading(true, t("updating_scope", "Updating scope..."));
 
       try {
         await loadMonumentListRecords();
 
-        setMonumentsLoading(true, mLabel("Redrawing map...", "Redrawing map..."));
+        setMonumentsLoading(true, t("redrawing_map", "Redrawing map..."));
         await loadMonumentMapRecords();
 
         renderMonumentEmptyState();
@@ -5422,10 +5729,16 @@ document.addEventListener("DOMContentLoaded", async () => {
     filterCaalId.value = initialCaalId;
   }
 
-  setMonumentsLoading(true, initialCaalId ? "Loading linked record..." : "Loading records...");
+  setMonumentsLoading(
+    true,
+    initialCaalId
+      ? t("loading_linked_record", "Loading linked record...")
+      : t("loading_records", "Loading records...")
+  );
 
   try {
     await loadMonumentLabels();
+    applyMonumentStaticLabels();
     await loadMonumentLookups();
     populateMonumentFilterLookups();
 
@@ -5520,7 +5833,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       mapLoaded = true;
       updateAddModeUI();
 
-      setMonumentsLoading(true, "Loading records...");
+      setMonumentsLoading(true, t("loading_records", "Loading records..."));
 
       try {
         await loadMonumentMapRecords();
@@ -5563,7 +5876,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         } catch (error) {
           console.error("Failed to reload monuments for bbox:", error);
         }
-      }, 1000);
+      }, 1500);
     });
 
     if (basemapSelect) {
@@ -5592,7 +5905,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       });
     }
   } else {
-    setMonumentsLoading(true, "Loading records...");
+    setMonumentsLoading(true, t("loading_records", "Loading records..."));
 
     try {
       await loadMonumentMapRecords();

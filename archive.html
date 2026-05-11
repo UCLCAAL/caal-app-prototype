@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>CAAL Workspace - Archive</title>
+  <title data-i18n="archive_page_title">CAAL Workspace - Archive</title>
 
   <link rel="stylesheet" href="style.css" />
 </head>
@@ -16,15 +16,15 @@
         class="app-brand-logo"
       />
       <div class="app-brand-text">
-        <h1>CAAL Workspace</h1>
-        <p>Kazakhstan archive workspace</p>
+        <h1 data-i18n="app_title">CAAL Workspace</h1>
+        <p data-i18n="archive_workspace_subtitle">Kazakhstan archive workspace</p>
       </div>
     </div>
 
     <nav class="main-nav" aria-label="Main navigation">
-      <a href="home.html" class="nav-link nav-link">Home</a>
-      <a href="monuments.html" class="nav-link">Monuments</a>
-      <a href="archive.html" class="nav-link nav-link-active">Archive</a>
+      <a href="home.html" class="nav-link" data-i18n="nav_home">Home</a>
+      <a href="monuments.html" class="nav-link" data-i18n="nav_monuments">Monuments</a>
+      <a href="archive.html" class="nav-link nav-link-active" data-i18n="nav_archive">Archive</a>
       <button type="button" class="action-btn js-logout-btn" data-i18n="logout_button">Log out</button>
     </nav>
 
@@ -86,7 +86,7 @@
             type="button"
             class="action-btn filters-toggle"
             id="toggleArchiveFiltersBtn"
-            data-i18n="archive_advanced_filters"
+            data-i18n="advanced_filters"
           >
             Advanced filters
           </button>
@@ -95,20 +95,24 @@
             type="button"
             class="action-btn clear-filters-btn"
             id="clearArchiveFiltersBtn"
-            data-i18n="archive_clear_filters"
+            data-i18n="clear_filters"
           >
             Clear filters
           </button>
         </div>
 
+        
+        <div class="filter-live-results-summary">
+          <span data-i18n="current_results">Current results:</span>
+          <strong id="archiveFilterResultsCount">0 records</strong>
+        </div>
+
         <div class="filters-panel" id="archiveFiltersPanel" hidden>
           <div class="filters-grid">
-            <div class="filters-actions">
-              <button type="button" class="action-btn" id="clearArchiveFiltersBtn" data-i18n="archive_clear_filters">Clear filters</button>
-            </div>
+            <div class="filters-actions"></div>
 
             <div class="filter-group">
-              <label for="archiveFilterCaalId">CAAL_ID</label>
+              <label for="archiveFilterCaalId" data-archive-label="CAAL_ID">CAAL_ID</label>
               <input
                 type="text"
                 id="archiveFilterCaalId"
@@ -118,35 +122,35 @@
             </div>
             
             <div class="filter-group chip-multiselect-group">
-              <label for="filterArchiveRelatedCountries" data-i18n="archive_related_countries">Related Countries</label>
+              <label for="filterArchiveRelatedCountries" data-archive-label="Related Countries">Related Countries</label>
               <div class="selected-filter-chips" id="filterArchiveRelatedCountriesChips"></div>
               <select id="filterArchiveRelatedCountries" class="form-control chip-multiselect" multiple></select>
               <p class="filter-help" data-i18n="filter_click_toggle_help">Click values to select or deselect. Selected values appear above.</p>
             </div>
 
             <div class="filter-group chip-multiselect-group">
-              <label for="filterArchiveRelatedReligions" data-i18n="archive_related_religions">Related Religions</label>
+              <label for="filterArchiveRelatedReligions" data-archive-label="Related Religions">Related Religions</label>
               <div class="selected-filter-chips" id="filterArchiveRelatedReligionsChips"></div>
               <select id="filterArchiveRelatedReligions" class="form-control chip-multiselect" multiple></select>
               <p class="filter-help" data-i18n="filter_click_toggle_help">Click values to select or deselect. Selected values appear above.</p>
             </div>
 
             <div class="filter-group chip-multiselect-group">
-              <label for="filterArchiveRelatedSubjects" data-i18n="archive_related_subjects">Related Subjects</label>
+              <label for="filterArchiveRelatedSubjects" data-archive-label="Related Subjects">Related Subjects</label>
               <div class="selected-filter-chips" id="filterArchiveRelatedSubjectsChips"></div>
               <select id="filterArchiveRelatedSubjects" class="form-control chip-multiselect" multiple></select>
               <p class="filter-help" data-i18n="filter_click_toggle_help">Click values to select or deselect. Selected values appear above.</p>
             </div>
 
             <div class="filter-group chip-multiselect-group">
-              <label for="filterArchiveContentType" data-i18n="archive_content_type">Content Type</label>
+              <label for="filterArchiveContentType" data-archive-label="Content Type">Content Type</label>
               <div class="selected-filter-chips" id="filterArchiveContentTypeChips"></div>
               <select id="filterArchiveContentType" class="form-control chip-multiselect" multiple></select>
               <p class="filter-help" data-i18n="filter_click_toggle_help">Click values to select or deselect. Selected values appear above.</p>
             </div>
 
             <div class="filter-group chip-multiselect-group">
-              <label for="filterArchiveLanguages" data-i18n="archive_languages_material">Languages of Material</label>
+              <label for="filterArchiveLanguages" data-archive-label="Languages of Material">Languages of Material</label>
               <div class="selected-filter-chips" id="filterArchiveLanguagesChips"></div>
               <select id="filterArchiveLanguages" class="form-control chip-multiselect" multiple></select>
               <p class="filter-help" data-i18n="filter_click_toggle_help">Click values to select or deselect. Selected values appear above.</p>
@@ -182,17 +186,17 @@
         <p></p>
 
         <div class="detail-action-bar" id="archiveActionBar">
-          <button type="button" class="action-btn primary" id="addArchiveBtn">Add record</button>
-          <button type="button" class="action-btn" id="archiveEditBtn" hidden>Edit record</button>
-          <button type="button" class="action-btn primary" id="archiveSaveBtn" hidden>Save</button>
-          <button type="button" class="action-btn" id="archiveCancelEditBtn" hidden>Cancel</button>
-          <button type="button" class="action-btn danger" id="archiveDeleteBtn" hidden>Delete record</button>
+          <button type="button" class="action-btn primary" id="addArchiveBtn" data-i18n="add_record">Add record</button>
+          <button type="button" class="action-btn" id="archiveEditBtn" hidden data-i18n="edit_record">Edit record</button>
+          <button type="button" class="action-btn primary" id="archiveSaveBtn" hidden data-i18n="save">Save</button>
+          <button type="button" class="action-btn" id="archiveCancelEditBtn" hidden data-i18n="cancel">Cancel</button>
+          <button type="button" class="action-btn danger" id="archiveDeleteBtn" hidden data-i18n="delete_record">Delete record</button>
         </div>
       </div>
 
       <div class="pane-body" id="archiveRecordDetails">
         <div class="empty-state">
-          <p>No record selected yet.</p>
+          <p data-i18n="no_record_selected">No record selected yet.</p>
         </div>
       </div>
     </aside>
@@ -202,12 +206,12 @@
   <div id="archivePreviewModal" class="modal-overlay" hidden>
     <div class="modal-dialog">
       <div class="modal-header">
-        <h3 id="archivePreviewTitle">Record preview</h3>
-        <button type="button" class="action-btn" id="archivePreviewCloseBtn">Close</button>
+        <h3 id="archivePreviewTitle" data-i18n="record_preview">Record preview</h3>
+        <button type="button" class="action-btn" id="archivePreviewCloseBtn" data-i18n="close">Close</button>
       </div>
 
       <div class="modal-body" id="archivePreviewBody">
-        <p>No preview loaded.</p>
+        <p data-i18n="no_preview_loaded">No preview loaded.</p>
       </div>
     </div>
   </div>

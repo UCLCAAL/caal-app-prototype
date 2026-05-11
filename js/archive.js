@@ -24,6 +24,7 @@ const archiveLoadingIndicator = document.getElementById("archiveLoadingIndicator
 
 const archiveResultsList = document.getElementById("archiveResultsList");
 const archiveResultsCount = document.getElementById("archiveResultsCount");
+const archiveFilterResultsCount = document.getElementById("archiveFilterResultsCount");
 const archiveRecordDetails = document.getElementById("archiveRecordDetails");
 
 const showArchiveWorkspace = document.getElementById("showArchiveWorkspace");
@@ -64,7 +65,7 @@ let archiveLabels = {};
 let archiveLookups = {};
 
 let archiveTotalCount = 0;
-let archiveLimit = 10;
+let archiveLimit = 100;
 let archiveOffset = 0;
 
 let archivePendingNewRecord = null;    //
@@ -91,7 +92,7 @@ function setArchiveLoading(isLoading, message = "") {
   if (archiveLoadingIndicator) {
     archiveLoadingIndicator.hidden = !isLoading;
     archiveLoadingIndicator.innerHTML = isLoading
-      ? `<span class="spinner"></span><span>${message || archiveLabel("Loading...", "Loading...")}</span>`
+      ? `<span class="spinner"></span><span>${message || t("loading", "Loading...")}</span>`
       : "";
   }
 
@@ -104,6 +105,28 @@ function setArchiveLoading(isLoading, message = "") {
       el.classList.remove("is-loading");
     }
   });
+}
+
+function setArchiveResultsCountText(text) {
+  if (archiveResultsCount) {
+    archiveResultsCount.textContent = text;
+  }
+
+  if (archiveFilterResultsCount) {
+    archiveFilterResultsCount.textContent = text;
+  }
+}
+
+function setArchiveResultsCountLoading(message = null) {
+  const label = message || t("searching", "Searching...");
+
+  if (archiveResultsCount) {
+    archiveResultsCount.innerHTML = `<span class="mini-spinner"></span>${label}`;
+  }
+
+  if (archiveFilterResultsCount) {
+    archiveFilterResultsCount.innerHTML = `<span class="mini-spinner"></span>${label}`;
+  }
 }
 
 function showArchiveToast(message, variant = "success") {
@@ -130,7 +153,7 @@ function showArchiveToast(message, variant = "success") {
 async function archiveReloadFromFilters() {
   archiveOffset = 0;
 
-  setArchiveLoading(true, archiveLabel("Updating records...", "Updating records..."));
+  setArchiveLoading(true, t("updating_records", "Updating records..."));
 
   try {
     await loadArchiveRecords(archiveLimit, 0);
@@ -146,9 +169,11 @@ function archiveScheduleFilterReload() {
     clearTimeout(archiveFilterDebounceTimer);
   }
 
+  setArchiveResultsCountLoading();
+
   archiveFilterDebounceTimer = setTimeout(() => {
     archiveReloadFromFilters();
-  }, 400);
+  }, 600);
 }
 
 function archiveLabel(name, fallback = null) {
@@ -226,6 +251,29 @@ function archiveUniqueSorted(values) {
   );
 }
 
+function archiveParseAssociatedCaalIds(value) {
+  if (!value) return [];
+
+  return String(value)
+    .split(/[,;\n]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function archiveIsLikelyCaalId(value) {
+  const text = String(value || "").trim();
+
+  // This checks one parsed ID/chip only. The full field may contain
+  // comma/semicolon/newline separated IDs before parsing.
+  return text.length > 0 && !/[,;\n]/.test(text);
+}
+
+function archiveGetInvalidAssociatedIds(value) {
+  return archiveParseAssociatedCaalIds(value).filter(
+    (id) => !archiveIsLikelyCaalId(id)
+  );
+}
+
 function archiveArrayValue(value) {
   if (Array.isArray(value)) return value.filter(archiveHasRealValue);
 
@@ -261,18 +309,27 @@ function archiveSectionHasValues(values) {
 function updatePaginationUI() {
   if (!archivePageInfo) return;
 
-  const start = archiveTotalCount === 0 ? 0 : archiveOffset + 1;
-  const end = archiveOffset + archiveAllRecords.length;
-
   const pageNumber = Math.floor(archiveOffset / archiveLimit) + 1;
-  archivePageInfo.textContent = `${archiveLabel("Page", "Page")} ${pageNumber}`;
+  const totalPages = archiveTotalCount
+    ? Math.max(1, Math.ceil(archiveTotalCount / archiveLimit))
+    : 1;
+
+  archivePageInfo.textContent = archiveTotalCount
+    ? t("page_x_of_y", "Page {page} of {total}")
+        .replace("{page}", pageNumber)
+        .replace("{total}", totalPages)
+    : t("page_x", "Page {page}")
+        .replace("{page}", pageNumber);
 
   if (archivePrevBtn) {
     archivePrevBtn.disabled = archiveOffset === 0;
   }
 
   if (archiveNextBtn) {
-    archiveNextBtn.disabled = archiveAllRecords.length < archiveLimit;
+    archiveNextBtn.disabled =
+      archiveTotalCount
+        ? archiveOffset + archiveAllRecords.length >= archiveTotalCount
+        : archiveAllRecords.length < archiveLimit;
   }
 }
 
@@ -339,7 +396,7 @@ function archiveRenderFilterChipsForSelect(selectEl, chipsId) {
   if (!selected.length) {
     const empty = document.createElement("span");
     empty.className = "filter-chip-empty";
-    empty.textContent = archiveLabel("No values selected", "No values selected");
+    empty.textContent = t("no_values_selected", "No values selected");
     chipsEl.appendChild(empty);
     return;
   }
@@ -469,7 +526,7 @@ async function archiveDeleteCurrentRecord() {
     ""
   );
 
-  setArchiveLoading(true, archiveLabel("Deleting record...", "Deleting record..."));
+  setArchiveLoading(true, archiveLabel(t("deleting_record", "Deleting record...")));
 
   try {
     const response = await fetch(`/api/archive/${record.identity.id}`, {
@@ -486,7 +543,7 @@ async function archiveDeleteCurrentRecord() {
     const data = await response.json();
 
     if (!response.ok || !data.ok) {
-      alert(data.detail || data.error || "Archive delete failed");
+      alert(data.detail || data.error || t("archive_delete_failed", "Archive delete failed"));
       return;
     }
 
@@ -496,14 +553,14 @@ async function archiveDeleteCurrentRecord() {
     archiveIsDirty = false;
 
     showArchiveToast(
-      archiveLabel("Archive record deleted", "Archive record deleted")
+      archiveLabel(t("archive_record_deleted", "Archive record deleted"))
     );
 
     await loadArchiveRecords(archiveLimit, archiveOffset);
     renderArchiveEmptyState();
   } catch (error) {
     console.error("Archive delete failed:", error);
-    alert(error.message || "Archive delete failed");
+    alert(error.message || t("archive_delete_failed", "Archive delete failed"));
   } finally {
     setArchiveLoading(false);
   }
@@ -605,7 +662,7 @@ function archiveRenderMultiSelect(fieldName, label, lookupName, currentValue, fu
       >
         ${optionsHtml}
       </select>
-      <p class="filter-help">${archiveLabel("Click values to select or deselect. Selected values appear above.", "Click values to select or deselect. Selected values appear above.")}</p>
+      <p class="filter-help">${t("filter_click_toggle_help", "Click values to select or deselect. Selected values appear above.")}</p>
     </div>
   `;
 }
@@ -630,7 +687,7 @@ function archiveRenderEditMultiSelectChips(selectEl) {
   if (!selected.length) {
     const empty = document.createElement("span");
     empty.className = "filter-chip-empty";
-    empty.textContent = archiveLabel("No values selected", "No values selected");
+    empty.textContent = t("no_values_selected", "No values selected");
     chipsEl.appendChild(empty);
     return;
   }
@@ -883,6 +940,81 @@ function archiveRenderDetailItem(label, value, fullWidth = false) {
   `;
 }
 
+function archiveRenderAssociatedCaalIdChips(label, value, fullWidth = true) {
+  const ids = archiveParseAssociatedCaalIds(value);
+
+  const inner = ids.length
+    ? ids.map((id) => {
+        const looksValid = archiveIsLikelyCaalId(id);
+
+        if (!looksValid) {
+          return `
+            <span
+              class="related-id-chip related-id-chip-invalid"
+              title="${t("invalid_related_id_format", "Invalid related ID format")}"
+            >
+              ${id}
+            </span>
+          `;
+        }
+
+        return `
+          <button
+            type="button"
+            class="related-id-chip archive-associated-id-chip"
+            data-associated-caal-id="${id}"
+            title="${t("open_related_record", "Open related record")}"
+          >
+            ${id}
+          </button>
+        `;
+      }).join("")
+    : safeArchiveValue("");
+
+  return `
+    <div class="detail-item${fullWidth ? " full-width" : ""}">
+      <span class="detail-label">${label}</span>
+      <div class="detail-value related-id-list archive-associated-id-list">
+        ${inner}
+      </div>
+    </div>
+  `;
+}
+
+function archiveRenderAssociatedCaalIdChipList(value) {
+  const ids = archiveParseAssociatedCaalIds(value);
+
+  if (!ids.length) {
+    return safeArchiveValue("");
+  }
+
+  return ids.map((id) => {
+    const looksValid = archiveIsLikelyCaalId(id);
+
+    if (!looksValid) {
+      return `
+        <span
+          class="related-id-chip related-id-chip-invalid archive-associated-id-chip-static"
+          title="${t("invalid_related_id_format", "Invalid related ID format")}"
+        >
+          ${id}
+        </span>
+      `;
+    }
+
+    return `
+      <button
+        type="button"
+        class="related-id-chip archive-associated-id-chip"
+        data-associated-caal-id="${id}"
+        title="${t("open_related_record", "Open related record")}"
+      >
+        ${id}
+      </button>
+    `;
+  }).join("");
+}
+
 function archiveRenderTitleCard(record, statusBadge = "") {
   const caalId =
     archiveIdentity(record, "caal_id") ||
@@ -947,6 +1079,242 @@ function archiveRenderGroupBlock(title, innerHtml, hasValues = true) {
   `;
 }
 
+// related
+function wireArchiveAssociatedCaalIdChips() {
+  Array.from(document.querySelectorAll(".archive-associated-id-chip")).forEach((btn) => {
+    if (btn.dataset.associatedChipWired === "true") return;
+
+    btn.dataset.associatedChipWired = "true";
+
+    btn.addEventListener("click", async () => {
+      const caalId = btn.dataset.associatedCaalId;
+      if (!caalId) return;
+
+      await archiveOpenAssociatedRecord(caalId);
+    });
+  });
+}
+
+async function archiveOpenAssociatedRecord(caalId) {
+  try {
+    const response = await fetch(
+      `/api/records/resolve?caal_id=${encodeURIComponent(caalId)}`,
+      {
+        method: "GET",
+        credentials: "include"
+      }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok || !data.ok || !data.record) {
+      alert(data.error || t("could_not_load_related_record", "Could not load related record"));
+      return;
+    }
+
+    archiveOpenAssociatedRecordPreview(data.record, data.record_type, caalId);
+  } catch (error) {
+    console.error("Could not load associated CAAL_ID:", error);
+    alert(error.message || t("could_not_load_related_record", "Could not load related record"));
+  }
+}
+
+function archiveOpenAssociatedRecordPreview(record, recordType, caalId) {
+  if (!archivePreviewModal || !archivePreviewBody || !archivePreviewTitle) return;
+
+  const fullRecordUrl = getRelatedRecordUrl?.(
+    caalId,
+    recordType,
+    record?.source?.scope
+  );
+
+  if (recordType === "archive") {
+    archiveRenderAssociatedArchivePreview(record, caalId, fullRecordUrl);
+    return;
+  }
+
+  if (recordType === "monument") {
+    archiveRenderAssociatedMonumentPreview(record, caalId, fullRecordUrl);
+    return;
+  }
+
+  archivePreviewTitle.textContent = caalId;
+
+  archivePreviewBody.innerHTML = `
+    <div class="record-title related-record-title">
+      <div>
+        <h3>${safeArchiveValue(caalId)}</h3>
+        <p>${t("unknown_record_type", "Unknown record type")}</p>
+      </div>
+    </div>
+  `;
+
+  archivePreviewModal.hidden = false;
+}
+
+function archiveRenderAssociatedArchivePreview(record, caalId, fullRecordUrl) {
+  const s = record.summary || {};
+
+  const title =
+    s.original_title ||
+    s.english_title ||
+    archiveRaw(record, "Original Title") ||
+    archiveRaw(record, "English Title") ||
+    caalId;
+
+  archivePreviewTitle.textContent = title;
+
+  archivePreviewBody.innerHTML = `
+    <div class="record-title related-record-title">
+      <div>
+        <h3>${safeArchiveValue(title)}</h3>
+        <p>${safeArchiveValue(caalId)}</p>
+      </div>
+
+      <span class="related-record-type-badge">
+        ${archiveLabel("Archive", "Archive")}
+      </span>
+
+      ${
+        fullRecordUrl
+          ? `<button type="button" class="action-btn" id="archiveOpenAssociatedFullRecordBtn">
+              ${t("open_full_record", "Open full record")}
+            </button>`
+          : ""
+      }
+    </div>
+
+    <div class="group-stack">
+      <div class="group-block">
+        <div class="group-grid">
+          <div class="detail-item full-width section-header">
+            <span class="detail-section-title">${archiveLabel("Material Details", "Material Details")}</span>
+          </div>
+
+          ${archiveRenderDetailItem(archiveLabel("CAAL_ID", "CAAL_ID"), record.identity?.caal_id)}
+          ${archiveRenderAssociatedCaalIdChips(
+            archiveLabel("Associated CAAL_ID", "Associated CAAL_ID"),
+            record.identity?.associated_caal_id || archiveRaw(record, "Associated CAAL_ID"),
+            true
+          )}
+          ${archiveRenderDetailItem(archiveLabel("Original Reference", "Original Reference"), s.original_reference)}
+          ${archiveRenderDetailItem(archiveLabel("Content Type", "Content Type"), s.content_type)}
+          ${archiveRenderDetailItem(archiveLabel("Country", "Country"), s.country)}
+          ${archiveRenderDetailItem(archiveLabel("Level", "Level"), s.level)}
+          ${archiveRenderDetailItem(archiveLabel("Original Title", "Original Title"), s.original_title, true)}
+          ${archiveRenderDetailItem(archiveLabel("English Title", "English Title"), s.english_title, true)}
+          ${archiveRenderDetailItem(archiveLabel("Description", "Description"), archiveRaw(record, "Description"), true)}
+        </div>
+      </div>
+
+      <div class="group-block">
+        <div class="group-grid">
+          <div class="detail-item full-width section-header">
+            <span class="detail-section-title">${archiveLabel("Publication Details", "Publication Details")}</span>
+          </div>
+
+          ${archiveRenderDetailItem(archiveLabel("Dates of Original Material", "Dates of Original Material"), archiveRaw(record, "Dates of Original Material"))}
+          ${archiveRenderDetailItem(archiveLabel("Author of the Original Material", "Author of the Original Material"), archiveRaw(record, "Author of the Original Material"), true)}
+          ${archiveRenderDetailItem(archiveLabel("Publisher of the Original Material", "Publisher of the Original Material"), archiveRaw(record, "Publisher of the Original Material"), true)}
+          ${archiveRenderDetailItem(archiveLabel("Editor of the Original Material", "Editor of the Original Material"), archiveRaw(record, "Editor of the Original Material"), true)}
+          ${archiveRenderDetailItem(archiveLabel("Volume and Issue Number", "Volume and Issue Number"), archiveRaw(record, "Volume and Issue Number"))}
+        </div>
+      </div>
+    </div>
+  `;
+
+  archivePreviewModal.hidden = false;
+  archiveWireAssociatedPreviewButtons(fullRecordUrl);
+  wireArchiveAssociatedCaalIdChips();
+}
+
+function archiveRenderAssociatedMonumentPreview(record, caalId, fullRecordUrl) {
+  const title =
+    record.summary?.primary_name ||
+    record.summary?.primary_name_english ||
+    record.raw?.["Primary Name"] ||
+    caalId;
+
+  archivePreviewTitle.textContent = title;
+
+  archivePreviewBody.innerHTML = `
+    <div class="record-title related-record-title">
+      <div>
+        <h3>${safeArchiveValue(title)}</h3>
+        <p>${safeArchiveValue(caalId)}</p>
+      </div>
+
+      <span class="related-record-type-badge">
+        ${archiveLabel("Monument", "Monument")}
+      </span>
+
+      ${
+        fullRecordUrl
+          ? `<button type="button" class="action-btn" id="archiveOpenAssociatedFullRecordBtn">
+              ${t("open_full_record", "Open full record")}
+            </button>`
+          : ""
+      }
+    </div>
+
+    <div class="group-stack">
+      <div class="group-block">
+        <div class="group-grid">
+          <div class="detail-item full-width section-header">
+            <span class="detail-section-title">${archiveLabel("Basic", "Basic")}</span>
+          </div>
+
+          ${archiveRenderDetailItem(archiveLabel("CAAL_ID", "CAAL_ID"), caalId)}
+          ${archiveRenderDetailItem(archiveLabel("Primary Name", "Primary Name"), record.summary?.primary_name, true)}
+          ${archiveRenderDetailItem(archiveLabel("Primary Name (English)", "Primary Name (English)"), record.summary?.primary_name_english, true)}
+          ${archiveRenderDetailItem(archiveLabel("Country", "Country"), record.summary?.country)}
+          ${archiveRenderDetailItem(archiveLabel("Region", "Region"), record.summary?.region)}
+          ${archiveRenderDetailItem(archiveLabel("Classification", "Classification"), record.summary?.classification)}
+          ${archiveRenderDetailItem(archiveLabel("Designation", "Designation"), record.summary?.designation)}
+        </div>
+      </div>
+
+      <div class="group-block">
+        <div class="group-grid">
+          <div class="detail-item full-width section-header">
+            <span class="detail-section-title">${archiveLabel("Monument", "Monument")}</span>
+          </div>
+
+          ${archiveRenderDetailItem(archiveLabel("Monument Type1", "Monument Type1"), record.summary?.monument_type1)}
+          ${archiveRenderDetailItem(archiveLabel("Cultural Period1", "Cultural Period1"), record.summary?.cultural_period1)}
+          ${archiveRenderDetailItem(archiveLabel("Religion1", "Religion1"), record.summary?.religion1)}
+          ${archiveRenderDetailItem(archiveLabel("Primary Description", "Primary Description"), record.raw?.["Primary Description"], true)}
+        </div>
+      </div>
+
+      <div class="group-block">
+        <div class="group-grid">
+          <div class="detail-item full-width section-header">
+            <span class="detail-section-title">${archiveLabel("Location", "Location")}</span>
+          </div>
+
+          ${archiveRenderDetailItem(archiveLabel("Longitude", "Longitude"), record.summary?.longitude || record.raw?.["Longitude"])}
+          ${archiveRenderDetailItem(archiveLabel("Latitude", "Latitude"), record.summary?.latitude || record.raw?.["Latitude"])}
+          ${archiveRenderDetailItem(archiveLabel("Location Notes", "Location Notes"), record.raw?.["Location Notes"], true)}
+        </div>
+      </div>
+    </div>
+  `;
+
+  archivePreviewModal.hidden = false;
+  archiveWireAssociatedPreviewButtons(fullRecordUrl);
+}
+
+function archiveWireAssociatedPreviewButtons(fullRecordUrl) {
+  const openBtn = document.getElementById("archiveOpenAssociatedFullRecordBtn");
+
+  if (openBtn && fullRecordUrl) {
+    openBtn.addEventListener("click", () => {
+      window.open(fullRecordUrl, "_blank");
+    });
+  }
+}
+
 // popup
 function archiveOpenPreview(record) {
   archivePreviewRecord = record;
@@ -966,7 +1334,11 @@ function archiveOpenPreview(record) {
           </div>
 
           ${archiveRenderDetailItem(archiveLabel("CAAL_ID", "CAAL_ID"), archiveIdentity(record, "caal_id"))}
-          ${archiveRenderDetailItem(archiveLabel("Associated CAAL_ID", "Associated CAAL_ID"), archiveIdentity(record, "associated_caal_id"))}
+          ${archiveRenderAssociatedCaalIdChips(
+            archiveLabel("Associated CAAL_ID", "Associated CAAL_ID"),
+            archiveIdentity(record, "associated_caal_id") || archiveRaw(record, "Associated CAAL_ID"),
+            true
+          )}
           ${archiveRenderDetailItem(archiveLabel("Original Reference", "Original Reference"), s.original_reference)}
           ${archiveRenderDetailItem(archiveLabel("Content Type", "Content Type"), s.content_type)}
           ${archiveRenderDetailItem(archiveLabel("Country", "Country"), s.country)}
@@ -999,6 +1371,8 @@ function archiveOpenPreview(record) {
   `;
 
   archivePreviewModal.hidden = false;
+
+  wireArchiveAssociatedCaalIdChips();
 }
 
 function archiveClosePreview() {
@@ -1072,7 +1446,6 @@ function canEditArchiveRecord(record) {
     record?.source?.scope === "all_caal";
 
   return (
-    record?.source?.is_editable === true ||
     (isWorkspaceRecord && (isOwner || isSuperUser)) ||
     (isCaalRecord && isSuperUser)
   );
@@ -1105,6 +1478,13 @@ function archiveRenderActionBar({ hasRecord = false, canEdit = false } = {}) {
 
 // Labels API
 // --------------------------------------------------------
+function applyArchiveStaticLabels() {
+  document.querySelectorAll("[data-archive-label]").forEach((el) => {
+    const key = el.dataset.archiveLabel;
+    el.textContent = archiveLabel(key, el.textContent);
+  });
+}
+
 async function loadArchiveLabels() {
   const lang =
     (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
@@ -1187,7 +1567,7 @@ async function loadArchiveRecords(limit = 100, offset = 0) {
 
 // Search text
 // --------------------------------------------------------
-function archiveBuildSearchText(record) {
+function archiveBuildSearchText_old(record) {
   const s = record.summary || {};
 
   const fields = [
@@ -1239,7 +1619,7 @@ function archiveBuildSearchText(record) {
 
 // Filter option collection
 // --------------------------------------------------------
-function archiveCollectFilterOptions(records) {
+function archiveCollectFilterOptions_old(records) {
   const relatedCountries = [];
   const relatedReligions = [];
   const relatedSubjects = [];
@@ -1266,7 +1646,7 @@ function archiveCollectFilterOptions(records) {
 
 // Filter logic
 // --------------------------------------------------------
-function archiveMatchesFilters(record, filters) {
+function archiveMatchesFilters_old(record, filters) {
   const fv = record.filter_values || {};
 
   const matchesText =
@@ -1310,7 +1690,7 @@ function archiveMatchesFilters(record, filters) {
   );
 }
 
-function archiveApplyFilters() {
+function archiveApplyFilters_old() {
   const filters = {
     text: archiveSearch ? archiveSearch.value.trim() : "",
     caalId: archiveFilterCaalId ? archiveFilterCaalId.value.trim() : "",
@@ -1351,7 +1731,7 @@ async function archiveClearFilters() {
 
   archiveOffset = 0;
 
-  setArchiveLoading(true, archiveLabel("Updating records...", "Updating records..."));
+  setArchiveLoading(true, t("updating_records", "Updating records..."));
 
   archiveRenderAllFilterChips();
   try {
@@ -1377,19 +1757,22 @@ function handleArchiveResultOpen(record) {
 function renderArchiveResultsList(records) {
   if (!archiveResultsList) return;
 
-  if (archiveResultsCount) {
   const start = records.length === 0 ? 0 : archiveOffset + 1;
   const end = archiveOffset + records.length;
 
-  archiveResultsCount.textContent = archiveTotalCount
-    ? `${archiveLabel("Showing", "Showing")} ${start}-${end} ${archiveLabel("of", "of")} ${archiveTotalCount} ${archiveLabel("records", "records")}`
-    : `${archiveLabel("Showing", "Showing")} 0 ${archiveLabel("records", "records")}`;
-}
+  const countText = archiveTotalCount
+    ? t("results_count_total", "{start}-{end} ({total} total)")
+        .replace("{start}", start)
+        .replace("{end}", end)
+        .replace("{total}", archiveTotalCount)
+    : t("zero_records", "0 records");
+
+  setArchiveResultsCountText(countText);
 
   if (records.length === 0) {
     archiveResultsList.innerHTML = `
       <div class="results-empty">
-        <p>${archiveLabel("No matching records.", "No matching records.")}</p>
+        <p>${archiveLabel(t("no_matching_records", "No matching records."))}</p>
       </div>
     `;
     return;
@@ -1414,7 +1797,7 @@ function renderArchiveResultsList(records) {
 
           <div class="result-card-actions">
             <button type="button" class="action-btn archive-preview-btn" data-archive-preview-index="${index}">
-              ${archiveLabel("Preview", "Preview")}
+              ${archiveLabel(t("preview", "Preview"))}
             </button>
           </div>
         </div>
@@ -1462,7 +1845,7 @@ function renderArchiveEmptyState() {
 
   archiveRecordDetails.innerHTML = `
     <div class="empty-state">
-      <p>${archiveLabel("No record selected yet.", "No record selected yet.")}</p>
+      <p>${t("no_record_selected", "No record selected yet.")}</p>
     </div>
   `;
 
@@ -1508,7 +1891,11 @@ function archiveRenderDisplayMode(record) {
   let materialHtml = "";
   materialHtml += archiveRenderDetailItem(archiveLabel("Level", "Level"), s.level);
   materialHtml += archiveRenderDetailItem(archiveLabel("Original Reference", "Original Reference"), s.original_reference);
-  materialHtml += archiveRenderDetailItem(archiveLabel("Associated CAAL_ID", "Associated CAAL_ID"), archiveIdentity(record, "associated_caal_id"));
+  materialHtml += archiveRenderAssociatedCaalIdChips(
+    archiveLabel("Associated CAAL_ID", "Associated CAAL_ID"),
+    archiveIdentity(record, "associated_caal_id") || archiveRaw(record, "Associated CAAL_ID"),
+    true
+  );
   materialHtml += archiveRenderDetailItem(archiveLabel("Original Title", "Original Title"), s.original_title, true);
   materialHtml += archiveRenderDetailItem(archiveLabel("English Title", "English Title"), s.english_title, true);
   materialHtml += archiveRenderDetailItem(archiveLabel("Content Type", "Content Type"), s.content_type);
@@ -1636,10 +2023,13 @@ function archiveRenderDisplayMode(record) {
         <div>
           <h3>${safeArchiveValue(s.original_title || s.english_title)}</h3>
           <p>${safeArchiveValue(archiveIdentity(record, "caal_id"))}</p>
-          <p>
+          <div class="archive-title-associated-id related-id-list">
             <strong>${archiveLabel("Associated CAAL_ID", "Associated CAAL_ID")}:</strong>
-            ${safeArchiveValue(archiveIdentity(record, "associated_caal_id"))}
-          </p>
+            ${archiveRenderAssociatedCaalIdChipList(
+              archiveIdentity(record, "associated_caal_id") ||
+              archiveRaw(record, "Associated CAAL_ID")
+            )}
+          </div>
         </div>
         ${statusBadge}
       </div>
@@ -1662,6 +2052,9 @@ function archiveRenderDisplayMode(record) {
       archiveRenderRecordDetails(record);
     };
   }
+
+  wireArchiveAssociatedCaalIdChips();
+
   archiveRenderActionBar({
     hasRecord: true,
     canEdit: canEditThisRecord
@@ -1787,7 +2180,10 @@ function archiveRenderEditMode(record) {
     archiveRaw(record, "Date of Recording") || archiveLabel("Set automatically on save", "Set automatically on save")
   );
   metadataHtml += archiveRenderTextarea("Resource", archiveLabel("Resource", "Resource"), archiveRaw(record, "Resource"), true);
-  metadataHtml += archiveRenderReadOnlyItem(archiveLabel("Preferred Language", "Preferred Language"),archiveRaw(record, "Preferred Language"));
+  metadataHtml += archiveRenderReadOnlyItem(
+    archiveLabel("Preferred Language", "Preferred Language"),
+    displayLanguageName(archiveRaw(record, "Preferred Language"))
+  );
   metadataHtml += archiveRenderTextInput("Country", archiveLabel("Country", "Country"), archiveRaw(record, "Country"));
 
   archiveRecordDetails.innerHTML = `
@@ -1863,7 +2259,9 @@ if (archiveSaveBtn) {
 
       if (!response.ok || !data.ok) {
         console.error("Archive save response:", data);
-        alert(data.detail || data.error || "Archive save failed");
+        const message = data.detail || data.error || t("archive_save_failed", "Archive save failed");
+        alert(message);
+        showArchiveToast(message, "error");
         return;
       }
 
@@ -1874,8 +2272,8 @@ if (archiveSaveBtn) {
 
       showArchiveToast(
         isNewRecord
-          ? archiveLabel("Archive record created", "Archive record created")
-          : archiveLabel("Archive record saved", "Archive record saved")
+          ? t("archive_record_created", "Archive record created")
+          : t("archive_record_saved", "Archive record saved")
       );
 
       await loadArchiveRecords(archiveLimit, archiveOffset);
@@ -1902,8 +2300,9 @@ if (archiveSaveBtn) {
       }
     } catch (error) {
       console.error("Archive save failed:", error);
-      alert(error.message || "Archive save failed");
-      showArchiveToast(data.detail || data.error || "Archive save failed", "error");
+      const message = error.message || t("archive_save_failed", "Archive save failed");
+      alert(message);
+      showArchiveToast(message, "error");
     }
   };
 }
@@ -1933,8 +2332,8 @@ if (toggleArchiveFiltersBtn && archiveFiltersPanel) {
     const isHidden = archiveFiltersPanel.hidden;
     archiveFiltersPanel.hidden = !isHidden;
     toggleArchiveFiltersBtn.textContent = isHidden
-      ? archiveLabel("Hide advanced filters", "Hide advanced filters")
-      : archiveLabel("Advanced filters", "Advanced filters");
+      ? t("hide_advanced_filters", "Hide advanced filters")
+      : t("advanced_filters", "Advanced filters");
   });
 }
 
@@ -1978,7 +2377,7 @@ if (archiveFilterCaalId) {
       archiveOffset = 0;
       archivePendingNewRecord = null;
       archiveIsEditMode = false;
-      setArchiveLoading(true, archiveLabel("Updating records...", "Updating records..."));
+      setArchiveLoading(true, t("updating_records", "Updating records..."));
 
       loadArchiveRecords(archiveLimit, 0)
         .catch((error) => {
@@ -1996,6 +2395,8 @@ document.addEventListener("app:languageChanged", async () => {
 
   try {
     await loadArchiveLabels();
+    applyArchiveStaticLabels();
+
     await loadArchiveLookups();
     archivePopulateFilterLookups();
   } catch (error) {
@@ -2059,7 +2460,7 @@ if (archivePrevBtn) {
     archivePendingNewRecord = null;
     archiveIsEditMode = false;
 
-    setArchiveLoading(true, archiveLabel("Loading page...", "Loading page..."));
+    setArchiveLoading(true, t("loading_page", "Loading page..."));
 
     try {
       await loadArchiveRecords(archiveLimit, newOffset);
@@ -2080,7 +2481,7 @@ if (archiveNextBtn) {
     archivePendingNewRecord = null;
     archiveIsEditMode = false;
 
-    setArchiveLoading(true, archiveLabel("Loading page...", "Loading page..."));
+    setArchiveLoading(true, t("loading_page", "Loading page..."));
 
     try {
       await loadArchiveRecords(archiveLimit, newOffset);
@@ -2116,12 +2517,14 @@ document.addEventListener("DOMContentLoaded", async () => {
   setArchiveLoading(
     true,
     initialCaalId
-      ? archiveLabel("Loading linked record...", "Loading linked record...")
-      : archiveLabel("Loading records...", "Loading records...")
+      ? t("loading_linked_record", "Loading linked record...")
+      : t("loading_records", "Loading records...")
   );
 
   try {
     await loadArchiveLabels();
+    applyArchiveStaticLabels();
+
     await loadArchiveLookups();
     archivePopulateFilterLookups();
 
@@ -2173,7 +2576,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
     }
 
-    await loadArchiveRecords(100, 0);
+    await loadArchiveRecords(archiveLimit, 0);
 
     if (directLinkedRecord) {
       archiveSelectedRecord = directLinkedRecord;

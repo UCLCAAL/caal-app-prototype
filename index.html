@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>CAAL Workspace Login</title>
+  <title data-i18n="login_page_title">CAAL Workspace Login</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body class="login-page">
@@ -16,35 +16,50 @@
           class="login-logo"
         />
         <div class="login-title-wrap">
-          <h1>CAAL Workspace</h1>
-          <p>Sign in to continue</p>
+          <h1 data-i18n="app_title">CAAL Workspace</h1>
+          <p data-i18n="login_subtitle">Sign in to continue</p>
         </div>
       </div>
 
       <div class="login-card-body">
+        <div class="login-language-row">
+          <label for="languageSelect" data-i18n="language_label">Language</label>
+          <select id="languageSelect" class="login-language-select">
+            <option value="en">English</option>
+            <option value="ru">Русский</option>
+            <option value="zh">中文</option>
+            <option value="kk">Қазақша</option>
+            <option value="ky">Кыргызча</option>
+            <option value="tg">Тоҷикӣ</option>
+            <option value="tk">Türkmençe</option>
+            <option value="uz">O'zbekcha</option>
+          </select>
+        </div>
         <form id="loginForm" class="login-form">
           <div class="login-form-group">
-            <label for="username">Username</label>
+            <label for="username" data-i18n="login_username">Username</label>
             <input id="username" name="username" type="text" autocomplete="username" required />
           </div>
 
           <div class="login-form-group">
-            <label for="password">Password</label>
+            <label for="password" data-i18n="login_password">Password</label>
             <input id="password" name="password" type="password" autocomplete="current-password" required />
           </div>
 
           <p id="loginError" class="login-error"></p>
 
-          <button type="submit" class="login-submit">Sign in</button>
+          <button type="submit" class="login-submit" data-i18n="login_sign_in">Sign in</button>
         </form>
 
-        <div class="login-help">
+
+        <div class="login-help" data-i18n="login_help">
           Use your workspace credentials to access the CAAL archive and monuments tools.
         </div>
       </div>
     </div>
   </div>
 
+  <script src="js/shared.js"></script>
   <script src="js/login.js"></script>
 </body>
 </html>

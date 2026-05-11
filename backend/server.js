@@ -1,11 +1,13 @@
 const path = require("path");
 const express = require("express");
 const session = require("express-session");
+const compression = require("compression");
 const pgSession = require("connect-pg-simple")(session);
 const cors = require("cors");
 require("dotenv").config();
 
 const pool = require("./db");
+const sessionPool = require("./sessionDb");
 const authRoutes = require("./auth");
 const uiRoutes = require("./ui");
 const lookupRoutes = require("./lookups");
@@ -25,13 +27,15 @@ app.use(cors({
   credentials: true
 }));
 
+app.use(compression());
+
 app.use(express.json());
 
 app.set("trust proxy", 1);
 
 app.use(session({
   store: new pgSession({
-    pool,
+    pool: sessionPool,
     tableName: "user_sessions"
   }),
   secret: process.env.SESSION_SECRET || "change-this-for-production",
@@ -45,6 +49,16 @@ app.use(session({
 }));
 
 app.use((req, res, next) => {
+    const start = Date.now();
+
+    res.on("finish", () => {
+      if (req.url.startsWith("/api/monuments")) {
+        console.log(
+          `[API timing] ${req.method} ${req.url} ${res.statusCode} ${Date.now() - start}ms`
+        );
+      }
+    });
+
   console.log("Incoming request:", req.method, req.url);
   console.log("Cookie header:", req.headers.cookie || "[none]");
   console.log("Session ID:", req.sessionID || "[no session id]");

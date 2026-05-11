@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
-  <title>CAAL Workspace - Monuments</title>
+  <title data-i18n="monuments_page_title">CAAL Workspace - Monuments</title>
 
   <link
     rel="stylesheet"
@@ -25,15 +25,15 @@
         class="app-brand-logo"
       />
       <div class="app-brand-text">
-        <h1>CAAL Workspace</h1>
-        <p>Kazakhstan monuments workspace</p>
+        <h1 data-i18n="app_title">CAAL Workspace</h1>
+        <p data-i18n="monuments_workspace_subtitle">Kazakhstan monuments workspace</p>
       </div>
     </div>
 
     <nav class="main-nav" aria-label="Main navigation">
-      <a href="home.html" class="nav-link">Home</a>
-      <a href="monuments.html" class="nav-link nav-link-active">Monuments</a>
-      <a href="archive.html" class="nav-link">Archive</a>
+      <a href="home.html" class="nav-link" data-i18n="nav_home">Home</a>
+      <a href="monuments.html" class="nav-link nav-link-active" data-i18n="nav_monuments">Monuments</a>
+      <a href="archive.html" class="nav-link" data-i18n="nav_archive">Archive</a>
       <button type="button" class="action-btn js-logout-btn" data-i18n="logout_button">Log out</button>
     </nav>
 
@@ -50,6 +50,68 @@
         <option value="uz">O'zbekcha</option>
       </select>
     </div>
+    <script>
+      (function () {
+        const lang = localStorage.getItem("caal_ui_language_bootstrap") ||
+                    localStorage.getItem("caal_ui_language") ||
+                    "en";
+
+        const fallbackLang = ["kk", "ky", "tg", "tk", "uz"].includes(lang) ? "ru" : "en";
+
+        const shell = {
+          en: {
+            app_title: "CAAL Workspace",
+            nav_home: "Home",
+            nav_monuments: "Monuments",
+            nav_archive: "Archive",
+            logout_button: "Log out",
+            language_label: "Language",
+            home_app_subtitle: "National data entry and browsing environment",
+            monuments_workspace_subtitle: "Kazakhstan monuments workspace",
+            archive_workspace_subtitle: "Kazakhstan archive workspace"
+          },
+          ru: {
+            app_title: "Рабочее пространство CAAL",
+            nav_home: "Главная",
+            nav_monuments: "Памятники",
+            nav_archive: "Архив",
+            logout_button: "Выйти",
+            language_label: "Язык",
+            home_app_subtitle: "Среда для национального ввода и просмотра данных",
+            monuments_workspace_subtitle: "Рабочее пространство памятников Казахстана",
+            archive_workspace_subtitle: "Рабочее пространство архива Казахстана"
+          },
+          zh: {
+            app_title: "CAAL 工作区",
+            nav_home: "主页",
+            nav_monuments: "遗址",
+            nav_archive: "档案",
+            logout_button: "退出",
+            language_label: "语言",
+            home_app_subtitle: "国家数据录入和浏览环境",
+            monuments_workspace_subtitle: "哈萨克斯坦遗址工作区",
+            archive_workspace_subtitle: "哈萨克斯坦档案工作区"
+          }
+        };
+
+        function shellText(key, fallback) {
+          return (
+            shell[lang]?.[key] ||
+            shell[fallbackLang]?.[key] ||
+            shell.en?.[key] ||
+            fallback ||
+            key
+          );
+        }
+
+        document.documentElement.lang = lang;
+
+        document.querySelectorAll("[data-i18n]").forEach((el) => {
+          const key = el.dataset.i18n;
+          el.textContent = shellText(key, el.textContent);
+        });
+      })();
+    </script>
   </header>
 <!-- =========================================
        MONUMENTS WORKSPACE
@@ -67,8 +129,8 @@
     <aside class="workspace-pane browse-pane">
       <div class="pane-header pane-header-inline">
         <div>
-          <h2>Browse</h2>
-          <p>Search and consult records</p>
+          <h2 data-i18n="monuments_browse">Browse</h2>
+          <p data-i18n="monuments_browse_intro">Search and consult records</p>
         </div>
 
         <button
@@ -76,6 +138,8 @@
           id="refreshMonumentsCacheBtn"
           class="admin-cache-btn"
           title="Admin only: refreshes the CAAL browse cache"
+          data-i18n="refresh_cache"
+          data-i18n-title="refresh_cache_admin_title"
           hidden
         >
           Refresh cache
@@ -87,18 +151,19 @@
           <span class="spinner"></span>
         </div>
         <div class="search-box search-box-stacked">
-          <label for="siteSearch">Search</label>
+          <label for="siteSearch" data-i18n="monuments_search">Search</label>
           <input
             type="text"
             id="siteSearch"
             placeholder="Search names, IDs, types, descriptions..."
+            data-i18n-placeholder="monuments_search_placeholder"
           />
         </div>
     
         <div class="browse-controls">
           <label class="browse-checkbox">
             <input type="checkbox" id="showWorkspaceRecords" checked />
-            <span data-i18n="monuments_workspace_records">Workspace records</span>
+            <span data-i18n="monuments_workspace_records">My workspace records</span>
           </label>
 
           <label class="browse-checkbox">
@@ -113,21 +178,21 @@
         </div>
     
         <div class="filter-action-row">
-          <button type="button" class="action-btn show-results-map-btn" id="showResultsOnMapBtn">
+          <button type="button" class="action-btn show-results-map-btn" id="showResultsOnMapBtn" data-i18n="show_results_on_map">
             Show results on map
           </button>
 
-          <button type="button" class="action-btn filters-toggle" id="toggleFiltersBtn">
+          <button type="button" class="action-btn filters-toggle" id="toggleFiltersBtn" data-i18n="advanced_filters">
             Advanced filters
           </button>
 
-          <button type="button" class="action-btn clear-filters-btn" id="clearFiltersBtn">
+          <button type="button" class="action-btn clear-filters-btn" id="clearFiltersBtn" data-i18n="clear_filters">
             Clear filters
           </button>
         </div>
 
         <div class="filter-live-results-summary">
-          <span>Current results:</span>
+          <span data-i18n="current_results">Current results:</span>
           <strong id="filterResultsCount">0 records</strong>
         </div>
 
@@ -135,55 +200,68 @@
           <div class="filters-grid">
 
             <div class="filter-group">
-              <label for="filterCaalId">CAAL_ID</label>
+              <label for="filterCaalId" data-monument-label="CAAL_ID">CAAL_ID</label>
               <input
                 type="text"
                 id="filterCaalId"
                 class="filter-input caal-id-filter-input"
                 placeholder="Search CAAL_ID"
+                data-i18n-placeholder="search_caal_id"
               />
             </div>
 
             <div class="filter-group chip-multiselect-group">
-              <label for="filterMonumentType">Monument Type</label>
+              <label for="filterMonumentType" data-monument-label="Monument Type">Monument Type</label>
               <div class="selected-filter-chips" id="filterMonumentTypeChips"></div>
               <select id="filterMonumentType" class="form-control chip-multiselect" multiple></select>
-              <p class="filter-help">Click values to select or deselect. Selected values appear above.</p>
+              <p class="filter-help" data-i18n="filter_click_toggle_help">
+                Click values to select or deselect. Selected values appear above.
+              </p>
             </div>
 
             <div class="filter-group chip-multiselect-group">
-              <label for="filterClassification">Classification</label>
+              <label for="filterClassification" data-monument-label="Classification">Classification</label>
               <div class="selected-filter-chips" id="filterClassificationChips"></div>
               <select id="filterClassification" class="form-control chip-multiselect" multiple></select>
-              <p class="filter-help">Click values to select or deselect. Selected values appear above.</p>
+              <p class="filter-help" data-i18n="filter_click_toggle_help">
+                Click values to select or deselect. Selected values appear above.
+              </p>
             </div>
 
             <div class="filter-group chip-multiselect-group">
-              <label for="filterDesignation">Designation</label>
+              <label for="filterDesignation" data-monument-label="Designation">Designation</label>
               <div class="selected-filter-chips" id="filterDesignationChips"></div>
               <select id="filterDesignation" class="form-control chip-multiselect" multiple></select>
-              <p class="filter-help">Click values to select or deselect. Selected values appear above.</p>
+              <p class="filter-help" data-i18n="filter_click_toggle_help">
+                Click values to select or deselect. Selected values appear above.
+              </p>
             </div>
 
             <div class="filter-group chip-multiselect-group">
-              <label for="filterReligion">Religion</label>
+              <label for="filterReligion" data-monument-label="Religion">Religion</label>
               <div class="selected-filter-chips" id="filterReligionChips"></div>
               <select id="filterReligion" class="form-control chip-multiselect" multiple></select>
-              <p class="filter-help">Click values to select or deselect. Selected values appear above.</p>
+              <p class="filter-help" data-i18n="filter_click_toggle_help">
+                Click values to select or deselect. Selected values appear above.
+              </p>
             </div>
 
             <div class="filter-group chip-multiselect-group">
-              <label for="filterCulturalPeriod">Cultural Period</label>
+              <label for="filterCulturalPeriod" data-monument-label="Cultural Period">Cultural Period</label>
               <div class="selected-filter-chips" id="filterCulturalPeriodChips"></div>
               <select id="filterCulturalPeriod" class="form-control chip-multiselect" multiple></select>
-              <p class="filter-help">Click values to select or deselect. Selected values appear above.</p>
+              <p class="filter-help" data-i18n="filter_click_toggle_help">
+                Click values to select or deselect. Selected values appear above.
+              </p>
             </div>
 
             <div class="filter-group chip-multiselect-group">
-              <label for="filterCountry">Country</label>
+              <label for="filterCountry" data-monument-label="Country">Country</label>
               <div class="selected-filter-chips" id="filterCountryChips"></div>
               <select id="filterCountry" class="form-control chip-multiselect" multiple></select>
-              <p class="filter-help">Click values to select or deselect. Selected values appear above.</p>
+              <p class="filter-help" data-i18n="filter_click_toggle_help">
+                Click values to select or deselect. Selected values appear above.
+              </p>
             </div>
 
           </div>
@@ -193,18 +271,18 @@
     
         <div class="results-panel">
           <div class="results-panel-header">
-            <h3>Results</h3>
+            <h3 data-i18n="results">Results</h3>
           </div>
 
           <div class="pagination-bar">
-            <button id="monumentPrevBtn" class="action-btn">Previous</button>
+            <button id="monumentPrevBtn" class="action-btn" data-i18n="previous">Previous</button>
             <span id="monumentPageInfo">Page 1 of 1</span>
-            <button id="monumentNextBtn" class="action-btn">Next</button>
+            <button id="monumentNextBtn" class="action-btn" data-i18n="next">Next</button>
           </div>
     
           <div id="resultsList" class="results-list">
             <div class="results-empty">
-              <p>Results will appear here.</p>
+              <p data-i18n="results_will_appear">Results will appear here.</p>
             </div>
           </div>
         </div>
@@ -217,79 +295,111 @@
 <section class="workspace-pane map-pane">
   <div class="pane-header pane-header-inline">
     <div>
-      <h2>Map</h2>
+      <h2 data-i18n="map">Map</h2>
       <p data-i18n="click_prompt">Click a monument on the map</p>
     </div>
 
     <div class="map-actions">
-      <button type="button" class="action-btn" id="mapOptionsBtn">
-        Map options
-      </button>
-
-      <button type="button" class="action-btn" id="downloadMapBtn">
-        Download map
-      </button>
-    </div>
-  </div>
-
-  <div class="map-options-panel" id="mapOptionsPanel" hidden>
-    <div class="map-options-header">
-      <strong>Map options</strong>
-      <button type="button" class="icon-btn" id="closeMapOptionsBtn" aria-label="Close map options">
-        ×
-      </button>
-    </div>
-
-    <div class="map-options-section">
-      <label for="basemapSelect">Basemap</label>
-      <select id="basemapSelect" class="form-control">
-        <option value="osm">OpenStreetMap</option>
-        <option value="maptiler-hybrid">MapTiler Satellite Hybrid</option>
-        <option value="maptiler-streets">MapTiler Streets</option>
-        <option value="maptiler-satellite">MapTiler Satellite</option>
-        <option value="maptiler-topo">MapTiler Topographic</option>
-      </select>
-    </div>
-
-    <div class="map-options-section">
-      <label for="mapLabelScopeSelect">Labels</label>
-      <select id="mapLabelScopeSelect" class="form-control">
-        <option value="none">No labels</option>
-        <option value="results">Current results</option>
-        <option value="selected">Selected record</option>
-        <option value="selected_related">Selected + related</option>
-      </select>
-      <p class="map-options-help" id="mapLabelScopeHelp">
-        Labels are off.
-      </p>
-    </div>
-
-    <div class="map-options-section">
-      <label for="mapLabelModeSelect">Label text</label>
-      <select id="mapLabelModeSelect" class="form-control">
-        <option value="name" selected>Name</option>
-        <option value="caal_id">CAAL_ID</option>
-        <option value="name_caal_id">Name + CAAL_ID</option>
-      </select>
-    </div>
-
-    <div class="map-options-section" id="relationshipMapOptions" hidden>
-      <span class="map-options-section-title">Related resources</span>
-
-      <label class="map-options-check">
-        <input type="checkbox" id="showRelatedPointsCheckbox" checked>
-        Show related monuments
-      </label>
-
-      <label class="map-options-check">
-        <input type="checkbox" id="showRelationshipLinesCheckbox" checked>
-        Show relationship lines
-      </label>
+      <button type="button" class="action-btn" id="mapOptionsBtn" data-i18n="map_options">Map options</button>
+      <button type="button" class="action-btn" id="resetMapBtn" data-i18n="reset_map">Reset map</button>
+      <button type="button" class="action-btn" id="downloadMapBtn" data-i18n="download_map">Download map</button>
     </div>
   </div>
 
   <div class="map-pane-body">
     <div id="map"></div>
+
+    <div class="map-options-panel" id="mapOptionsPanel" hidden>
+      <div class="map-options-header">
+        <strong data-i18n="map_options">Map options</strong>
+        <button
+          type="button"
+          class="icon-btn"
+          id="closeMapOptionsBtn"
+          aria-label="Close map options"
+          data-i18n-aria-label="close_map_options"
+        >
+          ×
+        </button>
+      </div>
+
+      <div class="map-options-section">
+                <label for="basemapSelect" data-i18n="basemap">Basemap</label>
+        <select id="basemapSelect" class="form-control">
+          <option value="maptiler-hybrid" data-i18n="basemap_satellite_with_roads">Satellite with roads</option>
+          <option value="maptiler-streets" data-i18n="basemap_street_map">Street map</option>
+          <option value="maptiler-satellite" data-i18n="basemap_satellite_only">Satellite only</option>
+          <option value="maptiler-topo" data-i18n="basemap_topographic_map">Topographic map</option>
+          <option value="osm" data-i18n="basemap_openstreetmap">OpenStreetMap</option>
+        </select>
+      </div>
+
+      <div class="map-options-section">
+        <label for="mapLabelScopeSelect" data-i18n="labels">Labels</label>
+        <select id="mapLabelScopeSelect" class="form-control">
+          <option value="none" data-i18n="no_labels">No labels</option>
+          <option value="results" data-i18n="records_shown_on_map">Records shown on map</option>
+          <option value="selected" data-i18n="selected_record">Selected record</option>
+          <option value="selected_related" data-i18n="selected_related">Selected + related</option>
+        </select>
+
+        <p class="map-options-help" id="mapLabelScopeHelp" data-i18n="labels_are_off">
+          Labels are off.
+        </p>
+
+        <p class="map-label-warning" id="mapLabelWarning" hidden data-i18n="too_many_records_to_label">
+          Too many records to label clearly. Zoom in for labels.
+        </p>
+      </div>
+
+      <div class="map-options-section">
+        <label for="mapLabelModeSelect" data-i18n="label_text">Label text</label>
+        <select id="mapLabelModeSelect" class="form-control">
+          <option value="name" selected data-i18n="name">Name</option>
+          <option value="caal_id" data-i18n="caal_id">CAAL_ID</option>
+          <option value="name_caal_id" data-i18n="name_plus_caal_id">Name + CAAL_ID</option>
+        </select>
+      </div>
+
+      <div class="map-options-section">
+        <button
+          type="button"
+          class="action-btn"
+          id="showRelatedFromMapOptionsBtn"
+          data-i18n="show_related_records_on_map"
+          disabled
+        >
+          Show related records on map
+        </button>
+
+        <p class="map-options-help" data-i18n="related_records_available_help">
+          Available when the selected monument has linked monument records.
+        </p>
+      </div>
+
+      <div class="map-options-section" id="relationshipMapOptions" hidden>
+        <span class="map-options-section-title" data-i18n="related_overlay">Related overlay</span>
+
+        <label class="map-options-check">
+          <input type="checkbox" id="showRelatedPointsCheckbox" data-i18n="show_related_monuments" checked>
+          Show related monuments
+        </label>
+
+        <label class="map-options-check">
+          <input type="checkbox" id="showRelationshipLinesCheckbox" data-i18n="show_relationship_lines" checked>
+          Show relationship lines
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <div class="map-underbar">
+    <div class="map-status-line" id="mapStatusLine" data-i18n="map_loading">
+      Map loading...
+    </div>
+    <div class="map-interpretive-note" data-i18n="map_records_match_filters">
+      Map shows records matching the selected filters.
+    </div>
   </div>
 </section>
 
@@ -301,11 +411,11 @@
       <div class="pane-header">
         <h2 data-i18n="record_details">Record Details</h2>
         <div class="detail-action-bar" id="monumentsActionBar">
-          <button type="button" class="action-btn primary" id="addMonumentBtn">Add record</button>
-          <button type="button" class="action-btn" id="monumentEditBtn" hidden>Edit record</button>
-          <button type="button" class="action-btn primary" id="monumentSaveBtn" hidden>Save</button>
-          <button type="button" class="action-btn" id="monumentCancelEditBtn" hidden>Cancel</button>
-          <button type="button" class="action-btn danger" id="monumentDeleteBtn" hidden>Delete record</button>
+          <button type="button" class="action-btn primary" id="addMonumentBtn" data-i18n="add_record">Add record</button>
+          <button type="button" class="action-btn" id="monumentEditBtn" hidden data-i18n="edit_record">Edit record</button>
+          <button type="button" class="action-btn primary" id="monumentSaveBtn" hidden data-i18n="save">Save</button>
+          <button type="button" class="action-btn" id="monumentCancelEditBtn" hidden data-i18n="cancel">Cancel</button>
+          <button type="button" class="action-btn danger" id="monumentDeleteBtn" hidden data-i18n="delete_record">Delete record</button>
         </div>
       </div>
 
@@ -322,12 +432,12 @@
   <div id="monumentPreviewModal" class="modal-overlay" hidden>
   <div class="modal-dialog">
     <div class="modal-header">
-      <h3 id="monumentPreviewTitle">Monument preview</h3>
-      <button type="button" class="action-btn" id="monumentPreviewCloseBtn">Close</button>
+      <h3 id="monumentPreviewTitle" data-i18n="monument_preview">Monument preview</h3>
+      <button type="button" class="action-btn" id="monumentPreviewCloseBtn" data-i18n="close">Close</button>
     </div>
 
     <div class="modal-body" id="monumentPreviewBody">
-      <p>No preview loaded.</p>
+      <p data-i18n="no_preview_loaded">No preview loaded.</p>
     </div>
   </div>
 </div>

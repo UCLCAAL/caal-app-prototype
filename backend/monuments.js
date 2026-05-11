@@ -899,12 +899,21 @@ function buildWorkspaceMonumentFilterWhere(req, alias = "m") {
 // LOOKUPS
 // ========================================================
 
+function fallbackLookupLang(lang) {
+  return ["kk", "ky", "tg", "tk", "uz"].includes(lang) ? "ru" : "en";
+}
+
 async function fetchLookupRows(sql, lang) {
+  const safeLang = safeMonumentLang(lang);
+  const fallbackLang = fallbackLookupLang(safeLang);
+
   const result = await pool.query(sql);
+
   return result.rows.map((row) => ({
     value: row.canonical_value,
     label:
-      row[`display_${lang}`] ||
+      row[`display_${safeLang}`] ||
+      row[`display_${fallbackLang}`] ||
       row.display_en ||
       row.canonical_value
   }));
@@ -933,7 +942,8 @@ router.get("/lookups/monuments", async (req, res) => {
       locationConfidence,
       adminTypes,
       units,
-      measurementTypes
+      measurementTypes,
+      languageDisplay
     ] = await Promise.all([
       fetchLookupRows(`SELECT canonical_value, display_en, display_ru, display_zh, display_kk, display_ky, display_tg, display_tk, display_uz FROM ui.v_lkp_countries ORDER BY display_en NULLS LAST, canonical_value`, lang),
       fetchLookupRows(`SELECT canonical_value, display_en, display_ru, display_zh, display_kk, display_ky, display_tg, display_tk, display_uz FROM ui.v_lkp_classifications ORDER BY display_en NULLS LAST, canonical_value`, lang),
@@ -944,7 +954,13 @@ router.get("/lookups/monuments", async (req, res) => {
       fetchLookupRows(`SELECT canonical_value, display_en, display_ru, display_zh, display_kk, display_ky, display_tg, display_tk, display_uz FROM ui.v_lkp_loc_acc_ass ORDER BY display_en NULLS LAST, canonical_value`, lang),
       fetchLookupRows(`SELECT canonical_value, display_en, display_ru, display_zh, display_kk, display_ky, display_tg, display_tk, display_uz FROM ui.v_lkp_admin_type ORDER BY display_en NULLS LAST, canonical_value`, lang),
       fetchLookupRows(`SELECT canonical_value, display_en, display_ru, display_zh, display_kk, display_ky, display_tg, display_tk, display_uz FROM ui.v_lkp_unit_of_measurement ORDER BY display_en NULLS LAST, canonical_value`, lang),
-      fetchLookupRows(`SELECT canonical_value, display_en, display_ru, display_zh, display_kk, display_ky, display_tg, display_tk, display_uz FROM ui.v_lkp_measurement_type ORDER BY display_en NULLS LAST, canonical_value`, lang)
+      fetchLookupRows(`SELECT canonical_value, display_en, display_ru, display_zh, display_kk, display_ky, display_tg, display_tk, display_uz FROM ui.v_lkp_measurement_type ORDER BY display_en NULLS LAST, canonical_value`, lang),
+      fetchLookupRows(`
+        SELECT canonical_value, display_en, display_ru, display_zh,
+              display_kk, display_ky, display_tg, display_tk, display_uz
+        FROM ui.v_lkp_langdisplay
+        ORDER BY sort_order NULLS LAST, display_en NULLS LAST, canonical_value
+      `, lang)
     ]);
 
     return res.json({
@@ -959,7 +975,8 @@ router.get("/lookups/monuments", async (req, res) => {
         location_confidence: locationConfidence,
         admin_subdivision_type: adminTypes,
         measurement_unit: units,
-        measurement_type: measurementTypes
+        measurement_type: measurementTypes,
+        language_display: languageDisplay
       }
     });
   } catch (error) {
@@ -1450,6 +1467,10 @@ function normaliseMonumentPayload(input = {}) {
   return payload;
 }
 
+function payloadIncludesMasterId(payload = {}) {
+  return Object.prototype.hasOwnProperty.call(payload, "MasterID");
+}
+
 async function fetchMonumentRowById(id) {
   const result = await pool.query(
     `
@@ -1515,6 +1536,15 @@ router.post("/monuments", async (req, res) => {
   }
 
   const payload = normaliseMonumentPayload(req.body || {});
+  const canEditCaal = canEditCaalMonuments(currentSession);
+
+  if (!canEditCaal && payloadIncludesMasterId(payload)) {
+    return res.status(403).json({
+      ok: false,
+      error: "Only super users can assign MasterID"
+    });
+  }
+
   const appUserId = currentSession?.user?.user_id ?? null;
   const sessionUsername = currentSession?.user?.username ?? null;
   const preferredLanguage = currentSession?.profile?.preferred_language ?? null;
@@ -1644,7 +1674,16 @@ router.patch("/monuments/:id", async (req, res) => {
     return res.status(400).json({ ok: false, error: "Invalid monument id" });
   }
 
+  const canEditCaal = canEditCaalMonuments(currentSession);
   const payload = normaliseMonumentPayload(req.body || {});
+
+  if (!canEditCaal && payloadIncludesMasterId(payload)) {
+    return res.status(403).json({
+      ok: false,
+      error: "Only super users can change MasterID"
+    });
+  }
+
   const fields = Object.keys(payload);
 
   if (fields.length === 0) {
@@ -1674,7 +1713,7 @@ router.patch("/monuments/:id", async (req, res) => {
 
   try {
     const userId = currentSession?.user?.user_id ?? null;
-    const canEditCaal = canEditCaalMonuments(currentSession);
+    //const canEditCaal = canEditCaalMonuments(currentSession);
 
     console.log("Monument PATCH permissions:", {
       userId,
@@ -1691,6 +1730,40 @@ router.patch("/monuments/:id", async (req, res) => {
 
     let updateSql;
     let updateValues;
+
+    if (!canEditCaal) {
+      const targetCheck = await pool.query(
+        `
+        SELECT id, created_by_app_user_id, "MasterID"
+        FROM ${MONUMENTS_WORKSPACE_TABLE}
+        WHERE id = $1
+        `,
+        [id]
+      );
+
+      const target = targetCheck.rows[0];
+
+      if (!target) {
+        return res.status(404).json({
+          ok: false,
+          error: "Monument record not found"
+        });
+      }
+
+      if (Number(target.created_by_app_user_id) !== Number(userId)) {
+        return res.status(403).json({
+          ok: false,
+          error: "You can only edit your own workspace records"
+        });
+      }
+
+      if (String(target["MasterID"] || "").trim() !== "") {
+        return res.status(403).json({
+          ok: false,
+          error: "Records linked to a MasterID are read-only"
+        });
+      }
+    }
 
     if (canEditCaal) {
       console.log("Trying workspace monument update:", {
@@ -1823,6 +1896,40 @@ router.delete("/monuments/:id", async (req, res) => {
   const deleteReason = String(req.body?.reason || "").trim() || null;
 
   try {
+    if (!canEditCaal) {
+      const targetCheck = await pool.query(
+        `
+        SELECT id, created_by_app_user_id, "MasterID"
+        FROM ${MONUMENTS_WORKSPACE_TABLE}
+        WHERE id = $1
+        `,
+        [id]
+      );
+
+      const target = targetCheck.rows[0];
+
+      if (!target) {
+        return res.status(404).json({
+          ok: false,
+          error: "Monument record not found"
+        });
+      }
+
+      if (Number(target.created_by_app_user_id) !== Number(userId)) {
+        return res.status(403).json({
+          ok: false,
+          error: "You can only delete your own workspace monument records"
+        });
+      }
+
+      if (String(target["MasterID"] || "").trim() !== "") {
+        return res.status(403).json({
+          ok: false,
+          error: "Records linked to a MasterID are read-only and cannot be deleted"
+        });
+      }
+    }
+
     const ownershipClause = canEditCaal
       ? ""
       : `AND m.created_by_app_user_id = $2`;

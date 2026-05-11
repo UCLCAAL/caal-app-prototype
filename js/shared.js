@@ -8,7 +8,120 @@ let appSession = null;
 const API_BASE = "";
 
 const APP_LANG_STORAGE_KEY = "caal_ui_language";
+const APP_LANG_USER_SELECTED_KEY = "caal_ui_language_user_selected";
+const APP_LANG_USER_ID_STORAGE_KEY = "caal_ui_language_user_id";
 
+const APP_TRANSLATIONS_STORAGE_PREFIX = "caal_ui_translations_";
+let uiTranslations = {};
+
+const SUPPORTED_UI_LANGS = ["en", "ru", "zh", "kk", "ky", "tg", "tk", "uz"];
+
+// TINY IN HOUSE THESAURUS FOR NAV BAR
+const SHELL_TRANSLATIONS = {
+  en: {
+    app_title: "CAAL Workspace",
+    nav_home: "Home",
+    nav_monuments: "Monuments",
+    nav_archive: "Archive",
+    logout_button: "Log out",
+    language_label: "Language",
+
+    home_app_subtitle: "National data entry and browsing environment",
+    monuments_workspace_subtitle: "Kazakhstan monuments workspace",
+    archive_workspace_subtitle: "Kazakhstan archive workspace",
+    login_subtitle: "Sign in to continue",
+    login_username: "Username",
+    login_password: "Password",
+    login_sign_in: "Sign in"
+  },
+
+  ru: {
+    app_title: "Рабочее пространство CAAL",
+    nav_home: "Главная",
+    nav_monuments: "Памятники",
+    nav_archive: "Архив",
+    logout_button: "Выйти",
+    language_label: "Язык",
+
+    home_app_subtitle: "Среда для национального ввода и просмотра данных",
+    monuments_workspace_subtitle: "Рабочее пространство памятников Казахстана",
+    archive_workspace_subtitle: "Рабочее пространство архива Казахстана",
+    login_subtitle: "Войдите, чтобы продолжить",
+    login_username: "Имя пользователя",
+    login_password: "Пароль",
+    login_sign_in: "Войти"
+  },
+
+  zh: {
+    app_title: "CAAL 工作区",
+    nav_home: "主页",
+    nav_monuments: "遗址",
+    nav_archive: "档案",
+    logout_button: "退出",
+    language_label: "语言",
+
+    home_app_subtitle: "国家数据录入和浏览环境",
+    monuments_workspace_subtitle: "哈萨克斯坦遗址工作区",
+    archive_workspace_subtitle: "哈萨克斯坦档案工作区",
+    login_subtitle: "登录以继续",
+    login_username: "用户名",
+    login_password: "密码",
+    login_sign_in: "登录"
+  },
+
+  kk: {
+    app_title: "CAAL жұмыс кеңістігі",
+    nav_home: "Басты бет",
+    nav_monuments: "Ескерткіштер",
+    nav_archive: "Архив",
+    logout_button: "Шығу",
+    language_label: "Тіл"
+  },
+
+  ky: {
+    app_title: "CAAL иш мейкиндиги",
+    nav_home: "Башкы бет",
+    nav_monuments: "Эстеликтер",
+    nav_archive: "Архив",
+    logout_button: "Чыгуу",
+    language_label: "Тил"
+  },
+
+  tg: {
+    app_title: "Фазои кории CAAL",
+    nav_home: "Саҳифаи асосӣ",
+    nav_monuments: "Ёдгориҳо",
+    nav_archive: "Бойгонӣ",
+    logout_button: "Баромадан",
+    language_label: "Забон"
+  },
+
+  tk: {
+    app_title: "CAAL iş giňişligi",
+    nav_home: "Baş sahypa",
+    nav_monuments: "Ýadygärlikler",
+    nav_archive: "Arhiw",
+    logout_button: "Çykmak",
+    language_label: "Dil"
+  },
+
+  uz: {
+    app_title: "CAAL ish maydoni",
+    nav_home: "Bosh sahifa",
+    nav_monuments: "Yodgorliklar",
+    nav_archive: "Arxiv",
+    logout_button: "Chiqish",
+    language_label: "Til"
+  }
+};
+
+let currentLang = getStoredLanguage();
+
+if (!SUPPORTED_UI_LANGS.includes(currentLang)) {
+  currentLang = "en";
+}
+
+document.documentElement.lang = currentLang;
 // --------------------------------------------------------
 // Backend session handling
 // --------------------------------------------------------
@@ -123,6 +236,35 @@ window.getWorkspaceCode = getWorkspaceCode;
 window.getPreferredLanguageFromSession = getPreferredLanguageFromSession;
 
 // lang persistence
+function markLanguageUserSelected() {
+  try {
+    sessionStorage.setItem(APP_LANG_USER_SELECTED_KEY, "true");
+  } catch (error) {
+    console.warn("Could not mark language as user-selected:", error);
+  }
+}
+
+function wasLanguageUserSelectedThisSession() {
+  try {
+    return sessionStorage.getItem(APP_LANG_USER_SELECTED_KEY) === "true";
+  } catch (error) {
+    return false;
+  }
+}
+
+function clearStoredLanguage() {
+  try {
+    localStorage.removeItem(APP_LANG_STORAGE_KEY);
+    localStorage.removeItem(APP_LANG_USER_ID_STORAGE_KEY);
+    sessionStorage.removeItem(APP_LANG_USER_SELECTED_KEY);
+  } catch (error) {
+    console.warn("Could not clear stored UI language:", error);
+  }
+}
+
+window.clearStoredLanguage = clearStoredLanguage;
+window.wasLanguageUserSelectedThisSession = wasLanguageUserSelectedThisSession;
+
 function getStoredLanguage() {
   try {
     return localStorage.getItem(APP_LANG_STORAGE_KEY);
@@ -131,181 +273,91 @@ function getStoredLanguage() {
   }
 }
 
+function getStoredLanguageUserId() {
+  try {
+    return localStorage.getItem(APP_LANG_USER_ID_STORAGE_KEY);
+  } catch (error) {
+    console.warn("Could not read stored UI language user id:", error);
+    return null;
+  }
+}
+
+function setStoredLanguageUserId(userId) {
+  try {
+    if (userId === null || userId === undefined || userId === "") {
+      localStorage.removeItem(APP_LANG_USER_ID_STORAGE_KEY);
+      return;
+    }
+
+    localStorage.setItem(APP_LANG_USER_ID_STORAGE_KEY, String(userId));
+  } catch (error) {
+    console.warn("Could not store UI language user id:", error);
+  }
+}
+
+function getCurrentSessionUserId() {
+  return (
+    window.appSession?.user?.user_id ??
+    window.appSession?.profile?.user_id ??
+    window.appSession?.user?.id ??
+    null
+  );
+}
+
+window.setStoredLanguageUserId = setStoredLanguageUserId;
+
 function setStoredLanguage(lang) {
   try {
     localStorage.setItem(APP_LANG_STORAGE_KEY, lang);
+
+    const currentUserId = getCurrentSessionUserId();
+    if (currentUserId !== null && currentUserId !== undefined) {
+      setStoredLanguageUserId(currentUserId);
+    }
   } catch (error) {
     console.warn("Could not store UI language:", error);
   }
 }
 
-function resolveInitialLanguage({ preferSession = false } = {}) {
-  const sessionLang = window.appSession?.profile?.preferred_language;
+function resolveInitialLanguage() {
   const stored = getStoredLanguage();
+  const storedUserId = getStoredLanguageUserId();
+  const currentUserId = getCurrentSessionUserId();
+  const sessionLang = window.appSession?.profile?.preferred_language;
 
-  if (preferSession && sessionLang && translations[sessionLang]) {
-    return sessionLang;
+  const hasValidStored =
+    stored && SUPPORTED_UI_LANGS.includes(stored);
+
+  const hasValidSession =
+    sessionLang && SUPPORTED_UI_LANGS.includes(sessionLang);
+
+  if (currentUserId !== null && currentUserId !== undefined) {
+    if (
+      hasValidStored &&
+      storedUserId &&
+      String(storedUserId) === String(currentUserId)
+    ) {
+      return stored;
+    }
+
+    if (hasValidSession) {
+      return sessionLang;
+    }
+
+    return "en";
   }
 
-  if (stored && translations[stored]) return stored;
-
-  if (sessionLang && translations[sessionLang]) return sessionLang;
+  if (hasValidStored) {
+    return stored;
+  }
 
   return "en";
 }
 
 // --------------------------------------------------------
-// UI translations for shell text only
-// --------------------------------------------------------
-const translations = {
-  en: {
-    home_workspace_title: "CAAL Kazakhstan",
-    home_workspace_intro: "Browse, consult, and maintain monument and archive records within a shared CAAL environment.",
-    app_title: "CAAL Workspace",
-    app_subtitle: "Kazakhstan workspace prototype",
-    language_label: "Language",
-    record_details: "Record Details",
-    click_prompt: "Click a monument on the map",
-    no_record_selected: "No record selected yet.",
-    no_data_in_section: "No populated fields in this section.",
-    edit_record: "Edit record",
-    save: "Save",
-    cancel: "Cancel",
-    set_location_from_coordinates: "Set location from coordinates",
-    logout_button: "Log out",
-    //Archive Page
-    archive_browse: "Browse",
-    archive_browse_intro: "Search and consult archive records",
-    archive_search: "Search",
-    archive_search_placeholder: "Search titles, references, descriptions, authors...",
-    archive_workspace_records: "Workspace records",
-    archive_national_records: "National CAAL records",
-    archive_all_records: "All CAAL records",
-    archive_advanced_filters: "Advanced filters",
-    archive_results: "Results",
-    archive_results_will_appear: "Results will appear here.",
-    archive_selected_record: "Selected archive record",
-    archive_clear_filters: "Clear filters",
-    archive_related_countries: "Related Countries",
-    archive_related_religions: "Related Religions",
-    archive_related_subjects: "Related Subjects",
-    archive_content_type: "Content Type",
-    archive_languages_material: "Languages of Material",
-    //MONUMENTS PAGE
-    monuments_workspace_records: "Workspace records",
-    monuments_national_records: "National CAAL records",
-    monuments_all_records: "All CAAL records"
-  },
-
-  ru: {
-    home_workspace_title: "CAAL Казахстан",
-    home_workspace_intro: "Просматривайте, сверяйте и ведите памятники и архивные записи в общей среде CAAL.",
-    app_title: "Рабочее пространство CAAL",
-    app_subtitle: "Прототип рабочего пространства Казахстана",
-    language_label: "Язык",
-    record_details: "Детали записи",
-    click_prompt: "Нажмите на памятник на карте",
-    no_record_selected: "Запись пока не выбрана.",
-    no_data_in_section: "В этом разделе нет заполненных полей.",
-    edit_record: "Редактировать запись",
-    save: "Сохранить",
-    cancel: "Отмена",
-    set_location_from_coordinates: "Установить местоположение по координатам",
-    // Archive page
-    archive_browse: "Просмотр",
-    archive_browse_intro: "Поиск и просмотр архивных записей",
-    archive_search: "Поиск",
-    archive_search_placeholder: "Искать по названиям, ссылкам, описаниям, авторам...",
-    archive_workspace_records: "Записи рабочего пространства",
-    archive_national_records: "Национальные записи CAAL",
-    archive_all_records: "Все записи CAAL",
-    archive_advanced_filters: "Расширенные фильтры",
-    archive_results: "Результаты",
-    archive_results_will_appear: "Здесь появятся результаты.",
-    archive_selected_record: "Выбранная архивная запись",
-    archive_clear_filters: "Очистить фильтры",
-    archive_related_countries: "Связанные страны",
-    archive_related_religions: "Связанные религии",
-    archive_related_subjects: "Связанные темы",
-    archive_content_type: "Тип материала",
-    archive_languages_material: "Языки материала",
-    //MONUMENTS PAGE
-    monuments_workspace_records: "Записи рабочего пространства",
-    monuments_national_records: "Национальные записи CAAL",
-    monuments_all_records: "Все записи CAAL"
-  },
-
-  zh: {
-    home_workspace_title: "CAAL 哈萨克斯坦",
-    home_workspace_intro: "在共享的 CAAL 环境中浏览、查阅并维护遗址和档案记录。",
-    app_title: "CAAL 工作区",
-    app_subtitle: "哈萨克斯坦工作区原型",
-    language_label: "语言",
-    record_details: "记录详情",
-    click_prompt: "点击地图上的遗址",
-    no_record_selected: "尚未选择记录。",
-    no_data_in_section: "本部分没有已填内容。",
-    edit_record: "编辑记录",
-    save: "保存",
-    cancel: "取消",
-    set_location_from_coordinates: "根据坐标设置位置"
-  }
-};
-
-// --------------------------------------------------------
-// Shared lookup labels
-// Keep only if reused across modules
-// --------------------------------------------------------
-const lookupLabels = {
-  country: {
-    kazakhstan: {
-      en: "Kazakhstan",
-      ru: "Казахстан",
-      zh: "哈萨克斯坦"
-    }
-  },
-  monument_type1: {
-    burial_site: {
-      en: "Burial site",
-      ru: "Погребальный памятник",
-      zh: "墓葬遗址"
-    },
-    settlement: {
-      en: "Settlement",
-      ru: "Поселение",
-      zh: "聚落"
-    },
-    fortification: {
-      en: "Fortification",
-      ru: "Укрепление",
-      zh: "堡垒"
-    }
-  },
-  cultural_period1: {
-    bronze_age: {
-      en: "Bronze Age",
-      ru: "Бронзовый век",
-      zh: "青铜时代"
-    },
-    early_iron_age: {
-      en: "Early Iron Age",
-      ru: "Ранний железный век",
-      zh: "早期铁器时代"
-    },
-    medieval: {
-      en: "Medieval",
-      ru: "Средневековье",
-      zh: "中世纪"
-    }
-  }
-};
-
-// --------------------------------------------------------
 // Language persistence
 // --------------------------------------------------------
 
-
-let currentLang = "en";
 const languageSelect = document.getElementById("languageSelect");
 
 function getCurrentLanguage() {
@@ -397,22 +449,17 @@ async function loadDirectLinkedRecord(caalId) {
 // --------------------------------------------------------
 // Shared text helpers
 // --------------------------------------------------------
-function t(key) {
-  return translations[currentLang]?.[key] || translations.en[key] || key;
-}
-
-window.t = t;
 
 function safeValue(value) {
   if (value === null || value === undefined || value === "") {
-    return "Not recorded";
+    return t("not_recorded", "Not recorded");
   }
   return value;
 }
 
 function displayLookup(fieldName, rawValue) {
   if (rawValue === null || rawValue === undefined || rawValue === "") {
-    return "Not recorded";
+    return t("not_recorded", "Not recorded");
   }
 
   const fieldLookup = lookupLabels[fieldName];
@@ -430,6 +477,42 @@ function displayLookup(fieldName, rawValue) {
 
 window.safeValue = safeValue;
 window.displayLookup = displayLookup;
+
+
+function displayLanguageName(value) {
+  if (!value) return value;
+
+  const raw = String(value).trim();
+
+  const aliases = {
+    en: "English",
+    english: "English",
+    ru: "Russian",
+    russian: "Russian",
+    zh: "Chinese",
+    chinese: "Chinese",
+    kk: "Kazakh",
+    kazakh: "Kazakh",
+    ky: "Kyrgyz",
+    kyrgyz: "Kyrgyz",
+    tg: "Tajik",
+    tajik: "Tajik",
+    tk: "Turkmen",
+    turkmen: "Turkmen",
+    uz: "Uzbek",
+    uzbek: "Uzbek"
+  };
+
+  const canonical = aliases[raw.toLowerCase()] || raw;
+
+  const rows = window.sharedLookups?.language_display || [];
+  const match = rows.find((row) => String(row.value) === canonical);
+
+  return match?.label || raw;
+}
+
+window.displayLanguageName = displayLanguageName;
+
 
 // --------------------------------------------------------
 // Generic reusable form helpers
@@ -452,7 +535,7 @@ function hasValue(value) {
 
 function formatValue(value, decimals = null) {
   if (value === null || value === undefined || value === "") {
-    return "Not recorded";
+    return t("not_recorded", "Not recorded");
   }
 
   if (decimals !== null && !isNaN(value)) {
@@ -583,48 +666,184 @@ window.renderSelectInput = renderSelectInput;
 // --------------------------------------------------------
 // Shared language application
 // --------------------------------------------------------
-function applyLanguage() {
+function getCachedUiTranslations(lang) {
+  try {
+    const raw = localStorage.getItem(`${APP_TRANSLATIONS_STORAGE_PREFIX}${lang}`);
+    return raw ? JSON.parse(raw) : null;
+  } catch (error) {
+    console.warn("Could not read cached UI translations:", error);
+    return null;
+  }
+}
+
+function setCachedUiTranslations(lang, translations) {
+  try {
+    localStorage.setItem(
+      `${APP_TRANSLATIONS_STORAGE_PREFIX}${lang}`,
+      JSON.stringify(translations || {})
+    );
+  } catch (error) {
+    console.warn("Could not cache UI translations:", error);
+  }
+}
+
+function sameTranslations(a, b) {
+  return JSON.stringify(a || {}) === JSON.stringify(b || {});
+}
+
+function applyTranslationsToDom() {
   document.documentElement.lang = currentLang;
 
-  if (languageSelect) {
-    languageSelect.value = currentLang;
+  const select = document.getElementById("languageSelect");
+  if (select) {
+    select.value = currentLang;
   }
 
   document.querySelectorAll("[data-i18n]").forEach((el) => {
     const key = el.dataset.i18n;
-    el.textContent = t(key);
+    el.textContent = t(key, el.textContent);
   });
 
   document.querySelectorAll("[data-i18n-placeholder]").forEach((el) => {
     const key = el.dataset.i18nPlaceholder;
-    el.placeholder = t(key);
+    el.placeholder = t(key, el.placeholder);
   });
 
-  document.dispatchEvent(new CustomEvent("app:languageChanged"));
+  document.querySelectorAll("[data-i18n-title]").forEach((el) => {
+    const key = el.dataset.i18nTitle;
+    el.title = t(key, el.title);
+  });
+
+  document.querySelectorAll("[data-i18n-aria-label]").forEach((el) => {
+    const key = el.dataset.i18nAriaLabel;
+    el.setAttribute("aria-label", t(key, el.getAttribute("aria-label")));
+  });
 }
 
-if (languageSelect) {
-  languageSelect.addEventListener("change", (event) => {
-    const lang = event.target.value;
+async function loadUiTranslations(lang = null) {
+  const activeLang = lang || getCurrentLanguage();
 
-    if (typeof window.archiveCanChangeLanguage === "function") {
-      if (!window.archiveCanChangeLanguage()) {
-        event.target.value = currentLang;
-        return;
+  try {
+    const response = await fetch(
+      `/api/ui/translations?lang=${encodeURIComponent(activeLang)}`,
+      {
+        method: "GET",
+        credentials: "include"
       }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok || !data.ok) {
+      console.error("Failed to load UI translations:", data);
+      return null;
     }
 
-    if (typeof window.monumentCanChangeLanguage === "function") {
-      if (!window.monumentCanChangeLanguage()) {
-        event.target.value = currentLang;
-        return;
-      }
+    return data.translations || {};
+  } catch (error) {
+    console.error("Failed to load UI translations:", error);
+    return null;
+  }
+}
+
+function getShellTranslation(key, lang = currentLang) {
+  const caFallbackLangs = ["kk", "ky", "tg", "tk", "uz"];
+  const fallbackLang = caFallbackLangs.includes(lang) ? "ru" : "en";
+
+  return (
+    SHELL_TRANSLATIONS?.[lang]?.[key] ||
+    SHELL_TRANSLATIONS?.[fallbackLang]?.[key] ||
+    SHELL_TRANSLATIONS?.en?.[key] ||
+    null
+  );
+}
+
+function t(key, fallback = null) {
+  const value = uiTranslations[key];
+
+  if (
+    value !== null &&
+    value !== undefined &&
+    String(value).trim() !== ""
+  ) {
+    return value;
+  }
+
+  const shellValue = getShellTranslation(key);
+
+  if (
+    shellValue !== null &&
+    shellValue !== undefined &&
+    String(shellValue).trim() !== ""
+  ) {
+    return shellValue;
+  }
+
+  return fallback || key;
+}
+
+window.t = t;
+
+async function applyLanguage({ notify = true } = {}) {
+  const cached = getCachedUiTranslations(currentLang);
+
+  uiTranslations = cached && typeof cached === "object"
+    ? cached
+    : {};
+
+  applyTranslationsToDom();
+
+  const fresh = await loadUiTranslations(currentLang);
+
+  if (fresh && !sameTranslations(fresh, uiTranslations)) {
+    uiTranslations = fresh;
+    setCachedUiTranslations(currentLang, fresh);
+    applyTranslationsToDom();
+  } else if (fresh) {
+    setCachedUiTranslations(currentLang, fresh);
+  }
+
+  if (notify) {
+    document.dispatchEvent(new CustomEvent("app:languageChanged"));
+  }
+}
+
+window.applyLanguage = applyLanguage;
+
+function bindLanguageSelector() {
+  const languageSelect = document.getElementById("languageSelect");
+  if (!languageSelect || languageSelect.dataset.languageBound === "true") return;
+
+  languageSelect.addEventListener("change", async () => {
+    const nextLang = languageSelect.value || "en";
+
+    if (
+      typeof window.monumentCanChangeLanguage === "function" &&
+      !window.monumentCanChangeLanguage()
+    ) {
+      languageSelect.value = currentLang;
+      return;
     }
 
-    currentLang = lang;
-    setStoredLanguage(lang);
-    applyLanguage();
+    if (
+      typeof window.archiveCanChangeLanguage === "function" &&
+      !window.archiveCanChangeLanguage()
+    ) {
+      languageSelect.value = currentLang;
+      return;
+    }
+
+    currentLang = nextLang;
+
+    if (getCurrentSessionUserId() !== null && getCurrentSessionUserId() !== undefined) {
+      setStoredLanguage(currentLang);
+      markLanguageUserSelected();
+    }
+
+    await applyLanguage();
   });
+
+  languageSelect.dataset.languageBound = "true";
 }
 
 // --------------------------------------------------------
@@ -635,7 +854,14 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   await loadBackendSession();
 
-  currentLang = resolveInitialLanguage({ preferSession: true });
-  applyLanguage();
+  currentLang = resolveInitialLanguage();
+
+  if (currentLang) {
+    localStorage.setItem("caal_ui_language_bootstrap", currentLang);
+  }
+
   initialiseLanguageSelector();
+  bindLanguageSelector();
+
+  await applyLanguage({ notify: false });
 });
