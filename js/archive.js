@@ -189,13 +189,13 @@ function archiveBoolLabel(value) {
 function archiveScopeLabel(scope) {
   switch (scope) {
     case "workspace":
-      return archiveLabel("Workspace", "Workspace");
+      return t("workspace", "Workspace");
     case "national_ref":
-      return archiveLabel("National CAAL", "National CAAL");
+      return t("archives_national_records", "National CAAL records");
     case "all_caal":
-      return archiveLabel("All CAAL", "All CAAL");
+      return t("other_caal_records", "Other CAAL records");
     default:
-      return scope || archiveLabel("Unknown", "Unknown");
+      return scope || t("unknown", "Unknown");
   }
 }
 
@@ -841,7 +841,7 @@ function makeNewBlankArchiveRecord() {
   return {
     identity: {
       id: null,
-      caal_id: "[new record - unsaved]",
+      caal_id: t("assigned_on_save", "Assigned on save"),
       associated_caal_id: ""
     },
     summary: {
@@ -2439,6 +2439,7 @@ document.addEventListener("app:languageChanged", async () => {
 
     await loadArchiveLookups();
     archivePopulateFilterLookups();
+    updatePaginationUI();
   } catch (error) {
     console.error("Archive labels/lookups refresh failed:", error);
     archiveLabels = {};

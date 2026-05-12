@@ -1544,6 +1544,26 @@ function refreshCurrentResultsLabelSource() {
   return true;
 }
 
+function clearMonumentDraftMapState() {
+  [
+    "new-monument-point",
+    "moved-monument-point",
+    "pending-monument-point"
+  ].forEach((sourceId) => {
+    if (map?.getSource?.(sourceId)) {
+      map.getSource(sourceId).setData({
+        type: "FeatureCollection",
+        features: []
+      });
+    }
+  });
+
+  if (typeof pendingMonumentMarker !== "undefined" && pendingMonumentMarker?.remove) {
+    pendingMonumentMarker.remove();
+    pendingMonumentMarker = null;
+  }
+}
+
 //results
 function monumentResultTitle(record) {
   return (
@@ -1931,9 +1951,9 @@ function mSelectedOptionCount(selectEl) {
 
 function mLegacyMultiLimitMessage(fieldBase, count) {
   const labels = {
-    "Monument Type": mLabel("Monument Types", "Monument Types"),
-    "Religion": mLabel("Religions", "Religions"),
-    "Cultural Period": mLabel("Cultural Periods", "Cultural Periods")
+    "Monument Type": mLabel("Monument Type", "Monument Type"),
+    "Religion": mLabel("Religion", "Religion"),
+    "Cultural Period": mLabel("Cultural Period", "Cultural Period")
   };
 
   const label = labels[fieldBase] || fieldBase;
@@ -2459,13 +2479,13 @@ function getMonumentEnabledScopes() {
 function monumentScopeLabel(scope) {
   switch (scope) {
     case "workspace":
-      return mLabel("Workspace", "Workspace");
+      return t("workspace", "Workspace");
     case "national_ref":
-      return mLabel("National CAAL", "National CAAL");
+      return t("monuments_national_records", "National CAAL records");
     case "all_caal":
-      return mLabel("All CAAL", "All CAAL");
+      return t("other_caal_records", "Other CAAL records");
     default:
-      return scope || mLabel("Unknown", "Unknown");
+      return scope || t("unknown", "Unknown");
   }
 }
 
@@ -5358,7 +5378,7 @@ function renderMonumentEditMode(record) {
           ${mRenderLegacyMultiSelect({
             fieldBase: "Monument Type",
             count: 6,
-            label: mLabel("Monument Types", "Monument Types"),
+            label: mLabel("Monument Type", "Monument Type"),
             lookupName: "monument_type",
             record,
             fullWidth: true
@@ -5367,7 +5387,7 @@ function renderMonumentEditMode(record) {
           ${mRenderLegacyMultiSelect({
             fieldBase: "Religion",
             count: 3,
-            label: mLabel("Religions", "Religions"),
+            label: mLabel("Religion", "Religion"),
             lookupName: "religion",
             record,
             fullWidth: true
@@ -5378,7 +5398,7 @@ function renderMonumentEditMode(record) {
           ${mRenderLegacyMultiSelect({
             fieldBase: "Cultural Period",
             count: 6,
-            label: mLabel("Cultural Periods", "Cultural Periods"),
+            label: mLabel("Cultural Period", "Cultural Period"),
             lookupName: "cultural_period",
             record,
             fullWidth: true
@@ -5497,7 +5517,7 @@ function makeNewBlankMonumentRecord() {
   return {
     identity: {
       id: null,
-      caal_id: "[new record - unsaved]"
+      caal_id: t("assigned_on_save", "Assigned on save")
     },
     summary: {
       primary_name: "",
@@ -5756,6 +5776,8 @@ window.monumentCanChangeLanguage = function () {
   monumentIsAddMode = false;
   updateAddModeUI();
 
+  clearMonumentDraftMapState();
+
   if (monumentSelectedRecord) {
     renderMonumentRecordDetails(monumentSelectedRecord);
   } else {
@@ -5871,6 +5893,9 @@ function cancelCurrentMonumentEdit() {
     updateMonumentActionBar();
     monumentSyncModeVisualState();
     monumentIsDirty = false;
+
+    clearMonumentDraftMapState();
+
     monumentIsAddMode = false;
     updateAddModeUI();
     renderMonumentEmptyState();
