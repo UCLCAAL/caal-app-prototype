@@ -3,31 +3,108 @@ const pool = require("./db");
 
 const router = express.Router();
 
-const browseScopeConfig = {
-  workspace: {
-    sql: `
-      SELECT
-        *,
-        'workspace'::text AS source_scope,
-        true AS is_editable
-      FROM kz.v_archive_grid_base
-    `
-  },
-  national_ref: {
-    sql: `
-      SELECT *
-      FROM kz.mv_archive_combined
-      WHERE source_scope = 'national_ref'
-    `
-  },
-  all_caal: {
-    sql: `
-      SELECT *
-      FROM kz.mv_archive_combined
-      WHERE source_scope = 'all_caal'
-    `
-  }
-};
+function currentAppUserIdFromSession(session) {
+  const value = session?.user?.user_id ?? null;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) ? parsed : null;
+}
+
+function archiveRegistryMatchSql(alias = "rr") {
+  const p = alias ? `${alias}.` : "";
+
+  return `
+    (
+      ${p}record_type = 'archive'
+      OR ${p}source_table = 'CAAL_Archive'
+    )
+  `;
+}
+
+function makeArchiveBrowseScopeConfig(currentSession) {
+  const currentAppUserId = currentAppUserIdFromSession(currentSession);
+  const userId = currentAppUserId ?? -1;
+  const canEditCaal = canEditCaalArchive(currentSession);
+
+  const ownPromotedExclusion = `
+    NOT EXISTS (
+      SELECT 1
+      FROM public.record_registry rr
+      WHERE rr.caal_id = m."CAAL_ID"
+        AND rr.created_by_app_user_id = ${userId}
+        AND ${archiveRegistryMatchSql("rr")}
+        AND COALESCE(rr.status, '') <> 'deleted'
+    )
+  `;
+
+  return {
+    // Internal key remains "workspace" for now.
+    // User-facing meaning: My workspace records.
+    workspace: {
+      sql: `
+        SELECT
+          v.*,
+          'workspace'::text AS source_scope,
+          true AS is_editable,
+          'workspace'::text AS source_scope_override,
+          true AS is_editable_override,
+          'kz_workspace'::text AS storage_scope,
+          false AS is_promoted
+        FROM kz.v_archive_grid_base v
+        LEFT JOIN public.record_registry rr
+          ON rr.source_schema = 'kz'
+         AND rr.source_table = 'CAAL_Archive'
+         AND rr.source_row_id = v.id
+        WHERE v.created_by_app_user_id = ${userId}
+          AND COALESCE(rr.status, '') <> 'deleted'
+
+        UNION ALL
+
+        SELECT
+          m.*,
+          'workspace'::text AS source_scope_override,
+          true AS is_editable_override,
+          'public_caal'::text AS storage_scope,
+          true AS is_promoted
+        FROM kz.mv_archive_combined m
+        JOIN public.record_registry rr
+          ON rr.caal_id = m."CAAL_ID"
+         AND ${archiveRegistryMatchSql("rr")}
+        WHERE rr.created_by_app_user_id = ${userId}
+          AND COALESCE(rr.status, '') <> 'deleted'
+      `
+    },
+
+    // National public CAAL archive records, excluding my promoted records.
+    national_ref: {
+      sql: `
+        SELECT
+          m.*,
+          NULL::text AS source_scope_override,
+          NULL::boolean AS is_editable_override,
+          'public_caal'::text AS storage_scope,
+          true AS is_promoted
+        FROM kz.mv_archive_combined m
+        WHERE m.source_scope = 'national_ref'
+          AND ${ownPromotedExclusion}
+      `
+    },
+
+    // Other public CAAL archive records, excluding my promoted records.
+    all_caal: {
+      sql: `
+        SELECT
+          m.*,
+          NULL::text AS source_scope_override,
+          NULL::boolean AS is_editable_override,
+          'public_caal'::text AS storage_scope,
+          true AS is_promoted
+        FROM kz.mv_archive_combined m
+        WHERE m.source_scope = 'all_caal'
+          AND ${ownPromotedExclusion}
+      `
+    }
+  };
+}
 
 function parseScopes(scopesParam) {
   if (!scopesParam) {
@@ -88,8 +165,13 @@ function getAllowedScopes(session) {
   return unique(allowed);
 }
 
-function buildBrowseUnionSql(scopes) {
-  return scopes.map((scope) => browseScopeConfig[scope].sql).join("\nUNION ALL\n");
+function buildBrowseUnionSql(scopes, currentSession) {
+  const config = makeArchiveBrowseScopeConfig(currentSession);
+
+  return scopes
+    .filter((scope) => config[scope])
+    .map((scope) => config[scope].sql)
+    .join("\nUNION ALL\n");
 }
 
 function pickLangValue(row, baseName, lang, fallbackOrder = []) {
@@ -130,6 +212,12 @@ function splitCanonicalList(value) {
 }
 
 function buildArchiveRecord(row, lang) {
+  const effectiveScope = row.source_scope_override || row.source_scope;
+  const effectiveEditable =
+    row.is_editable_override !== null &&
+    row.is_editable_override !== undefined
+      ? row.is_editable_override
+      : row.is_editable;
   return {
     identity: {
       id: row.id,
@@ -154,8 +242,14 @@ function buildArchiveRecord(row, lang) {
     },
     raw: row,
     source: {
-      scope: row.source_scope,
-      is_editable: row.is_editable === true || row.is_editable === "true"
+      scope: effectiveScope,
+      storage: row.storage_scope || null,
+      is_promoted:
+        row.is_promoted === true ||
+        row.is_promoted === "true",
+      is_editable:
+        effectiveEditable === true ||
+        effectiveEditable === "true"
     },
     filter_values: {
       related_countries: splitCanonicalList(firstDefined(row["Related Countries"], row.related_countries)),
@@ -170,7 +264,7 @@ function buildArchiveRecord(row, lang) {
 }
 
 router.get("/", async (req, res) => {
-  console.log("ARCHIVE route session:", JSON.stringify(req.session, null, 2));
+  //console.log("ARCHIVE route session:", JSON.stringify(req.session, null, 2));
   const currentSession = req.session?.appSession || null;
 
   if (!currentSession) {
@@ -205,7 +299,7 @@ router.get("/", async (req, res) => {
   const contentTypes = parseCsvParam(req.query.contentTypes);
   const languages = parseCsvParam(req.query.languages);
 
-  const unionSql = buildBrowseUnionSql(scopes);
+  const unionSql = buildBrowseUnionSql(scopes, currentSession);
 
   const whereClauses = [];
   const values = [];
@@ -305,7 +399,15 @@ router.get("/", async (req, res) => {
       ${unionSql}
     ) combined
     ${whereSql}
-    ORDER BY id DESC
+    ORDER BY
+      CASE COALESCE(source_scope_override, source_scope)
+        WHEN 'workspace' THEN 0
+        WHEN 'national_ref' THEN 1
+        WHEN 'all_caal' THEN 2
+        ELSE 3
+      END,
+      "Date of Recording" DESC NULLS LAST,
+      id DESC
     LIMIT $${limitParam} OFFSET $${offsetParam}
   `;
 
@@ -529,7 +631,7 @@ router.patch("/:id", async (req, res) => {
         returnedEditable = true;
       }
     } else {
-      // Normal workspace editor can only update own workspace records.
+      // Normal workspace editor can update own unpromoted workspace records.
       result = await pool.query(
         `
         UPDATE ${ARCHIVE_WORKSPACE_TABLE}
@@ -542,6 +644,34 @@ router.patch("/:id", async (req, res) => {
         `,
         [...values, id, userId]
       );
+
+      // If not found in workspace table, try an owned promoted public CAAL archive record.
+      if (result.rows.length === 0) {
+        result = await pool.query(
+          `
+          UPDATE ${ARCHIVE_CAAL_TABLE} a
+          SET
+            ${setSql},
+            "Tstamp" = NOW()
+          WHERE a.id = $${fields.length + 1}
+            AND EXISTS (
+              SELECT 1
+              FROM public.record_registry rr
+              WHERE rr.caal_id = a."CAAL_ID"
+                AND rr.created_by_app_user_id = $${fields.length + 2}
+                AND ${archiveRegistryMatchSql("rr")}
+                AND COALESCE(rr.status, '') <> 'deleted'
+            )
+          RETURNING *
+          `,
+          [...values, id, userId]
+        );
+
+        if (result.rows.length > 0) {
+          returnedScope = "workspace";
+          returnedEditable = true;
+        }
+      }
     }
 
     if (result.rows.length === 0) {

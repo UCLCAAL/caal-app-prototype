@@ -1545,6 +1545,15 @@ function refreshCurrentResultsLabelSource() {
 }
 
 //results
+function monumentResultTitle(record) {
+  return (
+    mSummary(record, "primary_name") ||
+    mSummary(record, "primary_name_english") ||
+    mRaw(record, "Other Names") ||
+    ""
+  );
+}
+
 function updateSelectedResultCard() {
   if (!resultsList) return;
 
@@ -1776,6 +1785,263 @@ function mDisplayLatitude(record) {
   return value;
 }
 
+function mLegacyMultiValues(record, fieldBase, count) {
+  const values = [];
+
+  for (let i = 1; i <= count; i += 1) {
+    const value = mRaw(record, `${fieldBase}${i}`);
+    if (value !== null && value !== undefined && String(value).trim() !== "") {
+      values.push(String(value).trim());
+    }
+  }
+
+  return values;
+}
+
+function mLegacyMultiPayload(payload, fieldBase, count, values) {
+  const cleanValues = Array.isArray(values)
+    ? values.map((value) => String(value).trim()).filter(Boolean)
+    : [];
+
+  for (let i = 1; i <= count; i += 1) {
+    payload[`${fieldBase}${i}`] = cleanValues[i - 1] || "";
+  }
+
+  return payload;
+}
+
+function mRenderLegacyMultiSelect({
+  fieldBase,
+  count,
+  label,
+  lookupName,
+  record,
+  fullWidth = true
+}) {
+  const inputId = `monument_multi_${fieldBase.replace(/[^a-zA-Z0-9]+/g, "_")}`;
+  const chipsId = `${inputId}_chips`;
+
+  const selectedValues = mLegacyMultiValues(record, fieldBase, count).map(String);
+
+  const options = Array.isArray(monumentLookups?.[lookupName])
+    ? monumentLookups[lookupName]
+    : [];
+
+  const optionsHtml = options
+    .map((item) => {
+      const value = String(item.value ?? "");
+      const selected = selectedValues.includes(value) ? "selected" : "";
+
+      return `<option value="${value}" ${selected}>${item.label ?? value}</option>`;
+    })
+    .join("");
+
+  return `
+    <div class="detail-item${fullWidth ? " full-width" : ""} monument-edit-chip-multiselect">
+      <label class="detail-label" for="${inputId}">${label}</label>
+
+      <div
+        class="selected-filter-chips monument-edit-selected-chips"
+        id="${chipsId}"
+      ></div>
+
+      <select
+        id="${inputId}"
+        class="form-control chip-multiselect monument-edit-multiselect"
+        multiple
+        data-chip-target="${chipsId}"
+        data-field-base="${fieldBase}"
+        data-field-count="${count}"
+      >
+        ${optionsHtml}
+      </select>
+
+      <p class="filter-help">
+        ${t("filter_click_toggle_help", "Click values to select or deselect. Selected values appear above.")}
+        ${" "}
+        ${t("maximum_values_help", "Maximum: {count}.").replace("{count}", count)}
+      </p>
+    </div>
+  `;
+}
+
+function mRenderEditMultiSelectChips(selectEl) {
+  if (!selectEl) return;
+
+  const chipsId = selectEl.dataset.chipTarget;
+  const chipsEl = chipsId ? document.getElementById(chipsId) : null;
+
+  if (!chipsEl) return;
+
+  const selected = Array.from(selectEl.options)
+    .filter((option) => option.selected)
+    .map((option) => ({
+      value: option.value,
+      label: option.textContent || option.value
+    }));
+
+  chipsEl.innerHTML = "";
+
+  if (!selected.length) {
+    const empty = document.createElement("span");
+    empty.className = "filter-chip-empty";
+    empty.textContent = t("no_values_selected", "No values selected");
+    chipsEl.appendChild(empty);
+    return;
+  }
+
+  selected.forEach((item) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "filter-chip";
+    chip.dataset.value = item.value;
+    chip.innerHTML = `
+      <span>${item.label}</span>
+      <span class="filter-chip-remove" aria-hidden="true">×</span>
+    `;
+
+    chip.addEventListener("click", () => {
+      const option = Array.from(selectEl.options).find(
+        (opt) => opt.value === item.value
+      );
+
+      if (option) {
+        option.selected = false;
+      }
+
+      monumentIsDirty = true;
+      mRenderEditMultiSelectChips(selectEl);
+
+      selectEl.dispatchEvent(
+        new Event("change", {
+          bubbles: true
+        })
+      );
+    });
+
+    chipsEl.appendChild(chip);
+  });
+}
+
+function mSelectedOptionCount(selectEl) {
+  if (!selectEl) return 0;
+
+  return Array.from(selectEl.options).filter((option) => option.selected).length;
+}
+
+function mLegacyMultiLimitMessage(fieldBase, count) {
+  const labels = {
+    "Monument Type": mLabel("Monument Types", "Monument Types"),
+    "Religion": mLabel("Religions", "Religions"),
+    "Cultural Period": mLabel("Cultural Periods", "Cultural Periods")
+  };
+
+  const label = labels[fieldBase] || fieldBase;
+
+  return t(
+    "legacy_multi_select_limit",
+    "{label} can store a maximum of {count} values."
+  )
+    .replace("{label}", label)
+    .replace("{count}", count);
+}
+
+function syncLegacyMultiSelectIntoRecord(selectEl) {
+  if (!selectEl || !monumentSelectedRecord?.raw) return;
+
+  const fieldBase = selectEl.dataset.fieldBase;
+  const count = Number(selectEl.dataset.fieldCount || 0);
+
+  if (!fieldBase || !count) return;
+
+  const values = Array.from(selectEl.selectedOptions)
+    .map((option) => option.value)
+    .filter(Boolean);
+
+  for (let i = 1; i <= count; i += 1) {
+    monumentSelectedRecord.raw[`${fieldBase}${i}`] = values[i - 1] || "";
+  }
+
+  if (fieldBase === "Cultural Period") {
+    recalculateMonumentDates(monumentSelectedRecord);
+  }
+}
+
+function mWireEditMultiSelects() {
+  if (!recordDetails) return;
+
+  const selects = Array.from(
+    recordDetails.querySelectorAll("select.monument-edit-multiselect")
+  );
+
+  selects.forEach((selectEl) => {
+    if (selectEl.dataset.editChipWired === "true") {
+      mRenderEditMultiSelectChips(selectEl);
+      return;
+    }
+
+    selectEl.addEventListener("mousedown", (event) => {
+      const option = event.target;
+
+      if (!option || option.tagName !== "OPTION") return;
+
+      event.preventDefault();
+
+      const maxCount = Number(selectEl.dataset.fieldCount || 0);
+      const isSelecting = !option.selected;
+      const selectedCount = mSelectedOptionCount(selectEl);
+
+      if (isSelecting && maxCount && selectedCount >= maxCount) {
+        alert(
+          mLegacyMultiLimitMessage(
+            selectEl.dataset.fieldBase,
+            maxCount
+          )
+        );
+        return;
+      }
+
+      option.selected = !option.selected;
+      monumentIsDirty = true;
+
+      syncLegacyMultiSelectIntoRecord(selectEl);
+      mRenderEditMultiSelectChips(selectEl);
+
+      selectEl.dispatchEvent(
+        new Event("change", {
+          bubbles: true
+        })
+      );
+    });
+
+    selectEl.addEventListener("change", () => {
+      const maxCount = Number(selectEl.dataset.fieldCount || 0);
+      const selectedOptions = Array.from(selectEl.options).filter(
+        (option) => option.selected
+      );
+
+      if (maxCount && selectedOptions.length > maxCount) {
+        selectedOptions.slice(maxCount).forEach((option) => {
+          option.selected = false;
+        });
+
+        alert(
+          mLegacyMultiLimitMessage(
+            selectEl.dataset.fieldBase,
+            maxCount
+          )
+        );
+      }
+
+      syncLegacyMultiSelectIntoRecord(selectEl);
+      mRenderEditMultiSelectChips(selectEl);
+    });
+
+    selectEl.dataset.editChipWired = "true";
+    mRenderEditMultiSelectChips(selectEl);
+  });
+}
+
 function mLookupOptions(lookupName) {
   return Array.isArray(monumentLookups?.[lookupName]) ? monumentLookups[lookupName] : [];
 }
@@ -1885,11 +2151,81 @@ function mBuildSavePayload() {
     "Monument is associated with": normaliseRelatedIdList(mGetInputValue("Monument is associated with"))
   };
 
+  const monumentTypeSelect = document.querySelector(
+    'select.monument-edit-multiselect[data-field-base="Monument Type"]'
+  );
+
+  const religionSelect = document.querySelector(
+    'select.monument-edit-multiselect[data-field-base="Religion"]'
+  );
+
+  const culturalPeriodSelect = document.querySelector(
+    'select.monument-edit-multiselect[data-field-base="Cultural Period"]'
+  );
+
+  mLegacyMultiPayload(
+    payload,
+    "Monument Type",
+    6,
+    monumentTypeSelect
+      ? Array.from(monumentTypeSelect.selectedOptions).map((option) => option.value)
+      : []
+  );
+
+  mLegacyMultiPayload(
+    payload,
+    "Religion",
+    3,
+    religionSelect
+      ? Array.from(religionSelect.selectedOptions).map((option) => option.value)
+      : []
+  );
+
+  mLegacyMultiPayload(
+    payload,
+    "Cultural Period",
+    6,
+    culturalPeriodSelect
+      ? Array.from(culturalPeriodSelect.selectedOptions).map((option) => option.value)
+      : []
+  );
+
   if (monumentUserCanEditMasterId()) {
     payload["MasterID"] = normaliseRelatedIdList(mGetInputValue("MasterID"));
   }
 
   return payload;
+}
+
+function validateLegacyMultiSelectLimits() {
+  const selects = Array.from(
+    document.querySelectorAll("select.monument-edit-multiselect")
+  );
+
+  const errors = [];
+
+  selects.forEach((selectEl) => {
+    const maxCount = Number(selectEl.dataset.fieldCount || 0);
+    if (!maxCount) return;
+
+    const selectedCount = mSelectedOptionCount(selectEl);
+
+    if (selectedCount > maxCount) {
+      errors.push(
+        mLegacyMultiLimitMessage(
+          selectEl.dataset.fieldBase,
+          maxCount
+        )
+      );
+    }
+  });
+
+  if (errors.length) {
+    alert(Array.from(new Set(errors)).join("\n"));
+    return false;
+  }
+
+  return true;
 }
 
 function mSectionHasValues(values) {
@@ -4358,7 +4694,7 @@ function renderMonumentResultsList(records) {
         data-result-index="${index}"
       >
         <div class="result-card-topline">
-          <strong>${mSafeValue(mSummary(record, "primary_name"))}</strong>
+          <strong>${mSafeValue(monumentResultTitle(record))}</strong>
           <span class="scope-badge">${mSafeValue(monumentScopeLabel(monumentDisplayScope(record)))}</span>
         </div>
 
@@ -5019,26 +5355,34 @@ function renderMonumentEditMode(record) {
 
           ${mRenderTextInput("Monument Passport", mLabel("Monument Passport", "Monument Passport"), mRaw(record, "Monument Passport"), true)}
 
-          ${mRenderSelect("Monument Type1", mLabel("Monument Type1", "Monument Type1"), "monument_type", mRaw(record, "Monument Type1"))}
-          ${mRenderSelect("Monument Type2", mLabel("Monument Type2", "Monument Type2"), "monument_type", mRaw(record, "Monument Type2"))}
-          ${mRenderSelect("Monument Type3", mLabel("Monument Type3", "Monument Type3"), "monument_type", mRaw(record, "Monument Type3"))}
-          ${mRenderSelect("Monument Type4", mLabel("Monument Type4", "Monument Type4"), "monument_type", mRaw(record, "Monument Type4"))}
-          ${mRenderSelect("Monument Type5", mLabel("Monument Type5", "Monument Type5"), "monument_type", mRaw(record, "Monument Type5"))}
-          ${mRenderSelect("Monument Type6", mLabel("Monument Type6", "Monument Type6"), "monument_type", mRaw(record, "Monument Type6"))}
+          ${mRenderLegacyMultiSelect({
+            fieldBase: "Monument Type",
+            count: 6,
+            label: mLabel("Monument Types", "Monument Types"),
+            lookupName: "monument_type",
+            record,
+            fullWidth: true
+          })}
 
-          ${mRenderSelect("Religion1", mLabel("Religion1", "Religion1"), "religion", mRaw(record, "Religion1"))}
-          ${mRenderSelect("Religion2", mLabel("Religion2", "Religion2"), "religion", mRaw(record, "Religion2"))}
-          ${mRenderSelect("Religion3", mLabel("Religion3", "Religion3"), "religion", mRaw(record, "Religion3"))}
+          ${mRenderLegacyMultiSelect({
+            fieldBase: "Religion",
+            count: 3,
+            label: mLabel("Religions", "Religions"),
+            lookupName: "religion",
+            record,
+            fullWidth: true
+          })}
 
           ${mRenderTextInput("Descriptive Date", mLabel("Descriptive Date", "Descriptive Date"), mRaw(record, "Descriptive Date"), true)}
 
-          ${mRenderSelect("Cultural Period1", mLabel("Cultural Period1", "Cultural Period1"), "cultural_period", mRaw(record, "Cultural Period1"))}
-          ${mRenderSelect("Cultural Period2", mLabel("Cultural Period2", "Cultural Period2"), "cultural_period", mRaw(record, "Cultural Period2"))}
-          ${mRenderSelect("Cultural Period3", mLabel("Cultural Period3", "Cultural Period3"), "cultural_period", mRaw(record, "Cultural Period3"))}
-          ${mRenderSelect("Cultural Period4", mLabel("Cultural Period4", "Cultural Period4"), "cultural_period", mRaw(record, "Cultural Period4"))}
-          ${mRenderSelect("Cultural Period5", mLabel("Cultural Period5", "Cultural Period5"), "cultural_period", mRaw(record, "Cultural Period5"))}
-          ${mRenderSelect("Cultural Period6", mLabel("Cultural Period6", "Cultural Period6"), "cultural_period", mRaw(record, "Cultural Period6"))}
-
+          ${mRenderLegacyMultiSelect({
+            fieldBase: "Cultural Period",
+            count: 6,
+            label: mLabel("Cultural Periods", "Cultural Periods"),
+            lookupName: "cultural_period",
+            record,
+            fullWidth: true
+          })}
           ${mRenderNumberInput("Start Date", mLabel("Start Date", "Start Date"), mRaw(record, "Start Date"), "1")}
           ${mRenderNumberInput("End Date", mLabel("End Date", "End Date"), mRaw(record, "End Date"), "1")}
           
@@ -5130,7 +5474,7 @@ if (endDateInput) endDateInput.readOnly = true;
     });
   }
   bindMonumentDirtyTracking();
-  wireMonumentCulturalPeriodDateRecalc();
+  mWireEditMultiSelects();
   recalculateMonumentDates(record);
   wireInlineLocationButtons();
   updateAddModeUI();
@@ -5425,8 +5769,10 @@ window.monumentCanChangeLanguage = function () {
 async function saveCurrentMonumentRecord() {
   if (!monumentSelectedRecord) return;
   if (!validateRelatedFieldsBeforeSave()) return;
+  if (!validateLegacyMultiSelectLimits()) return;
 
   const payload = mBuildSavePayload();
+
   const record = monumentSelectedRecord;
   const isNewRecord = !record?.identity?.id;
 

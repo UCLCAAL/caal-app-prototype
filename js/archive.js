@@ -1523,14 +1523,19 @@ function getArchiveEnabledScopes() {
   return scopes;
 }
 
-async function loadArchiveRecords(limit = 100, offset = 0) {
+async function loadArchiveRecords(limit = 100, offset = 0, options = {}) {
+  const { preserveSelection = false } = options;
   const scopes = getArchiveEnabledScopes();
 
   archiveAllRecords = [];
   archiveVisibleRecords = [];
-  archiveSelectedRecord = null;
-  archiveIsEditMode = false;
-  archiveSyncModeVisualState();
+
+  if (!preserveSelection) {
+    archiveSelectedRecord = null;
+    archiveIsEditMode = false;
+    archivePendingNewRecord = null;
+    archiveSyncModeVisualState();
+  }
 
   if (scopes.length === 0) {
     renderArchiveResultsList([]);
@@ -2265,10 +2270,24 @@ if (archiveSaveBtn) {
         return;
       }
 
+      const savedRecord = data.record;
+
+      if (!savedRecord?.identity?.id) {
+        throw new Error("Save succeeded, but the saved record was not returned.");
+      }
+
+      // Keep the saved record visible immediately, even if list reload fails.
       archivePendingNewRecord = null;
+      archiveSelectedRecord = savedRecord;
       archiveIsEditMode = false;
       archiveIsDirty = false;
-      archiveRenderActionBar();
+      archiveJustSavedRecordId = savedRecord.identity.id;
+
+      archiveRenderRecordDetails(savedRecord);
+      archiveRenderActionBar({
+        hasRecord: true,
+        canEdit: canEditArchiveRecord(savedRecord)
+      });
 
       showArchiveToast(
         isNewRecord
@@ -2276,33 +2295,54 @@ if (archiveSaveBtn) {
           : t("archive_record_saved", "Archive record saved")
       );
 
-      await loadArchiveRecords(archiveLimit, archiveOffset);
-      archiveJustSavedRecordId = data.record?.identity?.id || null;
+      try {
+        await loadArchiveRecords(archiveLimit, archiveOffset, {
+          preserveSelection: true
+        });
 
-      const refreshedRecord = archiveAllRecords.find(
-        (item) => item?.identity?.id === data.record?.identity?.id
-      );
+        const refreshedRecord = archiveAllRecords.find(
+          (item) => Number(item?.identity?.id) === Number(savedRecord.identity.id)
+        );
 
-      if (refreshedRecord) {
-        archiveRenderRecordDetails(refreshedRecord);
+        if (refreshedRecord) {
+          archiveSelectedRecord = refreshedRecord;
+          archiveRenderRecordDetails(refreshedRecord);
+        } else {
+          // Do not blank the detail pane just because pagination/filtering hides it.
+          archiveSelectedRecord = savedRecord;
+          archiveRenderRecordDetails(savedRecord);
+        }
+
         archiveUpdateSelectedResultCard();
+      } catch (reloadError) {
+        console.error("Archive reload after save failed:", reloadError);
 
-        setTimeout(() => {
-          archiveJustSavedRecordId = null;
-          archiveUpdateSelectedResultCard();
+        archiveSelectedRecord = savedRecord;
+        archiveRenderRecordDetails(savedRecord);
 
-          if (archiveSelectedRecord?.identity?.id === refreshedRecord.identity?.id) {
-            archiveRenderRecordDetails(refreshedRecord);
-          }
-        }, 2500);
-      } else {
-        renderArchiveEmptyState();
+        showArchiveToast(
+          t(
+            "archive_saved_reload_failed",
+            "Record was saved, but the results list could not be refreshed."
+          ),
+          "warning"
+        );
       }
+
+      setTimeout(() => {
+        archiveJustSavedRecordId = null;
+        archiveUpdateSelectedResultCard();
+      }, 2500);
     } catch (error) {
       console.error("Archive save failed:", error);
       const message = error.message || t("archive_save_failed", "Archive save failed");
       alert(message);
       showArchiveToast(message, "error");
+
+      // Keep the form exactly as-is so the user can retry.
+      archiveIsEditMode = true;
+      archiveIsDirty = true;
+      archiveSyncModeVisualState();
     }
   };
 }
