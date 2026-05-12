@@ -306,15 +306,16 @@ function archiveSectionHasValues(values) {
   return values.some((value) => archiveHasRealValue(value));
 }
 
-function updatePaginationUI() {
-  if (!archivePageInfo) return;
+function renderArchivePageInfo() {
+  const pageInfo = document.getElementById("archivePageInfo");
+  if (!pageInfo) return;
 
   const pageNumber = Math.floor(archiveOffset / archiveLimit) + 1;
   const totalPages = archiveTotalCount
     ? Math.max(1, Math.ceil(archiveTotalCount / archiveLimit))
     : 1;
 
-  archivePageInfo.textContent = archiveTotalCount
+  pageInfo.textContent = archiveTotalCount
     ? t("page_x_of_y", "Page {page} of {total}")
         .replace("{page}", pageNumber)
         .replace("{total}", totalPages)
@@ -326,12 +327,12 @@ function updatePaginationUI() {
   }
 
   if (archiveNextBtn) {
-    archiveNextBtn.disabled =
-      archiveTotalCount
-        ? archiveOffset + archiveAllRecords.length >= archiveTotalCount
-        : archiveAllRecords.length < archiveLimit;
+    archiveNextBtn.disabled = archiveTotalCount
+      ? archiveOffset + archiveAllRecords.length >= archiveTotalCount
+      : archiveAllRecords.length < archiveLimit;
   }
 }
+
 
 function archiveRecordTitleClass(record) {
   if (archiveJustSavedRecordId && archiveJustSavedRecordId === record?.identity?.id) {
@@ -1567,7 +1568,7 @@ async function loadArchiveRecords(limit = 100, offset = 0, options = {}) {
   archiveVisibleRecords = archiveAllRecords;
 
   renderArchiveResultsList(archiveVisibleRecords);
-  updatePaginationUI();
+  renderArchivePageInfo();
 }
 
 // Search text
@@ -1838,7 +1839,7 @@ function renderArchiveResultsList(records) {
   });
 
   archiveUpdateSelectedResultCard();
-  updatePaginationUI();
+  renderArchivePageInfo();
 }
 
 // Detail rendering
@@ -2439,7 +2440,7 @@ document.addEventListener("app:languageChanged", async () => {
 
     await loadArchiveLookups();
     archivePopulateFilterLookups();
-    updatePaginationUI();
+    refreshArchivePaginationSoon();
   } catch (error) {
     console.error("Archive labels/lookups refresh failed:", error);
     archiveLabels = {};
