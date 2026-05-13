@@ -844,6 +844,15 @@ body {
   flex-wrap: wrap;
 }
 
+.detail-value-list {
+  margin: 0;
+  padding-left: 1.1rem;
+}
+
+.detail-value-list li {
+  margin: 0.15rem 0;
+}
+
 /* Responsive fallback */
 @media (max-width: 1200px) {
   .monuments-workspace {

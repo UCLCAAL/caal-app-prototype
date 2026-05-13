@@ -77,6 +77,45 @@ let archiveMessages = {};
 
 let archiveFilterDebounceTimer = null;
 
+let archiveActiveLanguage = null;
+
+function archiveCurrentLanguageCode(eventOrOverride = null) {
+  if (typeof eventOrOverride === "string" && eventOrOverride.trim()) {
+    return eventOrOverride.trim();
+  }
+
+  const detail = eventOrOverride?.detail || {};
+  const detailLang =
+    detail.lang ||
+    detail.language ||
+    detail.languageCode ||
+    detail.code;
+
+  if (detailLang) {
+    return String(detailLang).trim();
+  }
+
+  const langSelect =
+    document.getElementById("languageSelect") ||
+    document.querySelector("select[data-language-select]") ||
+    document.querySelector("select#language");
+
+  if (langSelect?.value) {
+    return String(langSelect.value).trim();
+  }
+
+  if (archiveActiveLanguage) {
+    return archiveActiveLanguage;
+  }
+
+  if (typeof window.getCurrentLanguage === "function") {
+    const current = window.getCurrentLanguage();
+    if (current) return current;
+  }
+
+  return window.appSession?.profile?.preferred_language || "en";
+}
+
 // labels translation loader 
 function archiveText(key, fallback = null) {
   return archiveMessages[key] || archiveLabels[key] || fallback || key;
@@ -176,8 +215,31 @@ function archiveScheduleFilterReload() {
   }, 600);
 }
 
+function archiveNormalizeLabelKey(value) {
+  return String(value || "")
+    .trim()
+    .replace(/\s+/g, " ")
+    .toLowerCase();
+}
+
 function archiveLabel(name, fallback = null) {
-  return archiveLabels[name] || fallback || name;
+  if (!name) return fallback || "";
+
+  if (archiveLabels[name]) {
+    return archiveLabels[name];
+  }
+
+  const wanted = archiveNormalizeLabelKey(name);
+
+  const matchedKey = Object.keys(archiveLabels).find(
+    (key) => archiveNormalizeLabelKey(key) === wanted
+  );
+
+  if (matchedKey && archiveLabels[matchedKey]) {
+    return archiveLabels[matchedKey];
+  }
+
+  return fallback || name;
 }
 
 function archiveBoolLabel(value) {
@@ -200,11 +262,9 @@ function archiveScopeLabel(scope) {
 }
 
 // lookup helper
-async function loadArchiveLookups() {
-  const lang =
-    (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
-    window.appSession?.profile?.preferred_language ||
-    "en";
+async function loadArchiveLookups(langOverride = null) {
+  const lang = archiveCurrentLanguageCode(langOverride);
+  archiveActiveLanguage = lang;
 
   const response = await fetch(
     `/api/lookups/archive?lang=${encodeURIComponent(lang)}`,
@@ -466,10 +526,7 @@ function archiveWireClickToggleMultiSelects() {
 function archiveBuildQueryParams({ limit = archiveLimit, offset = archiveOffset } = {}) {
   const scopes = getArchiveEnabledScopes();
 
-  const lang =
-    (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
-    window.appSession?.profile?.preferred_language ||
-    "en";
+  const lang = archiveCurrentLanguageCode();
 
   const params = new URLSearchParams();
   params.set("scopes", scopes.join(","));
@@ -988,17 +1045,14 @@ function archiveRenderResourceRelations(record) {
   }).join("");
 }
 
-async function loadFullArchiveRecord(record) {
+async function loadFullArchiveRecord(record, langOverride = null) {
   const caalId = archiveIdentity(record, "caal_id") || archiveRaw(record, "CAAL_ID");
 
   if (!caalId) {
     return record;
   }
 
-  const lang =
-    (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
-    window.appSession?.profile?.preferred_language ||
-    "en";
+  const lang = archiveCurrentLanguageCode(langOverride);
 
   const response = await fetch(
     `/api/records/resolve?caal_id=${encodeURIComponent(caalId)}&lang=${encodeURIComponent(lang)}`,
@@ -1100,15 +1154,55 @@ function archiveRenderAssociatedCaalIdChipList(value) {
   }).join("");
 }
 
+function archiveGetAssociatedRelations(record) {
+  const relations = Array.isArray(record?.relations) ? record.relations : [];
+
+  return relations.filter((rel) => {
+    const relatedId = String(rel.related_caal_id || "").trim();
+    if (!relatedId) return false;
+
+    return (
+      rel.source_fields?.includes?.("Associated CAAL_ID") ||
+      rel.related_id_found_in === "CAAL_Monuments" ||
+      relatedId.startsWith("Mon_")
+    );
+  });
+}
+
+function archiveRenderAssociatedRelationChips(record) {
+  const relations = archiveGetAssociatedRelations(record);
+
+  if (!relations.length) {
+    return `<span class="empty-value">${archiveLabel("Not recorded", "Not recorded")}</span>`;
+  }
+
+  return relations.map((rel) => {
+    const relatedId = rel.related_caal_id || "";
+    const missing = rel.related_id_exists === false;
+
+    return `
+      <button
+        type="button"
+        class="${relationChipClass(rel)} archive-associated-id-chip"
+        data-associated-caal-id="${relatedId}"
+        data-relation-edge-id="${String(rel.edge_id || "")}"
+        title="${
+          missing
+            ? t("related_id_not_found", "Related ID not found in current resource tables")
+            : t("open_related_record", "Open related record")
+        }"
+      >
+        ${relatedId}
+      </button>
+    `;
+  }).join("");
+}
+
 function archiveRenderTitleCard(record, statusBadge = "") {
   const caalId =
     archiveIdentity(record, "caal_id") ||
     archiveRaw(record, "CAAL_ID") ||
     archiveLabel("Assigned on save", "Assigned on save");
-
-  const associatedCaalId =
-    archiveIdentity(record, "associated_caal_id") ||
-    archiveRaw(record, "Associated CAAL_ID");
 
   return `
     <div class="${archiveRecordTitleClass(record)} archive-title-card">
@@ -1117,7 +1211,7 @@ function archiveRenderTitleCard(record, statusBadge = "") {
           <h3 class="archive-title-caal-id">${safeArchiveValue(caalId)}</h3>
           <div class="archive-title-associated-id related-id-list">
             <strong>${archiveLabel("Associated CAAL_ID", "Associated CAAL_ID")}:</strong>
-            ${archiveRenderAssociatedCaalIdChipList(associatedCaalId)}
+            ${archiveRenderAssociatedRelationChips(record)}
           </div>
         </div>
         ${statusBadge}
@@ -1570,11 +1664,9 @@ function applyArchiveStaticLabels() {
   });
 }
 
-async function loadArchiveLabels() {
-  const lang =
-    (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
-    window.appSession?.profile?.preferred_language ||
-    "en";
+async function loadArchiveLabels(langOverride = null) {
+  const lang = archiveCurrentLanguageCode(langOverride);
+  archiveActiveLanguage = lang;
 
   const response = await fetch(
     `/api/ui/labels?page=archive&lang=${encodeURIComponent(lang)}`,
@@ -2006,11 +2098,6 @@ function archiveRenderDisplayMode(record) {
   let materialHtml = "";
   materialHtml += archiveRenderDetailItem(archiveLabel("Level", "Level"), s.level);
   materialHtml += archiveRenderDetailItem(archiveLabel("Original Reference", "Original Reference"), s.original_reference);
-  materialHtml += archiveRenderAssociatedCaalIdChips(
-    archiveLabel("Associated CAAL_ID", "Associated CAAL_ID"),
-    archiveIdentity(record, "associated_caal_id") || archiveRaw(record, "Associated CAAL_ID"),
-    true
-  );
   materialHtml += archiveRenderDetailItem(archiveLabel("Original Title", "Original Title"), s.original_title, true);
   materialHtml += archiveRenderDetailItem(archiveLabel("English Title", "English Title"), s.english_title, true);
   materialHtml += archiveRenderDetailItem(archiveLabel("Content Type", "Content Type"), s.content_type);
@@ -2079,7 +2166,7 @@ function archiveRenderDisplayMode(record) {
   const materialHasValues = archiveSectionHasValues([
     s.level,
     s.original_reference,
-    archiveIdentity(record, "associated_caal_id"),
+    //archiveIdentity(record, "associated_caal_id"),
     s.original_title,
     s.english_title,
     s.content_type,
@@ -2143,10 +2230,7 @@ function archiveRenderDisplayMode(record) {
           <p>${safeArchiveValue(archiveIdentity(record, "caal_id"))}</p>
           <div class="archive-title-associated-id related-id-list">
             <strong>${archiveLabel("Associated CAAL_ID", "Associated CAAL_ID")}:</strong>
-            ${archiveRenderAssociatedCaalIdChipList(
-              archiveIdentity(record, "associated_caal_id") ||
-              archiveRaw(record, "Associated CAAL_ID")
-            )}
+            ${archiveRenderAssociatedRelationChips(record)}
           </div>
         </div>
         ${statusBadge}
@@ -2414,15 +2498,24 @@ if (archiveSaveBtn) {
           preserveSelection: true
         });
 
-        const refreshedRecord = archiveAllRecords.find(
+        const refreshedLightRecord = archiveAllRecords.find(
           (item) => Number(item?.identity?.id) === Number(savedRecord.identity.id)
         );
 
-        if (refreshedRecord) {
-          archiveSelectedRecord = refreshedRecord;
-          archiveRenderRecordDetails(refreshedRecord);
+        if (refreshedLightRecord) {
+          try {
+            const refreshedFullRecord = await loadFullArchiveRecord(refreshedLightRecord);
+
+            archiveSelectedRecord = refreshedFullRecord;
+            archiveRenderRecordDetails(refreshedFullRecord);
+            applyArchiveStaticLabels();
+          } catch (error) {
+            console.error("Failed to reload full archive record after save:", error);
+
+            archiveSelectedRecord = savedRecord;
+            archiveRenderRecordDetails(savedRecord);
+          }
         } else {
-          // Do not blank the detail pane just because pagination/filtering hides it.
           archiveSelectedRecord = savedRecord;
           archiveRenderRecordDetails(savedRecord);
         }
@@ -2544,38 +2637,63 @@ if (archiveFilterCaalId) {
   }
 });
 
-document.addEventListener("app:languageChanged", async () => {
+document.addEventListener("app:languageChanged", async (event) => {
   const selectedId = archiveSelectedRecord?.identity?.id || null;
+  const lang = archiveCurrentLanguageCode(event);
+
+  archiveActiveLanguage = lang;
+
+  setArchiveLoading(true, t("switching_language", "Switching language..."));
 
   try {
-    await loadArchiveLabels();
+    await loadArchiveLabels(lang);
     applyArchiveStaticLabels();
-
-    await loadArchiveLookups();
-    archivePopulateFilterLookups();
-    refreshArchivePaginationSoon();
   } catch (error) {
-    console.error("Archive labels/lookups refresh failed:", error);
-    archiveLabels = {};
-    archiveLookups = {};
+    console.error("Archive label refresh failed:", error);
+    // Do not wipe archiveLabels here. Keeping old labels is safer than forcing English fallback.
   }
 
   try {
-    await loadArchiveRecords(archiveLimit, archiveOffset);
+    await loadArchiveLookups(lang);
+    archivePopulateFilterLookups();
+  } catch (error) {
+    console.error("Archive lookup refresh failed:", error);
+    // Do not wipe archiveLookups here. Keeping old lookups is safer than blanking controls.
+  }
+
+  if (typeof refreshArchivePaginationSoon === "function") {
+    try {
+      refreshArchivePaginationSoon();
+    } catch (error) {
+      console.warn("Archive pagination refresh failed:", error);
+    }
+  }
+
+  try {
+    await loadArchiveRecords(archiveLimit, archiveOffset, {
+      preserveSelection: true
+    });
 
     if (selectedId) {
-      const refreshedRecord = archiveAllRecords.find(
-        (record) => record?.identity?.id === selectedId
+      const refreshedLightRecord = archiveAllRecords.find(
+        (record) => Number(record?.identity?.id) === Number(selectedId)
       );
 
-      if (refreshedRecord) {
-        archiveRenderRecordDetails(refreshedRecord);
+      if (refreshedLightRecord) {
+        const refreshedFullRecord = await loadFullArchiveRecord(refreshedLightRecord, lang);
+
+        archiveSelectedRecord = refreshedFullRecord;
+        archiveRenderRecordDetails(refreshedFullRecord);
+        archiveUpdateSelectedResultCard();
+        applyArchiveStaticLabels();
       } else {
         renderArchiveEmptyState();
       }
     }
   } catch (error) {
     console.error("Archive records refresh failed:", error);
+  } finally {
+    setArchiveLoading(false);
   }
 });
 

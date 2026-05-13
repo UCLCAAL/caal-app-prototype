@@ -1819,6 +1819,33 @@ function mLegacyMultiValues(record, fieldBase, count) {
   return values;
 }
 
+function mLookupLegacyMultiValues(record, fieldBase, count, lookupName) {
+  return mLegacyMultiValues(record, fieldBase, count)
+    .map((value) => lookupName ? mLookupLabel(lookupName, value) : value)
+    .filter((value) => value !== null && value !== undefined && String(value).trim() !== "");
+}
+
+function mRenderValueList(label, values, fullWidth = true) {
+  const cleanValues = Array.isArray(values)
+    ? values.map((value) => String(value || "").trim()).filter(Boolean)
+    : [];
+
+  const inner = cleanValues.length
+    ? `
+      <ul class="detail-value-list">
+        ${cleanValues.map((value) => `<li>${mSafeValue(value)}</li>`).join("")}
+      </ul>
+    `
+    : mSafeValue("");
+
+  return `
+    <div class="detail-item${fullWidth ? " full-width" : ""}">
+      <span class="detail-label">${label}</span>
+      <div class="detail-value">${inner}</div>
+    </div>
+  `;
+}
+
 function mLegacyMultiPayload(payload, fieldBase, count, values) {
   const cleanValues = Array.isArray(values)
     ? values.map((value) => String(value).trim()).filter(Boolean)
@@ -5208,24 +5235,58 @@ function renderMonumentDisplayMode(record) {
     mRenderDetailItem(mLabel("World Heritage Site Name", "World Heritage Site Name"), mRaw(record, "World Heritage Site Name"))
   ].join("");
 
+    const monumentTypeValues = mLookupLegacyMultiValues(
+    record,
+    "Monument Type",
+    6,
+    "monument_type"
+  );
+
+  const religionValues = mLookupLegacyMultiValues(
+    record,
+    "Religion",
+    3,
+    "religion"
+  );
+
+  const culturalPeriodValues = mLookupLegacyMultiValues(
+    record,
+    "Cultural Period",
+    6,
+    "cultural_period"
+  );
+  
   const monumentHtml = [
-    mRenderDetailItem(mLabel("Monument Passport", "Monument Passport"), mRaw(record, "Monument Passport"), true),
-    mRenderDetailItem(mLabel("Monument Type1", "Monument Type1"), mLookupLabel("monument_type", mRaw(record, "Monument Type1"))),
-    mRenderDetailItem(mLabel("Monument Type2", "Monument Type2"), mLookupLabel("monument_type", mRaw(record, "Monument Type2"))),
-    mRenderDetailItem(mLabel("Monument Type3", "Monument Type3"), mLookupLabel("monument_type", mRaw(record, "Monument Type3"))),
-    mRenderDetailItem(mLabel("Monument Type4", "Monument Type4"), mLookupLabel("monument_type", mRaw(record, "Monument Type4"))),
-    mRenderDetailItem(mLabel("Monument Type5", "Monument Type5"), mLookupLabel("monument_type", mRaw(record, "Monument Type5"))),
-    mRenderDetailItem(mLabel("Monument Type6", "Monument Type6"), mLookupLabel("monument_type", mRaw(record, "Monument Type6"))),
-    mRenderDetailItem(mLabel("Religion1", "Religion1"), mLookupLabel("religion", mRaw(record, "Religion1"))),
-    mRenderDetailItem(mLabel("Religion2", "Religion2"), mLookupLabel("religion", mRaw(record, "Religion2"))),
-    mRenderDetailItem(mLabel("Religion3", "Religion3"), mLookupLabel("religion", mRaw(record, "Religion3"))),
-    mRenderDetailItem(mLabel("Descriptive Date", "Descriptive Date"), mRaw(record, "Descriptive Date"), true),
-    mRenderDetailItem(mLabel("Cultural Period1", "Cultural Period1"), mLookupLabel("cultural_period", mRaw(record, "Cultural Period1"))),
-    mRenderDetailItem(mLabel("Cultural Period2", "Cultural Period2"), mLookupLabel("cultural_period", mRaw(record, "Cultural Period2"))),
-    mRenderDetailItem(mLabel("Cultural Period3", "Cultural Period3"), mLookupLabel("cultural_period", mRaw(record, "Cultural Period3"))),
-    mRenderDetailItem(mLabel("Cultural Period4", "Cultural Period4"), mLookupLabel("cultural_period", mRaw(record, "Cultural Period4"))),
-    mRenderDetailItem(mLabel("Cultural Period5", "Cultural Period5"), mLookupLabel("cultural_period", mRaw(record, "Cultural Period5"))),
-    mRenderDetailItem(mLabel("Cultural Period6", "Cultural Period6"), mLookupLabel("cultural_period", mRaw(record, "Cultural Period6"))),
+    mRenderDetailItem(
+      mLabel("Monument Passport", "Monument Passport"),
+      mRaw(record, "Monument Passport"),
+      true
+    ),
+
+    mRenderValueList(
+      mLabel("Monument Type", "Monument Type"),
+      monumentTypeValues,
+      true
+    ),
+
+    mRenderValueList(
+      mLabel("Religion", "Religion"),
+      religionValues,
+      true
+    ),
+
+    mRenderDetailItem(
+      mLabel("Descriptive Date", "Descriptive Date"),
+      mRaw(record, "Descriptive Date"),
+      true
+    ),
+
+    mRenderValueList(
+      mLabel("Cultural Period", "Cultural Period"),
+      culturalPeriodValues,
+      true
+    ),
+
     mRenderDetailItem(mLabel("Start Date", "Start Date"), mRaw(record, "Start Date")),
     mRenderDetailItem(mLabel("End Date", "End Date"), mRaw(record, "End Date")),
     mRenderDetailItem(mLabel("Primary Description", "Primary Description"), mRaw(record, "Primary Description"), true),
