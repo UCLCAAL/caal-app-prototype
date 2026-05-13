@@ -811,6 +811,39 @@ body {
   color: #1f513d;
 }
 
+.related-preview-compact-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  border: 1px solid #d6dde3;
+  border-radius: 12px;
+  padding: 0.8rem 1rem;
+  margin-bottom: 1rem;
+  background: #ffffff;
+}
+
+.related-preview-meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
+.related-preview-caal-id {
+  color: #65727e;
+  font-size: 1rem;
+  overflow-wrap: anywhere;
+}
+
+.record-title-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
 /* Responsive fallback */
 @media (max-width: 1200px) {
   .monuments-workspace {

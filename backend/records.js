@@ -1,7 +1,9 @@
 const express = require("express");
 const pool = require("./db");
+const { getResourceRelations } = require("./resourceRelations");
 
 const router = express.Router();
+
 
 function firstDefined(...values) {
   for (const value of values) {
@@ -232,6 +234,16 @@ function buildArchiveResolveSql(scopes) {
   return parts.join("\nUNION ALL\n");
 }
 
+async function sendResolvedRecord(res, recordType, record) {
+  record.relations = await getResourceRelations(pool, record.identity?.caal_id);
+
+  return res.json({
+    ok: true,
+    record_type: recordType,
+    record
+  });
+}
+
 router.get("/resolve", async (req, res) => {
   const currentSession = req.session?.appSession || null;
 
@@ -262,15 +274,13 @@ router.get("/resolve", async (req, res) => {
       );
 
       if (result.rows.length) {
-        return res.json({
-          ok: true,
-          record_type: "monument",
-          record: buildResolvedMonumentRecord(
-            stripMonumentInternalFields(result.rows[0]),
-            lang,
-            currentSession
-          )
-        });
+        const record = buildResolvedMonumentRecord(
+          stripMonumentInternalFields(result.rows[0]),
+          lang,
+          currentSession
+        );
+
+        return sendResolvedRecord(res, "monument", record);
       }
     }
 
@@ -301,15 +311,13 @@ router.get("/resolve", async (req, res) => {
           row.source_scope === "national_ref" ||
           scopes.includes("all_caal")
         ) {
-          return res.json({
-            ok: true,
-            record_type: "monument",
-            record: buildResolvedMonumentRecord(
-              stripMonumentInternalFields(row),
-              lang,
-              currentSession
-            )
-          });
+          const record = buildResolvedMonumentRecord(
+            stripMonumentInternalFields(row),
+            lang,
+            currentSession
+          );
+
+          return sendResolvedRecord(res, "monument", record);
         }
       }
     }
@@ -327,15 +335,13 @@ router.get("/resolve", async (req, res) => {
       );
 
       if (result.rows.length) {
-        return res.json({
-          ok: true,
-          record_type: "archive",
-          record: buildResolvedArchiveRecord(
-            stripMonumentInternalFields(result.rows[0]),
-            lang,
-            currentSession
-          )
-        });
+        const record = buildResolvedArchiveRecord(
+          stripMonumentInternalFields(result.rows[0]),
+          lang,
+          currentSession
+        );
+
+        return sendResolvedRecord(res, "archive", record);
       }
     }
 
@@ -360,15 +366,13 @@ router.get("/resolve", async (req, res) => {
       );
 
       if (result.rows.length) {
-        return res.json({
-          ok: true,
-          record_type: "archive",
-          record: buildResolvedArchiveRecord(
-            stripMonumentInternalFields(result.rows[0]),
-            lang,
-            currentSession
-          )
-        });
+        const record = buildResolvedArchiveRecord(
+          stripMonumentInternalFields(result.rows[0]),
+          lang,
+          currentSession
+        );
+
+        return sendResolvedRecord(res, "archive", record);
       }
     }
 

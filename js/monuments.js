@@ -68,7 +68,16 @@ const monumentPreviewBody = document.getElementById("monumentPreviewBody");
 const monumentPreviewCloseBtn = document.getElementById("monumentPreviewCloseBtn");
 // related
 const relatedRecordStatusCache = new Map();
+const relatedPreviewRecordCache = new Map();
 
+function relatedPreviewCacheKey(caalId) {
+  const lang =
+    (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
+    window.appSession?.profile?.preferred_language ||
+    "en";
+
+  return `${lang}:${String(caalId || "").trim().toLowerCase()}`;
+}
 
 // --------------------------------------------------------
 // State
@@ -1375,15 +1384,7 @@ function setRelationshipLayerVisibility() {
 }
 
 function selectedRecordHasRelatedIds(record = monumentSelectedRecord) {
-  if (!record) return false;
-
-  const relatedIds = [
-    ...parseRelatedIds(mRaw(record, "Monument is part of")),
-    ...parseRelatedIds(mRaw(record, "Monument contains")),
-    ...parseRelatedIds(mRaw(record, "Monument is associated with"))
-  ];
-
-  return relatedIds.length > 0;
+  return getRelatedIdsFromRecord(record).length > 0;
 }
 
 function relatedOverlayExists() {
@@ -2265,7 +2266,7 @@ function mRenderDetailItem(label, value, fullWidth = false) {
 function mRenderGroupBlock(title, innerHtml, hasValues = true) {
   const content = hasValues
     ? innerHtml
-    : `<div class="section-empty">${mLabel("No populated fields in this section.", "No populated fields in this section.")}</div>`;
+    : `<div class="section-empty">${t("no_populated_fields", "No populated fields in this section.")}</div>`;
 
   return `
     <div class="group-block">
@@ -2700,6 +2701,54 @@ function getInvalidRelatedIds(value) {
   return parseRelatedIds(value).filter((id) => !looksLikeRelatedIdList(id));
 }
 
+function mParseAssociatedCaalIds(value) {
+  return String(value || "")
+    .split(/[,;\n]+/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function mRenderArchiveAssociatedCaalIdChips(label, value, fullWidth = true) {
+  const ids = mParseAssociatedCaalIds(value);
+
+  const inner = ids.length
+    ? ids.map((id) => {
+        const looksValid = looksLikeRelatedIdList(id);
+
+        if (!looksValid) {
+          return `
+            <span
+              class="related-id-chip related-id-chip-invalid"
+              title="${mLabel("Invalid related ID format", "Invalid related ID format")}"
+            >
+              ${id}
+            </span>
+          `;
+        }
+
+        return `
+          <button
+            type="button"
+            class="related-id-chip"
+            data-related-id="${id}"
+            title="${t("open_related_record", "Open related record")}"
+          >
+            ${id}
+          </button>
+        `;
+      }).join("")
+    : mSafeValue("");
+
+  return `
+    <div class="detail-item${fullWidth ? " full-width" : ""}">
+      <span class="detail-label">${label}</span>
+      <div class="detail-value related-id-list">
+        ${inner}
+      </div>
+    </div>
+  `;
+}
+
 function mRenderRelatedIdList(label, value, fullWidth = true) {
   const ids = parseRelatedIds(value);
 
@@ -2765,8 +2814,14 @@ function renderMasterIdChip(record) {
 }
 
 function wireRelatedRecordChips() {
-  Array.from(document.querySelectorAll(".related-id-chip")).forEach((btn) => {
-    btn.addEventListener("click", async () => {
+  Array.from(document.querySelectorAll(".related-id-chip[data-related-id]")).forEach((btn) => {
+    if (btn.dataset.relatedWired === "true") return;
+
+    btn.dataset.relatedWired = "true";
+
+    btn.addEventListener("click", async (event) => {
+      event.stopPropagation();
+
       const caalId = btn.dataset.relatedId;
       if (!caalId) return;
 
@@ -2849,26 +2904,102 @@ async function openMasterRecordInDetails(masterId) {
 }
 
 async function openRelatedRecordPreview(caalId) {
+  const key = relatedPreviewCacheKey(caalId);
+
+  if (relatedPreviewRecordCache.has(key)) {
+    const cached = relatedPreviewRecordCache.get(key);
+
+    renderRelatedRecordModal(cached.record, cached.recordType, caalId, {
+      pushCurrent: true
+    });
+
+    return;
+  }
+
   const lang =
     (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
     window.appSession?.profile?.preferred_language ||
     "en";
 
-  const response = await fetch(
-    `/api/records/resolve?caal_id=${encodeURIComponent(caalId)}&lang=${encodeURIComponent(lang)}`,
-    { method: "GET", credentials: "include" }
-  );
+  setMonumentsLoading(true, t("loading_preview", "Loading preview..."));
 
-  const data = await response.json();
+  try {
+    const response = await fetch(
+      `/api/records/resolve?caal_id=${encodeURIComponent(caalId)}&lang=${encodeURIComponent(lang)}`,
+      { method: "GET", credentials: "include" }
+    );
 
-  if (!response.ok || !data.ok) {
-    alert(data.error || t("could_not_load_related_record", "Could not load related record"));
-    return;
+    const data = await response.json();
+
+    if (!response.ok || !data.ok) {
+      alert(data.error || t("could_not_load_related_record", "Could not load related record"));
+      return;
+    }
+
+    relatedPreviewRecordCache.set(key, {
+      record: data.record,
+      recordType: data.record_type
+    });
+
+    renderRelatedRecordModal(data.record, data.record_type, caalId, {
+      pushCurrent: true
+    });
+  } catch (error) {
+    console.error("Could not load related record:", error);
+    alert(error.message || t("could_not_load_related_record", "Could not load related record"));
+  } finally {
+    setMonumentsLoading(false);
   }
-
-  renderRelatedRecordModal(data.record, data.record_type, caalId);
 }
 
+let relatedPreviewStack = [];
+let currentRelatedPreview = null;
+
+function resetRelatedPreviewNavigation() {
+  relatedPreviewStack = [];
+  currentRelatedPreview = null;
+}
+
+function relatedPreviewBackButtonHtml() {
+  if (!relatedPreviewStack.length) return "";
+
+  return `
+    <button
+      type="button"
+      class="action-btn"
+      id="relatedPreviewBackBtn"
+    >
+      ${t("back_to_previous_preview", "Back")}
+    </button>
+  `;
+}
+
+function setCurrentRelatedPreview(record, recordType, caalId) {
+  currentRelatedPreview = {
+    record,
+    recordType,
+    caalId
+  };
+}
+
+function wireRelatedPreviewBackButton() {
+  const backBtn = document.getElementById("relatedPreviewBackBtn");
+  if (!backBtn || backBtn.dataset.backWired === "true") return;
+
+  backBtn.dataset.backWired = "true";
+
+  backBtn.addEventListener("click", () => {
+    const previous = relatedPreviewStack.pop();
+    if (!previous) return;
+
+    renderRelatedRecordModal(
+      previous.record,
+      previous.recordType,
+      previous.caalId,
+      { pushCurrent: false }
+    );
+  });
+}
 
 function validateRelatedFieldsBeforeSave() {
   const fields = [
@@ -2999,6 +3130,15 @@ async function resolveRelatedRecordStatus(caalId) {
         Array.isArray(data.record?.geometry?.coordinates)
     };
 
+    const previewKey = relatedPreviewCacheKey(caalId);
+
+    if (!relatedPreviewRecordCache.has(previewKey)) {
+      relatedPreviewRecordCache.set(previewKey, {
+        record: data.record,
+        recordType: data.record_type
+      });
+    }
+
     relatedRecordStatusCache.set(caalId, result);
     return result;
   } catch (error) {
@@ -3044,6 +3184,54 @@ async function validateDisplayedRelatedIds() {
   }));
 }
 
+function mRenderResourceRelations(record) {
+  const groups = groupRecordRelationsByType(record);
+  const entries = Object.entries(groups);
+
+  if (!entries.length) {
+    return `
+      <div class="detail-item full-width">
+        <div class="detail-value">
+          ${mLabel("No related IDs are recorded for this monument.", "No related IDs are recorded for this monument.")}
+        </div>
+      </div>
+    `;
+  }
+
+  return entries.map(([relationType, relations]) => {
+    const chips = relations.map((rel) => {
+      const relatedId = rel.related_caal_id || "";
+      const unresolved = rel.related_id_exists === false;
+
+      return `
+        <button
+          type="button"
+          class="${relationChipClass(rel)}"
+          data-related-id="${relatedId}"
+          data-relation-edge-id="${rel.edge_id || ""}"
+          title="${
+            unresolved
+              ? mLabel("Related ID not found in current resource tables.", "Related ID not found in current resource tables.")
+              : t("open_related_record", "Open related record")
+          }"
+        >
+          ${relatedId}
+        </button>
+      `;
+    }).join("");
+
+    return `
+      <div class="detail-item full-width">
+        <span class="detail-label">${mLabel(relationType, relationType)}</span>
+        <div class="detail-value related-id-list">
+          ${chips}
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+// mapping related resources
 function clearRelationshipStateForNewSelection() {
   clearRelatedMonumentsMap();
 
@@ -3217,7 +3405,7 @@ function getPopulatedPreviewFields(record, fields) {
 // preview rows
 function renderPreviewRows(items) {
   if (!items.length) {
-    return `<p class="section-empty">${mLabel("No populated fields in this section.", "No populated fields in this section.")}</p>`;
+    return `<p class="section-empty">${t("no_populated_fields", "No populated fields in this section.")}</p>`;
   }
 
   return items.map((item) => `
@@ -3248,6 +3436,8 @@ function renderMonumentPreviewModal(record) {
   const bodyEl = document.getElementById("monumentPreviewBody");
 
   if (!modal || !titleEl || !bodyEl || !record) return;
+
+  resetRelatedPreviewNavigation();
 
   const basicFields = getPopulatedPreviewFields(record, [
     { label: mLabel("Primary Name", "Primary Name"), value: mSummary(record, "primary_name") },
@@ -3392,8 +3582,21 @@ function renderMonumentPreviewModal(record) {
 }
 
 // related record modal 
-function renderRelatedRecordModal(record, recordType, caalId) {
-    if (!monumentPreviewModal || !monumentPreviewTitle || !monumentPreviewBody) return;
+function renderRelatedRecordModal(record, recordType, caalId, options = {}) {
+  const { pushCurrent = false } = options;
+
+  const nextKey = `${recordType || ""}:${String(caalId || "").trim().toLowerCase()}`;
+  const currentKey = currentRelatedPreview
+    ? `${currentRelatedPreview.recordType || ""}:${String(currentRelatedPreview.caalId || "").trim().toLowerCase()}`
+    : "";
+
+  if (pushCurrent && currentRelatedPreview && currentKey && currentKey !== nextKey) {
+    relatedPreviewStack.push(currentRelatedPreview);
+  }
+
+  setCurrentRelatedPreview(record, recordType, caalId);
+
+  if (!monumentPreviewModal || !monumentPreviewTitle || !monumentPreviewBody) return;
 
   const fullRecordUrl = getRelatedRecordUrl(
     caalId,
@@ -3423,16 +3626,20 @@ function renderRelatedRecordModal(record, recordType, caalId) {
       <h3>${mSafeValue(title)}</h3>
       <p>${mSafeValue(caalId)}</p>
       <span class="related-record-type-badge">
-        ${recordType === "archive" ? mLabel("Archive", "Archive") : mLabel("Monument", "Monument")}
+        ${recordType === "archive" ? t("nav_archive", "Archive") : t("nav_monuments", "Monument")}
       </span>
 
-      ${
-        fullRecordUrl
-          ? `<button type="button" class="action-btn" id="openRelatedFullRecordBtn">
-              ${t("open_full_record", "Open full record")}
-            </button>`
-          : ""
-      }
+      <div class="record-title-actions">
+        ${relatedPreviewBackButtonHtml()}
+
+        ${
+          fullRecordUrl
+            ? `<button type="button" class="action-btn" id="openRelatedFullRecordBtn">
+                ${t("open_full_record", "Open full record")}
+              </button>`
+            : ""
+        }
+      </div>
     </div>
   `;
 
@@ -3446,18 +3653,24 @@ function renderRelatedRecordModal(record, recordType, caalId) {
     });
   }
 }
+
 function renderRelatedMonumentModal(record, caalId, fullRecordUrl) {
-  const title = mSummary(record, "primary_name") || mRaw(record, "Primary Name") || caalId;
+  const title =
+    mSummary(record, "primary_name") ||
+    mRaw(record, "Primary Name") ||
+    caalId;
 
   monumentPreviewTitle.textContent = title;
 
   const basicFields = getPopulatedPreviewFields(record, [
     { label: mLabel("Primary Name", "Primary Name"), value: mSummary(record, "primary_name") },
     { label: mLabel("Primary Name (English)", "Primary Name (English)"), value: mSummary(record, "primary_name_english") },
+    { label: mLabel("Other Names", "Other Names"), value: mRaw(record, "Other Names") },
     { label: mLabel("Country", "Country"), value: mSummary(record, "country") },
+    { label: mLabel("Region", "Region"), value: mSummary(record, "region") },
     { label: mLabel("Classification", "Classification"), value: mSummary(record, "classification") },
-    { label: mLabel("CAAL_ID", "CAAL_ID"), value: caalId },
-    { label: mLabel("Designation", "Designation"), value: mSummary(record, "designation") }
+    { label: mLabel("Designation", "Designation"), value: mSummary(record, "designation") },
+    { label: mLabel("World Heritage Site Name", "World Heritage Site Name"), value: mRaw(record, "World Heritage Site Name") }
   ]);
 
   const monumentTypes = getSummaryValues(record, [
@@ -3470,24 +3683,34 @@ function renderRelatedMonumentModal(record, caalId, fullRecordUrl) {
     "Cultural Period4", "Cultural Period5", "Cultural Period6"
   ], "cultural_period");
 
+  const relatedHtml = mRenderResourceRelations(record);
+  const relatedHasValues =
+    typeof getRecordRelations === "function" &&
+    getRecordRelations(record).length > 0;
+
   monumentPreviewBody.innerHTML = `
-    <div class="record-title related-record-title">
-      <div>
-        <h3>${mSafeValue(title)}</h3>
-        <p>${mSafeValue(caalId)}</p>
+    <div class="related-preview-compact-header">
+      <div class="related-preview-meta">
+        <span class="related-record-type-badge">
+          ${t("nav_monuments", "Monument")}
+        </span>
+
+        <span class="related-preview-caal-id">
+          ${mSafeValue(caalId)}
+        </span>
       </div>
 
-      <span class="related-record-type-badge">
-        ${mLabel("Monument", "Monument")}
-      </span>
+      <div class="record-title-actions">
+        ${relatedPreviewBackButtonHtml()}
 
-      ${
-        fullRecordUrl
-          ? `<button type="button" class="action-btn" id="openRelatedFullRecordBtn">
-              ${t("open_full_record", "Open full record")}
-            </button>`
-          : ""
-      }
+        ${
+          fullRecordUrl
+            ? `<button type="button" class="action-btn" id="openRelatedFullRecordBtn">
+                ${t("open_full_record", "Open full record")}
+              </button>`
+            : ""
+        }
+      </div>
     </div>
 
     <div class="group-stack">
@@ -3506,7 +3729,9 @@ function renderRelatedMonumentModal(record, caalId, fullRecordUrl) {
             <span class="detail-section-title">${mLabel("Monument type summary", "Monument type summary")}</span>
           </div>
           <div class="detail-item full-width">
-            <div class="detail-value">${monumentTypes.length ? monumentTypes.join(", ") : mSafeValue("")}</div>
+            <div class="detail-value">
+              ${monumentTypes.length ? monumentTypes.join(", ") : mSafeValue("")}
+            </div>
           </div>
         </div>
       </div>
@@ -3517,15 +3742,34 @@ function renderRelatedMonumentModal(record, caalId, fullRecordUrl) {
             <span class="detail-section-title">${mLabel("Cultural period summary", "Cultural period summary")}</span>
           </div>
           <div class="detail-item full-width">
-            <div class="detail-value">${culturalPeriods.length ? culturalPeriods.join(", ") : mSafeValue("")}</div>
+            <div class="detail-value">
+              ${culturalPeriods.length ? culturalPeriods.join(", ") : mSafeValue("")}
+            </div>
           </div>
+        </div>
+      </div>
+
+      <div class="group-block">
+        <div class="group-grid">
+          <div class="detail-item full-width section-header">
+            <span class="detail-section-title">${mLabel("Related resources", "Related resources")}</span>
+          </div>
+
+          ${
+            relatedHasValues
+              ? relatedHtml
+              : `<div class="section-empty">${mLabel("No related resources are recorded for this monument.", "No related resources are recorded for this monument.")}</div>`
+          }
         </div>
       </div>
     </div>
   `;
 
   monumentPreviewModal.hidden = false;
+
   wireOpenRelatedFullRecordButton(fullRecordUrl);
+  wireRelatedRecordChips();
+  wireRelatedPreviewBackButton();
 }
 
 function renderRelatedArchiveModal(record, caalId, fullRecordUrl) {
@@ -3538,26 +3782,36 @@ function renderRelatedArchiveModal(record, caalId, fullRecordUrl) {
     mRaw(record, "Original Title") ||
     caalId;
 
+  const relatedHtml = typeof mRenderResourceRelations === "function"
+    ? mRenderResourceRelations(record)
+    : "";
+
+  const relatedHasValues =
+    typeof getRecordRelations === "function" &&
+    getRecordRelations(record).length > 0;
+
   monumentPreviewTitle.textContent = title;
 
   monumentPreviewBody.innerHTML = `
-    <div class="record-title related-record-title">
-      <div>
-        <h3>${mSafeValue(title)}</h3>
-        <p>${mSafeValue(caalId)}</p>
+    <div class="related-preview-compact-header">
+      <div class="related-preview-meta">
+        <span class="related-record-type-badge">
+          ${mLabel("Archive", "Archive")}
+        </span>
+        <span class="related-preview-caal-id">${mSafeValue(caalId)}</span>
       </div>
 
-      <span class="related-record-type-badge">
-        ${mLabel("Archive", "Archive")}
-      </span>
+      <div class="record-title-actions">
+        ${relatedPreviewBackButtonHtml()}
 
-      ${
-        fullRecordUrl
-          ? `<button type="button" class="action-btn" id="openRelatedFullRecordBtn">
-              ${t("open_full_record", "Open full record")}
-            </button>`
-          : ""
-      }
+        ${
+          fullRecordUrl
+            ? `<button type="button" class="action-btn" id="openRelatedFullRecordBtn">
+                ${t("open_full_record", "Open full record")}
+              </button>`
+            : ""
+        }
+      </div>
     </div>
 
     <div class="group-stack">
@@ -3568,7 +3822,7 @@ function renderRelatedArchiveModal(record, caalId, fullRecordUrl) {
           </div>
 
           ${mRenderDetailItem(mLabel("CAAL_ID", "CAAL_ID"), record.identity?.caal_id)}
-          ${mRenderDetailItem(mLabel("Associated CAAL_ID", "Associated CAAL_ID"), record.identity?.associated_caal_id)}
+
           ${mRenderDetailItem(mLabel("Original Reference", "Original Reference"), s.original_reference)}
           ${mRenderDetailItem(mLabel("Content Type", "Content Type"), s.content_type)}
           ${mRenderDetailItem(mLabel("Country", "Country"), s.country)}
@@ -3581,6 +3835,20 @@ function renderRelatedArchiveModal(record, caalId, fullRecordUrl) {
             parseRelatedIds(mRaw(record, "Languages of Material")).join(", "),
             true
           )}
+        </div>
+      </div>
+
+      <div class="group-block">
+        <div class="group-grid">
+          <div class="detail-item full-width section-header">
+            <span class="detail-section-title">${mLabel("Related resources", "Related resources")}</span>
+          </div>
+
+          ${
+            relatedHasValues
+              ? relatedHtml
+              : `<div class="section-empty">${mLabel("No related resources are recorded for this resource.", "No related resources are recorded for this resource.")}</div>`
+          }
         </div>
       </div>
 
@@ -3601,7 +3869,10 @@ function renderRelatedArchiveModal(record, caalId, fullRecordUrl) {
   `;
 
   monumentPreviewModal.hidden = false;
+
   wireOpenRelatedFullRecordButton(fullRecordUrl);
+  wireRelatedRecordChips();
+  wireRelatedPreviewBackButton();
 }
 
 function wireOpenRelatedFullRecordButton(fullRecordUrl) {
@@ -3609,6 +3880,7 @@ function wireOpenRelatedFullRecordButton(fullRecordUrl) {
 
   if (openBtn && fullRecordUrl) {
     openBtn.addEventListener("click", () => {
+      resetRelatedPreviewNavigation();
       window.open(fullRecordUrl, "_blank");
     });
   }
@@ -3686,13 +3958,13 @@ function closeMonumentPreviewModal() {
   const modal = document.getElementById("monumentPreviewModal");
   if (modal) modal.hidden = true;
 
+  resetRelatedPreviewNavigation();
+
   if (monumentPreviewMap) {
     monumentPreviewMap.remove();
     monumentPreviewMap = null;
   }
 }
-
-
 
 // --------------------------------------------------------
 // Labels + lookups API
@@ -4907,8 +5179,8 @@ function renderMonumentDisplayMode(record) {
   const canEditThisRecord = canEditMonumentRecord(record);
 
   const statusBadge = canEditThisRecord
-    ? `<span class="record-status-badge record-status-editable">${mLabel("Editable", "Editable")}</span>`
-    : `<span class="record-status-badge record-status-readonly">${mLabel("Read only", "Read only")}</span>`;
+    ? `<span class="record-status-badge record-status-editable">${t("editable", "Editable")}</span>`
+    : `<span class="record-status-badge record-status-readonly">${t("read_only", "Read-only")}</span>`;
     
   const locationHtml = [
     mRenderDetailItem(mLabel("Longitude", "Longitude"), mDisplayLongitude(record)),
@@ -4981,29 +5253,19 @@ function renderMonumentDisplayMode(record) {
 
   const measurementsHasValues = measurementsHtml.trim() !== "";
 
-  const relatedIds = [
-    ...parseRelatedIds(mRaw(record, "Monument is part of")),
-    ...parseRelatedIds(mRaw(record, "Monument contains")),
-    ...parseRelatedIds(mRaw(record, "Monument is associated with"))
-  ];
-
+  const relatedIds = getRelatedIdsFromRecord(record);
   const hasRelatedIds = relatedIds.length > 0;
 
   const relatedHtml = [
     `
       <div class="detail-item full-width related-map-actions">
         <div class="related-map-actions-text">
-          <strong>${mLabel("Relationship map", "Relationship map")}</strong>
+          <strong>${t("relationship_map", "Relationship map")}</strong>
           <p>
-            ${hasRelatedIds
-              ? mLabel(
-                  "Show this monument together with its linked monument records on the map.",
-                  "Show this monument together with its linked monument records on the map."
-                )
-              : mLabel(
-                  "No related IDs are recorded for this monument.",
-                  "No related IDs are recorded for this monument."
-                )
+            ${
+              hasRelatedIds
+                ? t("show_related_records","Show related records on map")
+                : t("no_related_records", "No related IDs are recorded for this monument.")
             }
           </p>
         </div>
@@ -5014,7 +5276,7 @@ function renderMonumentDisplayMode(record) {
           id="showRelatedMonumentsOnMapBtn"
           ${hasRelatedIds ? "" : "disabled"}
         >
-          ${mLabel("Show relationships on map", "Show relationships on map")}
+          ${t("show_relationships_on_map", "Show relationships on map")}
         </button>
 
         <button
@@ -5023,28 +5285,12 @@ function renderMonumentDisplayMode(record) {
           id="clearRelatedMonumentsMapBtn"
           hidden
         >
-          ${mLabel("Clear relationship map", "Clear relationship map")}
+          ${t("clear_relationship_map", "Clear relationship map")}
         </button>
       </div>
     `,
 
-    mRenderRelatedIdList(
-      mLabel("Monument is part of", "Monument is part of"),
-      mRaw(record, "Monument is part of"),
-      true
-    ),
-
-    mRenderRelatedIdList(
-      mLabel("Monument contains", "Monument contains"),
-      mRaw(record, "Monument contains"),
-      true
-    ),
-
-    mRenderRelatedIdList(
-      mLabel("Monument is associated with", "Monument is associated with"),
-      mRaw(record, "Monument is associated with"),
-      true
-    )
+    mRenderResourceRelations(record)
   ].join("");
 
   const metadataHtml = [
@@ -5083,11 +5329,11 @@ function renderMonumentDisplayMode(record) {
 
       <div class="record-title-actions">
         <button type="button" class="action-btn" id="zoomToSelectedMonumentBtn">
-          ${mLabel("Centre on map", "Centre on map")}
+          ${t("centre_on_map", "Centre on map")}
         </button>
 
         <button type="button" class="action-btn" id="clearSelectedMonumentBtn">
-          ${mLabel("Close record", "Close record")}
+          ${t("close_record", "Close record")}
         </button>
       </div>
     </div>
@@ -5095,7 +5341,7 @@ function renderMonumentDisplayMode(record) {
     <div class="group-stack">
       ${mRenderGroupBlock(mLabel("Location", "Location"), locationHtml, true)}
       ${mRenderGroupBlock(mLabel("Basic", "Basic"), basicHtml, true)}
-      ${mRenderGroupBlock(mLabel("Monument", "Monument"), monumentHtml, true)}
+      ${mRenderGroupBlock(t("nav_monuments", "Monument"), monumentHtml, true)}
       ${mRenderGroupBlock(mLabel("Administration", "Administration"), adminHtml, true)}
       ${mRenderGroupBlock(mLabel("Measurements", "Measurements"), measurementsHtml, measurementsHasValues)}
       ${mRenderGroupBlock(mLabel("Related resources", "Related resources"), relatedHtml, true)}
@@ -5145,19 +5391,16 @@ function renderMonumentDisplayMode(record) {
       clearRelatedMapBtn.hidden = true;
     });
   }
-  validateDisplayedRelatedIds();
+ // validateDisplayedRelatedIds();
 }
 
 async function showRelatedMonumentsOnMap(record = monumentSelectedRecord) {
   if (!map || !record) return;
 
-  const relatedIds = [
-    ...parseRelatedIds(mRaw(record, "Monument is part of")),
-    ...parseRelatedIds(mRaw(record, "Monument contains")),
-    ...parseRelatedIds(mRaw(record, "Monument is associated with"))
-  ];
-
-  const uniqueIds = Array.from(new Set(relatedIds));
+  const uniqueIds = getRelatedIdsFromRecord(record, {
+    onlyMonuments: true,
+    includeMissing: false
+  });
 
   if (!record?.geometry?.coordinates && uniqueIds.length === 0) return;
 
@@ -5370,7 +5613,7 @@ function renderMonumentEditMode(record) {
       <div class="group-block">
         <div class="group-grid">
           <div class="detail-item full-width section-header">
-            <span class="detail-section-title">${mLabel("Monument", "Monument")}</span>
+            <span class="detail-section-title">${t("nav_monuments", "Monument")}</span>
           </div>
 
           ${mRenderTextInput("Monument Passport", mLabel("Monument Passport", "Monument Passport"), mRaw(record, "Monument Passport"), true)}
@@ -5461,7 +5704,10 @@ function renderMonumentEditMode(record) {
           ${mRenderReadOnlyItem(mLabel("Preferred Language", "Preferred Language"),displayLanguageName(mRaw(record, "Preferred Language")))}
           ${mRenderReadOnlyItem(mLabel("Recorder", "Recorder"), mRaw(record, "Recorder"))}
           ${mRenderReadOnlyItem(mLabel("Date of Recording", "Date of Recording"), mDateOnly(mRaw(record, "Date of Recording")) || mLabel("Set automatically on save", "Set automatically on save"))}
-          ${mRenderReadOnlyItem(mLabel("Tstamp", "Tstamp"), mDateOnly(mRaw(record, "Tstamp")))}
+          ${mRenderReadOnlyItem(
+            mLabel("Tstamp", "Tstamp"),
+            mDateOnly(mRaw(record, "Tstamp")) || t("assigned_on_save", "Assigned on save")
+          )}
           ${
             monumentUserCanEditMasterId()
               ? mRenderTextInput("MasterID", mLabel("MasterID", "MasterID"), mRaw(record, "MasterID"))

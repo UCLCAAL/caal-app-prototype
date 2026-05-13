@@ -446,6 +446,62 @@ async function loadDirectLinkedRecord(caalId) {
   return data;
 }
 
+function getRecordRelations(record) {
+  return Array.isArray(record?.relations) ? record.relations : [];
+}
+
+function getRelatedIdsFromRecord(record, options = {}) {
+  const {
+    onlyMonuments = false,
+    includeMissing = true
+  } = options;
+
+  return Array.from(
+    new Set(
+      getRecordRelations(record)
+        .filter((rel) => {
+          if (!rel?.related_caal_id) return false;
+
+          if (!includeMissing && rel.related_id_exists === false) {
+            return false;
+          }
+
+          if (onlyMonuments) {
+            return (
+              rel.related_id_found_in === "CAAL_Monuments" ||
+              String(rel.related_caal_id).startsWith("Mon_")
+            );
+          }
+
+          return true;
+        })
+        .map((rel) => String(rel.related_caal_id).trim())
+        .filter(Boolean)
+    )
+  );
+}
+
+function groupRecordRelationsByType(record) {
+  return getRecordRelations(record).reduce((groups, rel) => {
+    const type = rel.relation_type || "Related resource";
+    if (!groups[type]) groups[type] = [];
+    groups[type].push(rel);
+    return groups;
+  }, {});
+}
+
+function relationChipClass(rel) {
+  const missing = rel?.related_id_exists === false;
+  return missing
+    ? "related-id-chip related-id-chip-invalid related-id-chip-unresolved"
+    : "related-id-chip";
+}
+
+window.getRecordRelations = getRecordRelations;
+window.getRelatedIdsFromRecord = getRelatedIdsFromRecord;
+window.groupRecordRelationsByType = groupRecordRelationsByType;
+window.relationChipClass = relationChipClass;
+
 // --------------------------------------------------------
 // Shared text helpers
 // --------------------------------------------------------

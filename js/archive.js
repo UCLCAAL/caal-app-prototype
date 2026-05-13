@@ -941,6 +941,90 @@ function archiveRenderDetailItem(label, value, fullWidth = false) {
   `;
 }
 
+function archiveRenderResourceRelations(record) {
+  const groups = groupRecordRelationsByType(record);
+  const entries = Object.entries(groups);
+
+  if (!entries.length) {
+    return `
+      <div class="detail-item full-width">
+        <div class="detail-value">
+          ${archiveLabel("No related resources are recorded for this resource.", "No related resources are recorded for this resource.")}
+        </div>
+      </div>
+    `;
+  }
+
+  return entries.map(([relationType, relations]) => {
+    const chips = relations.map((rel) => {
+      const relatedId = rel.related_caal_id || "";
+      const unresolved = rel.related_id_exists === false;
+
+      return `
+        <button
+          type="button"
+          class="${relationChipClass(rel)} archive-associated-id-chip"
+          data-associated-caal-id="${relatedId}"
+          data-relation-edge-id="${rel.edge_id || ""}"
+          title="${
+            unresolved
+              ? t("related_id_not_found", "Related ID not found in current resource tables")
+              : t("open_related_record", "Open related record")
+          }"
+        >
+          ${relatedId}
+        </button>
+      `;
+    }).join("");
+
+    return `
+      <div class="detail-item full-width">
+        <span class="detail-label">${archiveLabel(relationType, relationType)}</span>
+        <div class="detail-value related-id-list archive-associated-id-list">
+          ${chips}
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+async function loadFullArchiveRecord(record) {
+  const caalId = archiveIdentity(record, "caal_id") || archiveRaw(record, "CAAL_ID");
+
+  if (!caalId) {
+    return record;
+  }
+
+  const lang =
+    (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
+    window.appSession?.profile?.preferred_language ||
+    "en";
+
+  const response = await fetch(
+    `/api/records/resolve?caal_id=${encodeURIComponent(caalId)}&lang=${encodeURIComponent(lang)}`,
+    {
+      method: "GET",
+      credentials: "include"
+    }
+  );
+
+  const data = await response.json();
+
+  if (!response.ok || !data.ok || !data.record) {
+    throw new Error(
+      data.detail ||
+      data.error ||
+      t("could_not_load_full_archive_record", "Could not load full archive record")
+    );
+  }
+
+  if (data.record_type !== "archive") {
+    throw new Error(t("resolved_record_not_archive", "Resolved record is not an archive record"));
+  }
+
+  return data.record;
+}
+
 function archiveRenderAssociatedCaalIdChips(label, value, fullWidth = true) {
   const ids = archiveParseAssociatedCaalIds(value);
 
@@ -1031,10 +1115,10 @@ function archiveRenderTitleCard(record, statusBadge = "") {
       <div class="record-title-row">
         <div>
           <h3 class="archive-title-caal-id">${safeArchiveValue(caalId)}</h3>
-          <p class="archive-title-associated-id">
-            <span>${archiveLabel("Associated CAAL_ID", "Associated CAAL_ID")}:</span>
-            <strong>${safeArchiveValue(associatedCaalId)}</strong>
-          </p>
+          <div class="archive-title-associated-id related-id-list">
+            <strong>${archiveLabel("Associated CAAL_ID", "Associated CAAL_ID")}:</strong>
+            ${archiveRenderAssociatedCaalIdChipList(associatedCaalId)}
+          </div>
         </div>
         ${statusBadge}
       </div>
@@ -1066,7 +1150,7 @@ function archiveRenderIdentityStrip(record, { isNew = false } = {}) {
 function archiveRenderGroupBlock(title, innerHtml, hasValues = true) {
   const content = hasValues
     ? innerHtml
-    : `<div class="section-empty">${archiveLabel("No populated fields in this section.", "No populated fields in this section.")}</div>`;
+    : `<div class="section-empty">${t("no_populated_fields", "No populated fields in this section.")}</div>`;
 
   return `
     <div class="group-block">
@@ -1812,10 +1896,10 @@ function renderArchiveResultsList(records) {
     .join("");
 
     Array.from(archiveResultsList.querySelectorAll(".result-card")).forEach((card) => {
-    card.addEventListener("click", () => {
+    card.addEventListener("click", async () => {
       const idx = Number(card.dataset.archiveResultIndex);
-      const record = records[idx];
-      if (!record) return;
+      const lightRecord = records[idx];
+      if (!lightRecord) return;
 
       if (!archiveConfirmLoseChanges()) {
         return;
@@ -1823,18 +1907,43 @@ function renderArchiveResultsList(records) {
 
       archiveIsEditMode = false;
       archivePendingNewRecord = null;
-      archiveRenderRecordDetails(record);
-      archiveUpdateSelectedResultCard();
+
+      setArchiveLoading(true, t("loading_full_record", "Loading full record..."));
+
+      try {
+        const fullRecord = await loadFullArchiveRecord(lightRecord);
+
+        archiveSelectedRecord = fullRecord;
+        archiveRenderRecordDetails(fullRecord);
+        archiveUpdateSelectedResultCard();
+      } catch (error) {
+        console.error("Failed to load full archive record:", error);
+        alert(error.message || t("could_not_load_full_archive_record", "Could not load full archive record"));
+      } finally {
+        setArchiveLoading(false);
+      }
     });
   });
 
   Array.from(archiveResultsList.querySelectorAll(".archive-preview-btn")).forEach((btn) => {
-    btn.addEventListener("click", (event) => {
+    btn.addEventListener("click", async (event) => {
       event.stopPropagation();
+
       const idx = Number(btn.dataset.archivePreviewIndex);
-      const record = records[idx];
-      if (!record) return;
-      archiveOpenPreview(record);
+      const lightRecord = records[idx];
+      if (!lightRecord) return;
+
+      setArchiveLoading(true, t("loading_preview", "Loading preview..."));
+
+      try {
+        const fullRecord = await loadFullArchiveRecord(lightRecord);
+        archiveOpenPreview(fullRecord);
+      } catch (error) {
+        console.error("Failed to load archive preview:", error);
+        alert(error.message || t("could_not_load_full_archive_record", "Could not load full archive record"));
+      } finally {
+        setArchiveLoading(false);
+      }
     });
   });
 
@@ -1908,6 +2017,9 @@ function archiveRenderDisplayMode(record) {
   materialHtml += archiveRenderDetailItem(archiveLabel("Number and Type of Original Material", "Number and Type of Original Material"), archiveRaw(record, "Number and Type of Original Material"), true);
   materialHtml += archiveRenderDetailItem(archiveLabel("Size and Dimensions of Original Material", "Size and Dimensions of Original Material"), archiveRaw(record, "Size and Dimensions of Original Material"));
   materialHtml += archiveRenderDetailItem(archiveLabel("Condition of Original Material", "Condition of Original Material"), archiveRaw(record, "Condition of Original Material"));
+
+  const relatedHtml = archiveRenderResourceRelations(record);
+  const relatedHasValues = getRecordRelations(record).length > 0;
 
   let publicationHtml = "";
   publicationHtml += archiveRenderDetailItem(archiveLabel("Dates of Original Material", "Dates of Original Material"), archiveRaw(record, "Dates of Original Material"));
@@ -2046,6 +2158,7 @@ function archiveRenderDisplayMode(record) {
       ${archiveRenderGroupBlock(archiveLabel("Publication Details", "Publication Details"), publicationHtml, publicationHasValues)}
       ${archiveRenderGroupBlock(archiveLabel("Content", "Content"), contentHtml, contentHasValues)}
       ${archiveRenderGroupBlock(archiveLabel("Digital Files", "Digital Files"), digitalHtml, digitalHasValues)}
+      ${archiveRenderGroupBlock(archiveLabel("Related resources", "Related resources"), relatedHtml, true)}
       ${archiveRenderGroupBlock(archiveLabel("Metadata", "Metadata"), metadataHtml, metadataHasValues)}
     </div>
   `;

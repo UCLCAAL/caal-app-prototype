@@ -1,5 +1,6 @@
 const express = require("express");
 const pool = require("./db");
+const { getResourceRelations } = require("./resourceRelations");
 
 const router = express.Router();
 
@@ -693,6 +694,8 @@ router.patch("/:id", async (req, res) => {
       lang
     );
 
+    record.relations = await getResourceRelations(pool, record.identity?.caal_id);
+
     return res.json({
       ok: true,
       record
@@ -829,7 +832,7 @@ router.delete("/:id", async (req, res) => {
           : "You can only delete your own workspace archive records"
       });
     }
-
+    
     return res.json({
       ok: true,
       deleted: result.rows[0]
@@ -910,6 +913,8 @@ router.post("/", async (req, res) => {
       },
       lang
     );
+
+    record.relations = await getResourceRelations(pool, record.identity?.caal_id);
 
     return res.status(201).json({
       ok: true,

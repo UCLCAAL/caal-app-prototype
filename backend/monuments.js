@@ -1,5 +1,6 @@
 const express = require("express");
 const pool = require("./db");
+const { getResourceRelations } = require("./resourceRelations");
 
 const router = express.Router();
 
@@ -1988,14 +1989,18 @@ router.post("/monuments", async (req, res) => {
     const freshRow = await fetchMonumentRowById(newId);
     const lang = req.query.lang || currentSession.profile?.preferred_language || "en";
 
-    return res.status(201).json({
-      ok: true,
-      record: buildMonumentRecord(
+    const record = buildMonumentRecord(
       freshRow,
       lang,
       appUserId,
       canEditCaalMonuments(currentSession)
-    )
+    );
+
+    record.relations = await getResourceRelations(pool, record.identity?.caal_id);
+
+    return res.status(201).json({
+      ok: true,
+      record
     });
   } catch (error) {
     console.error("Monument create failed:");
@@ -2222,14 +2227,18 @@ router.patch("/monuments/:id", async (req, res) => {
     }
     const lang = req.query.lang || currentSession.profile?.preferred_language || "en";
 
+    const record = buildMonumentRecord(
+      stripMonumentInternalFields(freshRow),
+      lang,
+      userId,
+      canEditCaalMonuments(currentSession)
+    );
+
+    record.relations = await getResourceRelations(pool, record.identity?.caal_id);
+
     return res.json({
       ok: true,
-      record: buildMonumentRecord(
-        stripMonumentInternalFields(freshRow),
-        lang,
-        userId,
-        canEditCaalMonuments(currentSession)
-      )
+      record
     });
   } catch (error) {
     console.error("Monument update failed:");
@@ -2396,7 +2405,7 @@ router.delete("/monuments/:id", async (req, res) => {
           : "You can only delete your own workspace monument records"
       });
     }
-
+    
     return res.json({
       ok: true,
       deleted: result.rows[0]

@@ -8,6 +8,7 @@ require("dotenv").config();
 
 const pool = require("./db");
 const sessionPool = require("./sessionDb");
+
 const authRoutes = require("./auth");
 const uiRoutes = require("./ui");
 const lookupRoutes = require("./lookups");
@@ -98,8 +99,8 @@ app.use("/api/auth", authRoutes);
 app.use("/api/ui", uiRoutes);
 app.use("/api/lookups", lookupRoutes);
 app.use("/api/archive", archiveRoutes);
-app.use("/api", monumentsRoutes);
 app.use("/api/records", recordsRoutes);
+app.use("/api", monumentsRoutes);
 
 // --------------------------------------------------------
 // Static frontend
