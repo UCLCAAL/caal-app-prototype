@@ -14,17 +14,12 @@ const MONUMENTS_VIEW = 'kz.v_monuments_grid_base';
 const GEOM_COLUMN_SQL = `"geom"`;
 
 const MONUMENTS_CAAL_MV = "ui.mv_monuments_caal";
+const MONUMENTS_CAAL_LIST_MV = "ui.mv_monuments_caal_list";
 
 
 // ========================================================
 // HELPERS
 // ========================================================
-
-// this uses a national filter on the CAAL dataset as too costly to build MV on CAAL + REF
-const NATIONAL_REF_WHERE = `
-  "CAAL_ID" LIKE 'Mon_KZ_%'
-  OR btrim(coalesce("Country", '')) IN ('Kazakhstan', 'Казахстан')
-`;
 
 const ACTIVE_REGISTRY_STATUS_SQL = `
   COALESCE(rr.status, '') <> 'deleted'
@@ -195,7 +190,8 @@ function monumentHelperColumnsSql(alias = "") {
   `;
 }
 
-function makeBrowseScopeConfig(currentSession) {
+function makeBrowseScopeConfig(currentSession, options = {}) {
+  const caalSource = options.caalSource || MONUMENTS_CAAL_MV;
   const currentAppUserId = currentAppUserIdFromSession(currentSession);
   const canEditCaal = canEditCaalMonuments(currentSession);
   const workspaceCode = getSessionWorkspaceCode(currentSession);
@@ -239,7 +235,7 @@ function makeBrowseScopeConfig(currentSession) {
           'public_caal'::text AS storage_scope,
           true AS is_promoted,
           ${canEditCaal ? "true" : "true"} AS is_editable
-        FROM ${MONUMENTS_CAAL_MV} m
+        FROM ${caalSource} m
         JOIN public.record_registry rr
           ON rr.caal_id = m."CAAL_ID"
         WHERE rr.created_by_app_user_id = ${currentAppUserId ?? -1}
@@ -257,7 +253,7 @@ function makeBrowseScopeConfig(currentSession) {
           'public_caal'::text AS storage_scope,
           true AS is_promoted,
           ${publicEditableSql} AS is_editable
-        FROM ${MONUMENTS_CAAL_MV} m
+        FROM ${caalSource} m
         WHERE (${nationalWhere})
           AND NOT EXISTS (
             SELECT 1
@@ -279,7 +275,7 @@ function makeBrowseScopeConfig(currentSession) {
           'public_caal'::text AS storage_scope,
           true AS is_promoted,
           ${allCaalEditableSql} AS is_editable
-        FROM ${MONUMENTS_CAAL_MV} m
+        FROM ${caalSource} m
         WHERE (
             ${workspaceCode && workspaceCode !== "caal"
               ? `m.workspace_code IS DISTINCT FROM '${workspaceCode.replace(/'/g, "''")}'`
@@ -331,12 +327,104 @@ function getAllowedScopes(session) {
   return unique(allowed);
 }
 
-function buildBrowseUnionSql(scopes, currentSession) {
-  const config = makeBrowseScopeConfig(currentSession);
+function buildBrowseUnionSql(scopes, currentSession, options = {}) {
+  const config = makeBrowseScopeConfig(currentSession, options);
 
   return scopes
     .filter((scope) => config[scope])
     .map((scope) => config[scope].sql)
+    .join("\nUNION ALL\n");
+}
+
+function buildBrowseListUnionSql(scopes, currentSession, lang = "en") {
+  const currentAppUserId = currentAppUserIdFromSession(currentSession);
+  const userId = currentAppUserId ?? -1;
+  const workspaceCode = getSessionWorkspaceCode(currentSession);
+  const canEditCaal = canEditCaalMonuments(currentSession);
+  const canEditNationalCaal = isNationalAdmin(currentSession);
+
+  const publicEditableSqlForListBase = canEditCaal
+  ? "true"
+  : canEditNationalCaal
+    ? `base.workspace_code = '${workspaceCode.replace(/'/g, "''")}'`
+    : "false";
+
+  const allCaalEditableSql = canEditCaal ? "true" : "false";
+  const nationalWhere = nationalRefWhereSql("m", currentSession);
+
+  const config = {
+    workspace: `
+      SELECT
+        ${workspaceCardSelectSql(lang)}
+      FROM ${MONUMENTS_WORKSPACE_TABLE} m
+      ${workspaceFastRegistryJoinSql("m")}
+      ${workspaceCardJoinsSql()}
+      WHERE m.created_by_app_user_id = ${userId}
+        AND COALESCE(rr.status, '') <> 'deleted'
+
+      UNION ALL
+
+      SELECT
+        ${promotedWorkspaceCardSelectSql("m", lang)}
+      FROM ${MONUMENTS_CAAL_LIST_MV} m
+      JOIN public.record_registry rr
+        ON rr.caal_id = m."CAAL_ID"
+      WHERE rr.created_by_app_user_id = ${userId}
+        AND COALESCE(rr.status, '') <> 'deleted'
+    `,
+
+    national_ref: `
+      SELECT
+        ${monumentCardSelectSql("m", lang)}
+      FROM (
+        SELECT
+          base.*,
+          'national_ref'::text AS source_scope,
+          'public_caal'::text AS storage_scope,
+          true AS is_promoted,
+          ${publicEditableSqlForListBase} AS is_editable
+        FROM ${MONUMENTS_CAAL_LIST_MV} base
+      ) m
+      WHERE (${nationalRefWhereSql("m", currentSession)})
+        AND NOT EXISTS (
+          SELECT 1
+          FROM public.record_registry rr
+          WHERE rr.caal_id = m."CAAL_ID"
+            AND rr.created_by_app_user_id = ${userId}
+            AND COALESCE(rr.status, '') <> 'deleted'
+        )
+    `,
+
+    all_caal: `
+      SELECT
+        ${monumentCardSelectSql("m", lang)}
+      FROM (
+        SELECT
+          base.*,
+          'all_caal'::text AS source_scope,
+          'public_caal'::text AS storage_scope,
+          true AS is_promoted,
+          ${allCaalEditableSql} AS is_editable
+        FROM ${MONUMENTS_CAAL_LIST_MV} base
+      ) m
+      WHERE (
+        ${workspaceCode && workspaceCode !== "caal"
+          ? `m.workspace_code IS DISTINCT FROM '${workspaceCode.replace(/'/g, "''")}'`
+          : "true"}
+      )
+      AND NOT EXISTS (
+        SELECT 1
+        FROM public.record_registry rr
+        WHERE rr.caal_id = m."CAAL_ID"
+          AND rr.created_by_app_user_id = ${userId}
+          AND COALESCE(rr.status, '') <> 'deleted'
+      )
+    `
+  };
+
+  return scopes
+    .filter((scope) => config[scope])
+    .map((scope) => config[scope])
     .join("\nUNION ALL\n");
 }
 
@@ -581,6 +669,8 @@ function buildMonumentListRecord(row, lang, currentAppUserId = null, canEditCaal
     "Primary Name": row["Primary Name"],
     "Primary Name (English)": row["Primary Name (English)"],
     "Other Names": row["Other Names"],
+    "Country": row["Country"],
+    "Designation": row["Designation"],
     "Classification": row["Classification"],
     "Monument Type1": row["Monument Type1"],
     "Longitude": row["Longitude"],
@@ -634,8 +724,8 @@ function buildMonumentListRecord(row, lang, currentAppUserId = null, canEditCaal
 
     filter_values: {
       monument_types: row["Monument Type1"] ? [row["Monument Type1"]] : [],
-      religions: row["Religion1"] ? [row["Religion1"]] : [],
-      cultural_periods: row["Cultural Period1"] ? [row["Cultural Period1"]] : [],
+      religions: [],
+      cultural_periods: [],
       classification: row["Classification"],
       designation: row["Designation"],
       country: row["Country"]
@@ -828,6 +918,20 @@ function parseAdminBoundaryId(value) {
   return Number.isInteger(parsed) ? parsed : null;
 }
 
+function nationalClusterCellSizeForZoom(zoom) {
+  const z = Number(zoom);
+
+  if (!Number.isFinite(z)) return 0.5;
+
+  if (z < 4) return 1.5;
+  if (z < 5) return 1.0;
+  if (z < 6) return 0.5;
+  if (z < 7) return 0.25;
+  if (z < 8) return 0.12;
+
+  return 0;
+}
+
 function appendAdminBoundaryFilter({
   sql,
   values,
@@ -837,7 +941,7 @@ function appendAdminBoundaryFilter({
   if (!boundaryId) {
     return {
       sql,
-      values
+      values: [...values]
     };
   }
 
@@ -924,6 +1028,109 @@ async function applyCulturalPeriodDatesToPayload(payload) {
   return payload;
 }
 
+function publicListFilterColumnsSql(alias = "m") {
+  const p = alias ? `${alias}.` : "";
+
+  return `
+    ${p}"Country",
+    ${p}"Designation",
+    ${p}search_blob_en,
+    ${p}search_blob_ru,
+    ${p}search_blob_zh,
+    ${p}search_blob_kk,
+    ${p}search_blob_ky,
+    ${p}search_blob_tg,
+    ${p}search_blob_tk,
+    ${p}search_blob_uz,
+    ${p}monument_types_arr,
+    ${p}religions_arr,
+    ${p}cultural_periods_arr
+  `;
+}
+
+function workspaceListFilterColumnsSql(alias = "m") {
+  const p = alias ? `${alias}.` : "";
+
+  const workspaceSearchBlobSql = `
+    lower(concat_ws(' ',
+      ${p}"CAAL_ID",
+      ${p}"Primary Name",
+      ${p}"Primary Name (English)",
+      ${p}"Other Names",
+      ${p}"Country",
+      ${p}"Region",
+      ${p}"Classification",
+      ${p}"Designation",
+      ${p}"Monument Type1",
+      ${p}"Monument Type2",
+      ${p}"Monument Type3",
+      ${p}"Monument Type4",
+      ${p}"Monument Type5",
+      ${p}"Monument Type6",
+      ${p}"Religion1",
+      ${p}"Religion2",
+      ${p}"Religion3",
+      ${p}"Cultural Period1",
+      ${p}"Cultural Period2",
+      ${p}"Cultural Period3",
+      ${p}"Cultural Period4",
+      ${p}"Cultural Period5",
+      ${p}"Cultural Period6",
+      ${p}"Internal Reference",
+      ${p}"External Reference",
+      ${p}"Monument Passport",
+      ${p}"Descriptive Date",
+      ${p}"Primary Description",
+      ${p}"Primary Description (English)",
+      ${p}"Additional Notes",
+      ${p}"Primary Address",
+      ${p}"Administrative Subdivision Name1",
+      ${p}"Administrative Subdivision Name2",
+      ${p}"Administrative Subdivision Name3",
+      ${p}"Administrative Subdivision Name4",
+      ${p}"World Heritage Site Name"
+    ))
+  `;
+
+  return `
+    ${p}"Country",
+    ${p}"Designation",
+
+    ${workspaceSearchBlobSql} AS search_blob_en,
+    ${workspaceSearchBlobSql} AS search_blob_ru,
+    ${workspaceSearchBlobSql} AS search_blob_zh,
+    ${workspaceSearchBlobSql} AS search_blob_kk,
+    ${workspaceSearchBlobSql} AS search_blob_ky,
+    ${workspaceSearchBlobSql} AS search_blob_tg,
+    ${workspaceSearchBlobSql} AS search_blob_tk,
+    ${workspaceSearchBlobSql} AS search_blob_uz,
+
+    ARRAY_REMOVE(ARRAY[
+      NULLIF(btrim(${p}"Monument Type1"), ''),
+      NULLIF(btrim(${p}"Monument Type2"), ''),
+      NULLIF(btrim(${p}"Monument Type3"), ''),
+      NULLIF(btrim(${p}"Monument Type4"), ''),
+      NULLIF(btrim(${p}"Monument Type5"), ''),
+      NULLIF(btrim(${p}"Monument Type6"), '')
+    ], NULL) AS monument_types_arr,
+
+    ARRAY_REMOVE(ARRAY[
+      NULLIF(btrim(${p}"Religion1"), ''),
+      NULLIF(btrim(${p}"Religion2"), ''),
+      NULLIF(btrim(${p}"Religion3"), '')
+    ], NULL) AS religions_arr,
+
+    ARRAY_REMOVE(ARRAY[
+      NULLIF(btrim(${p}"Cultural Period1"), ''),
+      NULLIF(btrim(${p}"Cultural Period2"), ''),
+      NULLIF(btrim(${p}"Cultural Period3"), ''),
+      NULLIF(btrim(${p}"Cultural Period4"), ''),
+      NULLIF(btrim(${p}"Cultural Period5"), ''),
+      NULLIF(btrim(${p}"Cultural Period6"), '')
+    ], NULL) AS cultural_periods_arr
+  `;
+}
+
 function monumentCardSelectSql(alias = "combined", lang = "en") {
   const p = alias ? `${alias}.` : "";
   const safeLang = safeMonumentLang(lang);
@@ -940,11 +1147,13 @@ function monumentCardSelectSql(alias = "combined", lang = "en") {
     ${p}monument_type1_${safeLang} AS monument_type1_display,
     ${p}"Longitude",
     ${p}"Latitude",
+    ${p}"Tstamp",
     ${p}created_by_app_user_id,
     ${p}source_scope,
     ${p}storage_scope,
     ${p}is_promoted,
-    ${p}is_editable
+    ${p}is_editable,
+    ${publicListFilterColumnsSql(alias)}
   `;
 }
 
@@ -969,7 +1178,8 @@ function promotedWorkspaceCardSelectSql(alias = "m", lang = "en") {
     'workspace'::text AS source_scope,
     'public_caal'::text AS storage_scope,
     true AS is_promoted,
-    true AS is_editable
+    true AS is_editable,
+    ${publicListFilterColumnsSql(alias)}
   `;
 }
 
@@ -1039,7 +1249,8 @@ function workspaceCardSelectSql(lang = "en") {
     'workspace'::text AS source_scope,
     'kz_workspace'::text AS storage_scope,
     false AS is_promoted,
-    true AS is_editable
+    true AS is_editable,
+    ${workspaceListFilterColumnsSql("m")}
   `;
 }
 
@@ -1250,94 +1461,6 @@ function fallbackLookupLang(lang) {
   return ["kk", "ky", "tg", "tk", "uz"].includes(lang) ? "ru" : "en";
 }
 
-async function fetchLookupRows(sql, lang) {
-  const safeLang = safeMonumentLang(lang);
-  const fallbackLang = fallbackLookupLang(safeLang);
-
-  const result = await pool.query(sql);
-
-  return result.rows.map((row) => ({
-    value: row.canonical_value,
-    label:
-      row[`display_${safeLang}`] ||
-      row[`display_${fallbackLang}`] ||
-      row.display_en ||
-      row.canonical_value
-  }));
-}
-
-router.get("/lookups/monuments", async (req, res) => {
-  //console.log("MONUMENTS route session:", JSON.stringify(req.session, null, 2));
-  //console.log("MONUMENTS query:", req.query);
-  //console.log("MONUMENTS appSession:", req.session?.appSession || null);
-  const currentSession = req.session?.appSession || null;
-
-  if (!currentSession) {
-    return res.status(401).json({ ok: false, error: "No active session" });
-  }
-
-  const lang = req.query.lang || currentSession.profile?.preferred_language || "en";
-
-  try {
-    const [
-      countries,
-      classifications,
-      designations,
-      monumentTypes,
-      religions,
-      culturalPeriods,
-      locationConfidence,
-      adminTypes,
-      units,
-      measurementTypes,
-      languageDisplay
-    ] = await Promise.all([
-      fetchLookupRows(`SELECT canonical_value, display_en, display_ru, display_zh, display_kk, display_ky, display_tg, display_tk, display_uz FROM ui.v_lkp_countries ORDER BY display_en NULLS LAST, canonical_value`, lang),
-      fetchLookupRows(`SELECT canonical_value, display_en, display_ru, display_zh, display_kk, display_ky, display_tg, display_tk, display_uz FROM ui.v_lkp_classifications ORDER BY display_en NULLS LAST, canonical_value`, lang),
-      fetchLookupRows(`SELECT canonical_value, display_en, display_ru, display_zh, display_kk, display_ky, display_tg, display_tk, display_uz FROM ui.v_lkp_designation_type ORDER BY display_en NULLS LAST, canonical_value`, lang),
-      fetchLookupRows(`SELECT canonical_value, display_en, display_ru, display_zh, display_kk, display_ky, display_tg, display_tk, display_uz FROM ui.v_lkp_site_types_context ORDER BY sort_order NULLS LAST, display_en NULLS LAST, canonical_value`, lang),
-      fetchLookupRows(`SELECT canonical_value, display_en, display_ru, display_zh, display_kk, display_ky, display_tg, display_tk, display_uz FROM ui.v_lkp_religion ORDER BY display_en NULLS LAST, canonical_value`, lang),
-      fetchLookupRows(`SELECT canonical_value, display_en, display_ru, display_zh, display_kk, display_ky, display_tg, display_tk, display_uz FROM ui.v_lkp_cultural_periods_context ORDER BY sort_order NULLS LAST, display_en NULLS LAST, canonical_value`, lang),
-      fetchLookupRows(`SELECT canonical_value, display_en, display_ru, display_zh, display_kk, display_ky, display_tg, display_tk, display_uz FROM ui.v_lkp_loc_acc_ass ORDER BY display_en NULLS LAST, canonical_value`, lang),
-      fetchLookupRows(`SELECT canonical_value, display_en, display_ru, display_zh, display_kk, display_ky, display_tg, display_tk, display_uz FROM ui.v_lkp_admin_type ORDER BY display_en NULLS LAST, canonical_value`, lang),
-      fetchLookupRows(`SELECT canonical_value, display_en, display_ru, display_zh, display_kk, display_ky, display_tg, display_tk, display_uz FROM ui.v_lkp_unit_of_measurement ORDER BY display_en NULLS LAST, canonical_value`, lang),
-      fetchLookupRows(`SELECT canonical_value, display_en, display_ru, display_zh, display_kk, display_ky, display_tg, display_tk, display_uz FROM ui.v_lkp_measurement_type ORDER BY display_en NULLS LAST, canonical_value`, lang),
-      fetchLookupRows(`
-        SELECT canonical_value, display_en, display_ru, display_zh,
-              display_kk, display_ky, display_tg, display_tk, display_uz
-        FROM ui.v_lkp_langdisplay
-        ORDER BY sort_order NULLS LAST, display_en NULLS LAST, canonical_value
-      `, lang)
-    ]);
-
-    return res.json({
-      ok: true,
-      lookups: {
-        country: countries,
-        classification: classifications,
-        designation: designations,
-        monument_type: monumentTypes,
-        religion: religions,
-        cultural_period: culturalPeriods,
-        location_confidence: locationConfidence,
-        admin_subdivision_type: adminTypes,
-        measurement_unit: units,
-        measurement_type: measurementTypes,
-        language_display: languageDisplay
-      }
-    });
-  } catch (error) {
-    console.error("Monuments lookups failed:");
-    console.error(error);
-
-    return res.status(500).json({
-      ok: false,
-      error: "Failed to load monuments lookups",
-      detail: error.message
-    });
-  }
-});
-
 router.get("/map/borders", async (req, res) => {
   const currentSession = req.session?.appSession || null;
 
@@ -1373,30 +1496,39 @@ router.get("/map/borders", async (req, res) => {
       FROM (
         SELECT jsonb_build_object(
           'type', 'Feature',
-          'id', boundary_id,
+          'id', b.boundary_id,
           'geometry',
             CASE
               WHEN $5::double precision > 0 THEN
                 ST_AsGeoJSON(
-                  ST_SimplifyPreserveTopology(geom, $5::double precision)
+                  ST_SimplifyPreserveTopology(b.geom, $5::double precision)
                 )::jsonb
               ELSE
-                ST_AsGeoJSON(geom)::jsonb
+                ST_AsGeoJSON(b.geom)::jsonb
             END,
           'properties', jsonb_build_object(
-            'boundary_id', boundary_id,
-            'source', source,
-            'source_version', source_version,
-            'country_iso3', country_iso3,
-            'admin_level', admin_level,
-            'admin_code', admin_code,
-            'admin_name', admin_name,
-            'admin_type', admin_type
+            'boundary_id', b.boundary_id,
+            'source', b.source,
+            'source_version', b.source_version,
+            'country_iso3', b.country_iso3,
+            'admin_level', b.admin_level,
+            'admin_code', b.admin_code,
+            'admin_name', b.admin_name,
+            'admin_type', b.admin_type,
+            'count_all_caal', COALESCE(c.record_count, 0)
           )
         ) AS feature
-        FROM ui.mv_admin_boundaries_map
-        WHERE geom && ST_MakeEnvelope($1, $2, $3, $4, 4326)
-        ORDER BY country_iso3, admin_name
+        FROM ui.mv_admin_boundaries_map b
+        LEFT JOIN (
+          SELECT
+            boundary_id,
+            COUNT(*)::integer AS record_count
+          FROM ui.monument_admin_boundary_membership
+          GROUP BY boundary_id
+        ) c
+          ON c.boundary_id = b.boundary_id
+        WHERE b.geom && ST_MakeEnvelope($1, $2, $3, $4, 4326)
+        ORDER BY b.country_iso3, b.admin_name
       ) q;
       `,
       [
@@ -1696,6 +1828,203 @@ router.get("/map/admin-boundaries/:boundaryId/summary", async (req, res) => {
   }
 });
 
+router.get("/monuments/map-national-clusters", async (req, res) => {
+  const currentSession = req.session?.appSession || null;
+
+  if (!currentSession) {
+    return res.status(401).json({ ok: false, error: "No active session" });
+  }
+
+  if (!getAllowedScopes(currentSession).includes("national_ref")) {
+    return res.status(403).json({
+      ok: false,
+      error: "No permission to view national CAAL records"
+    });
+  }
+
+  const lang =
+    req.query.lang ||
+    currentSession.profile?.preferred_language ||
+    "en";
+
+  const safeLang = safeMonumentLang(lang);
+  const zoom = Number(req.query.zoom || 0);
+  const cellSize = nationalClusterCellSizeForZoom(zoom);
+  const bbox = parseBboxParam(req.query.bbox);
+
+  if (!bbox) {
+    return res.status(400).json({
+      ok: false,
+      error: "Missing or invalid bbox"
+    });
+  }
+
+  const nationalWhere = nationalRefWhereSql("m", currentSession);
+  const currentAppUserId = currentAppUserIdFromSession(currentSession) ?? -1;
+
+  const filter = buildMonumentFilterWhere(req, lang);
+
+  const values = [...filter.values];
+  let nextIndex = values.length + 1;
+
+  const extraClauses = [
+    `(${nationalWhere})`,
+    `
+    NOT EXISTS (
+      SELECT 1
+      FROM public.record_registry rr
+      WHERE rr.caal_id = m."CAAL_ID"
+        AND rr.created_by_app_user_id = ${currentAppUserId}
+        AND COALESCE(rr.status, '') <> 'deleted'
+    )
+    `,
+    `
+    m."Longitude" BETWEEN $${nextIndex} AND $${nextIndex + 1}
+    AND m."Latitude" BETWEEN $${nextIndex + 2} AND $${nextIndex + 3}
+    `
+  ];
+
+  values.push(
+    bbox.minLng,
+    bbox.maxLng,
+    bbox.minLat,
+    bbox.maxLat
+  );
+  nextIndex += 4;
+
+  const adminBoundaryId = parseAdminBoundaryId(req.query.adminBoundaryId);
+
+  if (adminBoundaryId) {
+    extraClauses.push(`
+      EXISTS (
+        SELECT 1
+        FROM ui.monument_admin_boundary_membership abm
+        WHERE abm.caal_id = m."CAAL_ID"
+          AND abm.boundary_id = $${nextIndex}
+      )
+    `);
+
+    values.push(adminBoundaryId);
+    nextIndex += 1;
+  }
+
+  const filterWhere = filter.whereSql
+    ? filter.whereSql.replace(/^WHERE\s+/i, "")
+    : "";
+
+  if (filterWhere) {
+    extraClauses.push(filterWhere);
+  }
+
+  const whereSql = `WHERE ${extraClauses.join(" AND ")}`;
+
+  try {
+    if (cellSize > 0) {
+      const result = await pool.query(
+        `
+        WITH filtered AS (
+          SELECT
+            m."CAAL_ID",
+            m."Longitude",
+            m."Latitude",
+            ST_SnapToGrid(
+              ST_SetSRID(ST_MakePoint(m."Longitude", m."Latitude"), 4326),
+              $${nextIndex}
+            ) AS grid_geom
+          FROM ${MONUMENTS_CAAL_MV} m
+          ${whereSql}
+          AND m."Longitude" IS NOT NULL
+          AND m."Latitude" IS NOT NULL
+        ),
+        grouped AS (
+          SELECT
+            grid_geom,
+            COUNT(*)::integer AS count,
+            AVG("Longitude")::double precision AS longitude,
+            AVG("Latitude")::double precision AS latitude
+          FROM filtered
+          GROUP BY grid_geom
+        )
+        SELECT
+          ('national-cluster-' || row_number() OVER ()) AS id,
+          'cluster'::text AS feature_type,
+          count,
+          longitude,
+          latitude,
+          'national_ref'::text AS source_scope
+        FROM grouped
+        ORDER BY count DESC
+        `,
+        [...values, cellSize]
+      );
+
+      return res.json({
+        ok: true,
+        mode: "clusters",
+        cell_size: cellSize,
+        clusters: result.rows,
+        points: []
+      });
+    }
+
+    const result = await pool.query(
+      `
+      SELECT
+        m.id,
+        m."CAAL_ID",
+        m."Primary Name",
+        m."Primary Name (English)",
+        m."Country",
+        m.country_${safeLang} AS country_display,
+        m."Region",
+        m."Classification",
+        m.classification_${safeLang} AS classification_display,
+        m."Designation",
+        m.designation_${safeLang} AS designation_display,
+        m."Monument Type1",
+        m.monument_type1_${safeLang} AS monument_type1_display,
+        m."Cultural Period1",
+        m.cultural_period1_${safeLang} AS cultural_period1_display,
+        m."Religion1",
+        m.religion1_${safeLang} AS religion1_display,
+        m."Longitude",
+        m."Latitude",
+        m.created_by_app_user_id,
+        'national_ref'::text AS source_scope,
+        'public_caal'::text AS storage_scope,
+        true AS is_promoted,
+        false AS is_editable
+      FROM ${MONUMENTS_CAAL_MV} m
+      ${whereSql}
+      AND m."Longitude" IS NOT NULL
+      AND m."Latitude" IS NOT NULL
+      `,
+      values
+    );
+
+    const records = result.rows.map((row) =>
+      buildMonumentMapRecord(row, lang, currentAppUserId, false)
+    );
+
+    return res.json({
+      ok: true,
+      mode: "points",
+      cell_size: 0,
+      clusters: [],
+      points: records
+    });
+  } catch (error) {
+    console.error("National monument cluster fetch failed:");
+    console.error(error);
+
+    return res.status(500).json({
+      ok: false,
+      error: "National monument cluster fetch failed",
+      detail: error.message
+    });
+  }
+});
+
 router.get("/monuments/map", async (req, res) => {
   //console.log("MONUMENTS route session:", JSON.stringify(req.session, null, 2));
   //console.log("MONUMENTS query:", req.query);
@@ -1768,8 +2097,6 @@ router.get("/monuments/map", async (req, res) => {
         ? `${workspaceWhere} AND ${extraClauses.join(" AND ")}`
         : `WHERE ${extraClauses.join(" AND ")}`;
 
-      const limitParamIndex = values.length + 1;
-
       const dataSql = `
         WITH workspace_rows AS (
           SELECT
@@ -1794,10 +2121,9 @@ router.get("/monuments/map", async (req, res) => {
         ORDER BY
           "Tstamp" DESC NULLS LAST,
           id DESC
-        LIMIT $${limitParamIndex}
       `;
 
-      const result = await pool.query(dataSql, [...values, 5000]);
+      const result = await pool.query(dataSql, values);
 
       const currentAppUserId = currentSession?.user?.user_id ?? null;
       const canEditCaal = canEditCaalMonuments(currentSession);
@@ -1880,10 +2206,6 @@ router.get("/monuments/map", async (req, res) => {
     //console.log("MAP values:", extraValues);
 
     const safeLang = safeMonumentLang(lang);
-    const hasFreeTextSearch = hasExpensiveFreeTextSearch(req);
-    const mapLimit = hasFreeTextSearch ? 1500 : 5000;
-
-    const limitParamIndex = finalMapValues.length + 1;
 
     const dataSql = `
       SELECT
@@ -1915,13 +2237,9 @@ router.get("/monuments/map", async (req, res) => {
         ${unionSql}
       ) combined
       ${combinedWhere}
-      LIMIT $${limitParamIndex}
     `;
 
-    const result = await pool.query(dataSql, [...finalMapValues, mapLimit]);
-
-    console.log("MAP SQL:", dataSql);
-    console.log("MAP values:", [...extraValues, mapLimit]);
+    const result = await pool.query(dataSql, finalMapValues);
 
     const currentAppUserId = currentSession?.user?.user_id ?? null;
     const canEditCaal = canEditCaalMonuments(currentSession);
@@ -2094,7 +2412,7 @@ router.get("/monuments", async (req, res) => {
   }
 
   try {
-    const unionSql = buildBrowseUnionSql(scopes, currentSession);
+    const unionSql = buildBrowseListUnionSql(scopes, currentSession, lang);
 
     const { whereSql, values } = buildMonumentFilterWhere(req, lang);
 
@@ -2114,7 +2432,25 @@ router.get("/monuments", async (req, res) => {
 
     const dataSql = `
       SELECT
-        ${monumentCardSelectSql("combined", lang)}
+        combined.id,
+        combined."CAAL_ID",
+        combined."Primary Name",
+        combined."Primary Name (English)",
+        combined."Other Names",
+        combined."Country",
+        combined."Designation",
+        combined."Classification",
+        combined.classification_display,
+        combined."Monument Type1",
+        combined.monument_type1_display,
+        combined."Longitude",
+        combined."Latitude",
+        combined."Tstamp",
+        combined.created_by_app_user_id,
+        combined.source_scope,
+        combined.storage_scope,
+        combined.is_promoted,
+        combined.is_editable
       FROM (
         ${unionSql}
       ) combined
@@ -2410,6 +2746,8 @@ const MONUMENT_EDITABLE_FIELDS = [
   "Cultural Period4",
   "Cultural Period5",
   "Cultural Period6",
+  "Start Date",
+  "End Date",
   "Primary Description",
   "Primary Description (English)",
   "Additional Notes",
@@ -2460,6 +2798,8 @@ function normaliseMonumentPayload(input = {}) {
       field === "Longitude" ||
       field === "Latitude" ||
       field === "Altitude" ||
+      field === "Start Date" ||
+      field === "End Date" ||
       field.startsWith("Measurement Value")
     ) {
       payload[field] = numberOrNull(value);

@@ -126,6 +126,10 @@ let selectedAdminBoundary = null;
 let adminBoundarySummaryClickEnabled = false;
 let hoveredAdminBoundaryId = null;
 
+let nationalClusterFeatures = [];
+let nationalClusterMode = "points";
+let nationalClusterPointRecords = [];
+
 let centralAsiaBordersDebounceTimer = null;
 
 // --------------------------------------------------------
@@ -397,9 +401,11 @@ function renderMonumentLegend() {
     (record) => monumentDisplayScope(record) === "workspace"
   );
 
-  const hasNational = monumentMapRecords.some(
-    (record) => monumentDisplayScope(record) === "national_ref"
-  );
+  const hasNational =
+    showNationalRecords?.checked === true ||
+    monumentMapRecords.some(
+      (record) => monumentDisplayScope(record) === "national_ref"
+    );
 
   const hasAllCaal = monumentMapRecords.some(
     (record) => monumentDisplayScope(record) === "all_caal"
@@ -506,9 +512,11 @@ function getCurrentMapLegendItems() {
     (record) => monumentDisplayScope(record) === "workspace"
   );
 
-  const hasNational = monumentMapRecords.some(
-    (record) => monumentDisplayScope(record) === "national_ref"
-  );
+  const hasNational =
+    showNationalRecords?.checked === true ||
+    monumentMapRecords.some(
+      (record) => monumentDisplayScope(record) === "national_ref"
+    );
 
   const hasAllCaal = monumentMapRecords.some(
     (record) => monumentDisplayScope(record) === "all_caal"
@@ -872,6 +880,7 @@ function getRenderedExportPointFeatures() {
   if (!map) return [];
 
   const pointLayerIds = [
+    "national-cluster-points",
     "monuments-workspace-layer",
     "monuments-national-layer",
     "monuments-all-caal-layer"
@@ -901,6 +910,7 @@ function getRenderedExportClusterFeatures() {
   if (!map) return [];
 
   const clusterLayerIds = [
+    "national-cluster-circles",
     "monument-national-clusters",
     "monument-all-caal-clusters"
   ].filter((layerId) => map.getLayer(layerId));
@@ -1151,6 +1161,202 @@ function boxesOverlap(a, b) {
 // Helpers
 // --------------------------------------------------------
 //map helpers
+async function fetchNationalMapClusters() {
+  if (!map) return { clusters: [], points: [], mode: "clusters" };
+
+  const bounds = map.getBounds();
+  const bbox = [
+    bounds.getWest(),
+    bounds.getSouth(),
+    bounds.getEast(),
+    bounds.getNorth()
+  ].join(",");
+
+  const params = buildMonumentQueryParams({ includePaging: false });
+  params.set("bbox", bbox);
+  params.set("zoom", String(map.getZoom()));
+  params.set("scopes", "national_ref");
+
+  const response = await fetch(`/api/monuments/map-national-clusters?${params.toString()}`, {
+    method: "GET",
+    credentials: "include"
+  });
+
+  const data = await response.json();
+
+  if (!response.ok || !data.ok) {
+    throw new Error(data.detail || data.error || "Failed to load national clusters");
+  }
+
+  return data;
+}
+
+function nationalClustersToGeoJson(data) {
+  const features = [];
+
+  if (Array.isArray(data.clusters)) {
+    data.clusters.forEach((cluster) => {
+      features.push({
+        type: "Feature",
+        geometry: {
+          type: "Point",
+          coordinates: [Number(cluster.longitude), Number(cluster.latitude)]
+        },
+        properties: {
+          feature_type: "cluster",
+          cluster_id: cluster.id,
+          count: Number(cluster.count || 0),
+          source_scope: "national_ref"
+        }
+      });
+    });
+  }
+
+  if (Array.isArray(data.points)) {
+    data.points.forEach((record) => {
+      const coords = record.geometry?.coordinates;
+      if (!coords) return;
+
+      features.push({
+        type: "Feature",
+        geometry: {
+          type: "Point",
+          coordinates: coords
+        },
+        properties: {
+          feature_type: "point",
+          id: record.identity?.id,
+          caal_id: record.identity?.caal_id,
+          source_scope: "national_ref",
+          primary_name: record.summary?.primary_name || "",
+          primary_name_english: record.summary?.primary_name_english || "",
+          monument_type1: record.summary?.monument_type1 || "",
+          cultural_period1: record.summary?.cultural_period1 || ""
+        }
+      });
+    });
+  }
+
+  return {
+    type: "FeatureCollection",
+    features
+  };
+}
+
+function ensureNationalClusterLayers() {
+  if (!map || !mapLoaded) return;
+
+  if (!map.getSource("national-clusters")) {
+    map.addSource("national-clusters", {
+      type: "geojson",
+      data: {
+        type: "FeatureCollection",
+        features: []
+      }
+    });
+  }
+
+  if (!map.getLayer("national-cluster-circles")) {
+    map.addLayer({
+      id: "national-cluster-circles",
+      type: "circle",
+      source: "national-clusters",
+      filter: ["==", ["get", "feature_type"], "cluster"],
+      paint: {
+        "circle-color": MONUMENT_MAP_COLOURS.national,
+        "circle-opacity": 0.82,
+        "circle-stroke-color": MONUMENT_MAP_COLOURS.whiteStroke,
+        "circle-stroke-width": 1.5,
+        "circle-radius": [
+          "interpolate",
+          ["linear"],
+          ["get", "count"],
+          1, 12,
+          25, 18,
+          100, 26,
+          500, 36
+        ]
+      }
+    });
+  }
+
+  if (!map.getLayer("national-cluster-counts")) {
+    map.addLayer({
+      id: "national-cluster-counts",
+      type: "symbol",
+      source: "national-clusters",
+      filter: ["==", ["get", "feature_type"], "cluster"],
+      layout: {
+        "text-field": ["to-string", ["get", "count"]],
+        "text-size": 12,
+        "text-font": ["Open Sans Semibold", "Arial Unicode MS Bold"]
+      },
+      paint: {
+        "text-color": "#ffffff"
+      }
+    });
+  }
+
+  if (!map.getLayer("national-cluster-points")) {
+    map.addLayer({
+      id: "national-cluster-points",
+      type: "circle",
+      source: "national-clusters",
+      filter: ["==", ["get", "feature_type"], "point"],
+      paint: {
+        "circle-color": MONUMENT_MAP_COLOURS.national,
+        "circle-opacity": 0.9,
+        "circle-stroke-width": 1.5,
+        "circle-stroke-color": MONUMENT_MAP_COLOURS.whiteStroke,
+        "circle-radius": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          7, 4,
+          10, 6,
+          14, 8
+        ]
+      }
+    });
+  }
+}
+
+async function loadNationalClustersLayer() {
+  if (!map) return;
+
+  ensureNationalClusterLayers();
+
+  const source = map.getSource("national-clusters");
+  if (!source || typeof source.setData !== "function") return;
+
+  const data = await fetchNationalMapClusters();
+  const geojson = nationalClustersToGeoJson(data);
+
+  source.setData(geojson);
+
+  nationalClusterMode = data.mode || "clusters";
+  nationalClusterPointRecords = Array.isArray(data.points) ? data.points : [];
+  nationalClusterFeatures = Array.isArray(geojson.features) ? geojson.features : [];
+
+  bringMonumentOverlaysToFront();
+}
+
+function clearNationalClustersLayer() {
+  nationalClusterMode = "clusters";
+  nationalClusterPointRecords = [];
+  nationalClusterFeatures = [];
+
+  if (!map) return;
+
+  const source = map.getSource("national-clusters");
+  if (source && typeof source.setData === "function") {
+    source.setData({
+      type: "FeatureCollection",
+      features: []
+    });
+  }
+}
+
 function resetMapView() {
   if (!map) return;
 
@@ -1192,12 +1398,47 @@ function formatCount(value) {
   return number.toLocaleString();
 }
 
+function getNationalClusterMappedRecordCount() {
+  if (showNationalRecords?.checked !== true) {
+    return 0;
+  }
+
+  if (!Array.isArray(nationalClusterFeatures)) {
+    return 0;
+  }
+
+  return nationalClusterFeatures.reduce((total, feature) => {
+    const props = feature.properties || {};
+
+    if (props.feature_type === "cluster") {
+      const count = Number(props.count || 0);
+      return total + (Number.isFinite(count) ? count : 0);
+    }
+
+    if (props.feature_type === "point") {
+      return total + 1;
+    }
+
+    return total;
+  }, 0);
+}
+
 function updateMapStatusLine() {
   if (!mapStatusLine) return;
 
-  const mappedCount = Array.isArray(monumentMapRecords)
-    ? monumentMapRecords.filter((record) => Array.isArray(record?.geometry?.coordinates)).length
+  const standardMappedCount = Array.isArray(monumentMapRecords)
+    ? monumentMapRecords.filter((record) => {
+        if (!Array.isArray(record?.geometry?.coordinates)) return false;
+
+        /*
+          National records are drawn through the backend-cluster source,
+          so do not count national point records here as well.
+        */
+        return monumentDisplayScope(record) !== "national_ref";
+      }).length
     : 0;
+
+  const mappedCount = standardMappedCount + getNationalClusterMappedRecordCount();
 
   const totalCount = Number(monumentTotalCount || 0);
 
@@ -1906,6 +2147,31 @@ function mRenderLegacyMultiSelect({
   record,
   fullWidth = true
 }) {
+
+  if (fieldBase === "Monument Type" && lookupName === "monument_type") {
+    return mRenderLegacyTreePicker({
+      fieldBase,
+      count,
+      label,
+      record,
+      fullWidth,
+      treeLookupName: "monument_type_tree",
+      searchPlaceholder: t("search_site_types", "Search site types...")
+    });
+  }
+
+  if (fieldBase === "Cultural Period" && lookupName === "cultural_period") {
+    return mRenderLegacyTreePicker({
+      fieldBase,
+      count,
+      label,
+      record,
+      fullWidth,
+      treeLookupName: "cultural_period_tree",
+      searchPlaceholder: t("search_cultural_periods", "Search cultural periods...")
+    });
+  }
+
   const inputId = `monument_multi_${fieldBase.replace(/[^a-zA-Z0-9]+/g, "_")}`;
   const chipsId = `${inputId}_chips`;
 
@@ -1943,6 +2209,152 @@ function mRenderLegacyMultiSelect({
       >
         ${optionsHtml}
       </select>
+
+      <p class="filter-help">
+        ${t("filter_click_toggle_help", "Click values to select or deselect. Selected values appear above.")}
+        ${" "}
+        ${t("maximum_values_help", "Maximum: {count}.").replace("{count}", count)}
+      </p>
+    </div>
+  `;
+}
+
+function mRenderLegacyTreePicker({
+  fieldBase,
+  count,
+  label,
+  record,
+  fullWidth = true,
+  treeLookupName,
+  searchPlaceholder
+}) {
+  const safeKey = fieldBase.replace(/[^a-zA-Z0-9]+/g, "_");
+  const inputId = `legacy_tree_${safeKey}`;
+  const chipsId = `${inputId}_chips`;
+
+  const selectedValues = mLegacyMultiValues(record, fieldBase, count).map(String);
+  const treeItems = Array.isArray(monumentLookups?.[treeLookupName])
+    ? monumentLookups[treeLookupName]
+    : [];
+
+  const normalisedTreeItems = treeItems.map((item) => ({
+    ...item,
+    concept_id: String(item.concept_id || "").trim(),
+    parent_id: String(item.parent_id || "").trim(),
+    level: String(item.level || "").trim().toUpperCase()
+  }));
+
+  const topItems = normalisedTreeItems.filter((item) =>
+    !item.parent_id || item.level === "L1" || item.level === "1"
+  );
+
+  const childrenByParent = new Map();
+
+  normalisedTreeItems.forEach((item) => {
+    if (!item.parent_id || item.level === "L1" || item.level === "1") return;
+
+    if (!childrenByParent.has(item.parent_id)) {
+      childrenByParent.set(item.parent_id, []);
+    }
+
+    childrenByParent.get(item.parent_id).push(item);
+  });
+
+  const itemLabel = (item) => {
+    const base = mSafeValue(item.label || item.value || "");
+    const date = item.date_range ? ` <span class="legacy-tree-date">${mSafeValue(item.date_range)}</span>` : "";
+    return `${base}${date}`;
+  };
+
+  const rowsHtml = topItems.length
+    ? topItems.map((parent) => {
+        const children = childrenByParent.get(parent.concept_id) || [];
+        const parentChecked = selectedValues.includes(String(parent.value));
+
+        return `
+          <div class="legacy-tree-parent" data-concept-id="${parent.concept_id}">
+            <div class="legacy-tree-row legacy-tree-row-parent">
+              ${
+                children.length
+                  ? `
+                    <button
+                      type="button"
+                      class="legacy-tree-toggle"
+                      data-tree-toggle="${parent.concept_id}"
+                      aria-expanded="false"
+                    >
+                      ▸
+                    </button>
+                  `
+                  : `<span class="legacy-tree-toggle-spacer"></span>`
+              }
+
+              <label>
+                <input
+                  type="checkbox"
+                  class="legacy-tree-check"
+                  data-value="${mSafeValue(parent.value)}"
+                  data-concept-id="${mSafeValue(parent.concept_id)}"
+                  data-parent-id=""
+                  data-chip-label="${mSafeValue(parent.chip_label || parent.label || parent.value)}"
+                  ${parentChecked ? "checked" : ""}
+                >
+                <span>${itemLabel(parent)}</span>
+              </label>
+            </div>
+
+            <div class="legacy-tree-children" data-tree-children="${parent.concept_id}" hidden>
+              ${children.map((child) => {
+                const childChecked = selectedValues.includes(String(child.value));
+
+                return `
+                  <label class="legacy-tree-row legacy-tree-row-child">
+                    <input
+                      type="checkbox"
+                      class="legacy-tree-check"
+                      data-value="${mSafeValue(child.value)}"
+                      data-concept-id="${mSafeValue(child.concept_id)}"
+                      data-parent-id="${mSafeValue(parent.concept_id)}"
+                      data-chip-label="${mSafeValue(child.chip_label || child.label || child.value)}"
+                      ${childChecked ? "checked" : ""}
+                    >
+                    <span>${itemLabel(child)}</span>
+                  </label>
+                `;
+              }).join("")}
+            </div>
+          </div>
+        `;
+      }).join("")
+    : `
+      <div class="section-empty">
+        ${t("no_tree_lookup_loaded", "No lookup values loaded. Please refresh the page or check the lookup response.")}
+      </div>
+    `;
+
+  return `
+    <div
+      class="detail-item${fullWidth ? " full-width" : ""} legacy-tree-picker"
+      data-field-base="${fieldBase}"
+      data-field-count="${count}"
+    >
+      <span class="detail-label">${label}</span>
+
+      <div
+        class="selected-filter-chips monument-edit-selected-chips"
+        id="${chipsId}"
+        data-tree-chip-container
+      ></div>
+
+      <input
+        type="search"
+        class="form-control legacy-tree-search"
+        placeholder="${mSafeValue(searchPlaceholder)}"
+      >
+
+      <div class="legacy-tree" id="${inputId}">
+        ${rowsHtml}
+      </div>
 
       <p class="filter-help">
         ${t("filter_click_toggle_help", "Click values to select or deselect. Selected values appear above.")}
@@ -2130,6 +2542,48 @@ function mWireEditMultiSelects() {
   });
 }
 
+function wireLegacyTreePickers() {
+  document.querySelectorAll(".legacy-tree-picker").forEach((picker) => {
+    if (picker.dataset.treeWired === "true") {
+      renderLegacyTreeChips(picker);
+      return;
+    }
+
+    picker.dataset.treeWired = "true";
+
+    picker.querySelectorAll("[data-tree-toggle]").forEach((toggleBtn) => {
+      toggleBtn.addEventListener("click", () => {
+        const conceptId = toggleBtn.dataset.treeToggle;
+        const children = picker.querySelector(`[data-tree-children="${CSS.escape(conceptId)}"]`);
+        if (!children) return;
+
+        const isHidden = children.hidden;
+        children.hidden = !isHidden;
+        toggleBtn.textContent = isHidden ? "▾" : "▸";
+        toggleBtn.setAttribute("aria-expanded", String(isHidden));
+      });
+    });
+
+    picker.querySelectorAll(".legacy-tree-check").forEach((checkbox) => {
+      checkbox.addEventListener("change", () => {
+        enforceLegacyTreeSelectionRules(picker, checkbox);
+        syncLegacyTreeIntoRecord(picker);
+        renderLegacyTreeChips(picker);
+        monumentIsDirty = true;
+      });
+    });
+
+    const search = picker.querySelector(".legacy-tree-search");
+    if (search) {
+      search.addEventListener("input", () => {
+        filterLegacyTree(picker, search.value);
+      });
+    }
+
+    renderLegacyTreeChips(picker);
+  });
+}
+
 function mLookupOptions(lookupName) {
   return Array.isArray(monumentLookups?.[lookupName]) ? monumentLookups[lookupName] : [];
 }
@@ -2172,6 +2626,16 @@ function mRecordSearchText(record) {
   ];
 
   return fields.map(mNormalizeSearchText).join(" ");
+}
+
+function getLegacyTreeSelectedValuesForSave(fieldBase) {
+  const picker = document.querySelector(
+    `.legacy-tree-picker[data-field-base="${CSS.escape(fieldBase)}"]`
+  );
+
+  if (!picker) return null;
+
+  return getSelectedLegacyTreeValues(picker);
 }
 
 function mBuildSavePayload() {
@@ -2251,13 +2715,18 @@ function mBuildSavePayload() {
     'select.monument-edit-multiselect[data-field-base="Cultural Period"]'
   );
 
+  const monumentTypeTreeValues = getLegacyTreeSelectedValuesForSave("Monument Type");
+
   mLegacyMultiPayload(
     payload,
     "Monument Type",
     6,
-    monumentTypeSelect
-      ? Array.from(monumentTypeSelect.selectedOptions).map((option) => option.value)
-      : []
+    monumentTypeTreeValues ||
+      (
+        monumentTypeSelect
+          ? Array.from(monumentTypeSelect.selectedOptions).map((option) => option.value)
+          : []
+      )
   );
 
   mLegacyMultiPayload(
@@ -2269,14 +2738,42 @@ function mBuildSavePayload() {
       : []
   );
 
+  const culturalPeriodTreeValues = getLegacyTreeSelectedValuesForSave("Cultural Period");
+
   mLegacyMultiPayload(
     payload,
     "Cultural Period",
     6,
-    culturalPeriodSelect
-      ? Array.from(culturalPeriodSelect.selectedOptions).map((option) => option.value)
-      : []
+    culturalPeriodTreeValues ||
+      (
+        culturalPeriodSelect
+          ? Array.from(culturalPeriodSelect.selectedOptions).map((option) => option.value)
+          : []
+      )
   );
+
+  /*
+  Recalculate Start Date and End Date after Cultural Period1-6
+  have been written into the save payload. This is necessary for
+  the tree picker, because the initial payload reads Start/End
+  before the tree values are applied.
+  */
+  const dateScratchRecord = {
+    raw: {
+      ...(monumentSelectedRecord?.raw || {}),
+      ...payload
+    }
+  };
+
+  recalculateMonumentDates(dateScratchRecord);
+
+  payload["Start Date"] = dateScratchRecord.raw["Start Date"] ?? "";
+  payload["End Date"] = dateScratchRecord.raw["End Date"] ?? "";
+
+  if (monumentSelectedRecord?.raw) {
+    monumentSelectedRecord.raw["Start Date"] = payload["Start Date"];
+    monumentSelectedRecord.raw["End Date"] = payload["End Date"];
+  }
 
   if (monumentUserCanEditMasterId()) {
     payload["MasterID"] = normaliseRelatedIdList(mGetInputValue("MasterID"));
@@ -3464,6 +3961,16 @@ function bringMonumentOverlaysToFront() {
   bringBorderLayerBehindMonuments();
 
   [
+    "national-cluster-circles",
+    "national-cluster-counts",
+    "national-cluster-points"
+  ].forEach((layerId) => {
+    if (map.getLayer(layerId)) {
+      map.moveLayer(layerId);
+    }
+  });
+
+  [
     "monument-related-lines-halo",
     "monument-related-lines",
     "monument-related-points",
@@ -3484,18 +3991,11 @@ function bindAdminBoundaryLayerEvents() {
 
   map.__adminBoundaryEventsBound = true;
 
-  map.on("click", "central-asia-borders-fill", async (event) => {
-    if (!adminBoundarySummaryClickEnabled) {
-      return;
-    }
-
+  map.on("click", "central-asia-borders-fill", (event) => {
     const feature = event.features?.[0];
     if (!feature) return;
 
-    const boundaryId = Number(feature.properties?.boundary_id);
-    if (!Number.isInteger(boundaryId)) return;
-
-    await openAdminBoundarySummary(feature, event.lngLat);
+    openAdminBoundaryMiniPopup(feature, event.lngLat);
   });
 
   map.on("mousemove", "central-asia-borders-fill", (event) => {
@@ -3525,9 +4025,7 @@ function bindAdminBoundaryLayerEvents() {
       { hover: true }
     );
 
-    map.getCanvas().style.cursor = adminBoundarySummaryClickEnabled
-      ? "pointer"
-      : "";
+    map.getCanvas().style.cursor = "pointer";
   });
 
   map.on("mouseleave", "central-asia-borders-fill", () => {
@@ -3565,6 +4063,68 @@ async function fetchAdminBoundarySummary(boundaryId) {
   }
 
   return data;
+}
+
+function openAdminBoundaryMiniPopup(feature, lngLat) {
+  if (!map || !feature) return;
+
+  const props = feature.properties || {};
+  const boundaryId = Number(props.boundary_id);
+
+  if (!Number.isInteger(boundaryId)) return;
+
+  const regionName =
+    props.admin_name ||
+    props.admin_code ||
+    t("selected_region", "Selected region");
+
+  const totalCount = Number(props.count_all_caal || 0);
+
+  const popupId = `openRegionSummaryBtn-${boundaryId}`;
+
+  const html = `
+    <div class="region-mini-popup">
+      <h3>${mSafeValue(regionName)}</h3>
+
+      <p class="region-mini-popup-meta">
+        ${mSafeValue(props.country_iso3 || "")}
+      </p>
+
+      <p>
+        ${t("total_caal_records", "Total CAAL records")}:
+        <strong>${formatCount(totalCount)}</strong>
+      </p>
+
+      <button
+        type="button"
+        class="action-btn primary"
+        id="${popupId}"
+      >
+        ${t("open_regional_summary", "Open regional summary")}
+      </button>
+    </div>
+  `;
+
+  const popup = new maplibregl.Popup({
+    closeButton: true,
+    closeOnClick: true,
+    maxWidth: "300px",
+    offset: 12
+  })
+    .setLngLat(lngLat)
+    .setHTML(html)
+    .addTo(map);
+
+  setTimeout(() => {
+    const btn = document.getElementById(popupId);
+
+    if (btn) {
+      btn.addEventListener("click", async () => {
+        popup.remove();
+        await openAdminBoundarySummary(feature, lngLat);
+      });
+    }
+  }, 0);
 }
 
 function summaryRowsHtml(rows) {
@@ -4566,6 +5126,153 @@ function getSelectedOptionData(selectEl) {
     }));
 }
 
+function getSelectedLegacyTreeValues(picker) {
+  return Array.from(picker.querySelectorAll(".legacy-tree-check:checked"))
+    .map((checkbox) => checkbox.dataset.value)
+    .filter(Boolean);
+}
+
+function enforceLegacyTreeSelectionRules(picker, changedCheckbox) {
+  const maxCount = Number(picker.dataset.fieldCount || 6);
+  const fieldBase = picker.dataset.fieldBase || "Values";
+
+  if (!changedCheckbox.checked) return;
+
+  const changedConceptId = changedCheckbox.dataset.conceptId;
+  const changedParentId = changedCheckbox.dataset.parentId;
+
+  if (changedParentId) {
+    const parentCheckbox = picker.querySelector(
+      `.legacy-tree-check[data-concept-id="${CSS.escape(changedParentId)}"]`
+    );
+
+    if (parentCheckbox) {
+      parentCheckbox.checked = false;
+    }
+  } else {
+    picker
+      .querySelectorAll(`.legacy-tree-check[data-parent-id="${CSS.escape(changedConceptId)}"]`)
+      .forEach((childCheckbox) => {
+        childCheckbox.checked = false;
+      });
+  }
+
+  const checked = Array.from(
+    picker.querySelectorAll(".legacy-tree-check:checked")
+  );
+
+  if (checked.length > maxCount) {
+    changedCheckbox.checked = false;
+    alert(
+      t("legacy_multi_select_limit", "{label} can store a maximum of {count} values.")
+        .replace("{label}", mLabel(fieldBase, fieldBase))
+        .replace("{count}", maxCount)
+    );
+  }
+}
+
+function syncLegacyTreeIntoRecord(picker) {
+  if (!monumentSelectedRecord?.raw) return;
+
+  const fieldBase = picker.dataset.fieldBase;
+  const count = Number(picker.dataset.fieldCount || 6);
+  const values = getSelectedLegacyTreeValues(picker);
+
+  for (let i = 1; i <= count; i += 1) {
+    monumentSelectedRecord.raw[`${fieldBase}${i}`] = values[i - 1] || "";
+  }
+
+  if (fieldBase === "Cultural Period") {
+    recalculateMonumentDates(monumentSelectedRecord);
+  }
+}
+
+function renderLegacyTreeChips(picker) {
+  const chipContainer = picker.querySelector("[data-tree-chip-container]");
+  if (!chipContainer) return;
+
+  const selected = Array.from(
+    picker.querySelectorAll(".legacy-tree-check:checked")
+  ).map((checkbox) => ({
+    value: checkbox.dataset.value,
+    label:
+      checkbox.dataset.chipLabel ||
+      checkbox.closest("label")?.textContent?.trim() ||
+      checkbox.dataset.value
+  }));
+
+  chipContainer.innerHTML = "";
+
+  if (!selected.length) {
+    const empty = document.createElement("span");
+    empty.className = "filter-chip-empty";
+    empty.textContent = t("no_values_selected", "No values selected");
+    chipContainer.appendChild(empty);
+    return;
+  }
+
+  selected.forEach((item) => {
+    const chip = document.createElement("button");
+    chip.type = "button";
+    chip.className = "filter-chip";
+    chip.dataset.value = item.value;
+    chip.innerHTML = `
+      <span>${item.label}</span>
+      <span class="filter-chip-remove" aria-hidden="true">×</span>
+    `;
+
+    chip.addEventListener("click", () => {
+      const checkbox = picker.querySelector(
+        `.legacy-tree-check[data-value="${CSS.escape(item.value)}"]`
+      );
+
+      if (checkbox) {
+        checkbox.checked = false;
+      }
+
+      syncLegacyTreeIntoRecord(picker);
+      renderLegacyTreeChips(picker);
+      monumentIsDirty = true;
+    });
+
+    chipContainer.appendChild(chip);
+  });
+}
+
+function filterLegacyTree(picker, queryValue) {
+  const query = String(queryValue || "").trim().toLowerCase();
+
+  picker.querySelectorAll(".legacy-tree-parent").forEach((parentBlock) => {
+    const parentRow = parentBlock.querySelector(".legacy-tree-row-parent");
+    const childrenBlock = parentBlock.querySelector(".legacy-tree-children");
+    const toggleBtn = parentBlock.querySelector("[data-tree-toggle]");
+
+    const parentText = parentRow?.textContent?.toLowerCase() || "";
+    let anyChildMatch = false;
+
+    parentBlock.querySelectorAll(".legacy-tree-row-child").forEach((childRow) => {
+      const childText = childRow.textContent.toLowerCase();
+      const childMatches = !query || childText.includes(query);
+
+      childRow.hidden = !childMatches;
+      if (childMatches) anyChildMatch = true;
+    });
+
+    const parentMatches = !query || parentText.includes(query);
+    const blockMatches = parentMatches || anyChildMatch;
+
+    parentBlock.hidden = !blockMatches;
+
+    if (childrenBlock && query) {
+      childrenBlock.hidden = !anyChildMatch && !parentMatches;
+      if (toggleBtn) {
+        toggleBtn.textContent = childrenBlock.hidden ? "▸" : "▾";
+        toggleBtn.setAttribute("aria-expanded", String(!childrenBlock.hidden));
+      }
+    }
+  });
+}
+
 function renderFilterChipsForSelect(selectEl, chipsId) {
   const chipsEl = document.getElementById(chipsId);
   if (!selectEl || !chipsEl) return;
@@ -4832,8 +5539,11 @@ function bringBorderLayerBehindMonuments() {
 
   // Keep borders above the basemap but below monument points/clusters.
   const firstMonumentLayer = [
+    "national-cluster-circles",
+    "national-cluster-counts",
     "monument-national-clusters",
     "monument-all-caal-clusters",
+    "national-cluster-points",
     "monuments-national-layer",
     "monuments-all-caal-layer",
     "monuments-workspace-layer"
@@ -4861,6 +5571,8 @@ async function loadMonumentMapRecords() {
 
   if (!scopes.length) {
     monumentMapRecords = [];
+    nationalClusterPointRecords = [];
+    clearNationalClustersLayer();
     drawMonumentRecords([]);
     updateMapOptionsState();
     updateMapStatusLine();
@@ -4868,34 +5580,67 @@ async function loadMonumentMapRecords() {
     return;
   }
 
-  const params = buildMonumentQueryParams({ includePaging: false });
-
-  const bbox = getMapBboxParam();
-  if (bbox) {
-    params.set("bbox", bbox);
-  }
+  const useNationalClusters = scopes.includes("national_ref");
+  const normalMapScopes = scopes.filter((scope) => scope !== "national_ref");
 
   setMapStaleState(true, t("redrawing_map", "Redrawing map..."));
 
   try {
-    const response = await fetch(`/api/monuments/map?${params.toString()}`, {
-      method: "GET",
-      credentials: "include"
-    });
+    if (useNationalClusters) {
+      await loadNationalClustersLayer();
+    } else {
+      clearNationalClustersLayer();
+    }
 
-    const data = await response.json();
+    let standardRecords = [];
+
+    if (normalMapScopes.length) {
+      const params = buildMonumentQueryParams({ includePaging: false });
+      params.set("scopes", normalMapScopes.join(","));
+
+      const bbox = getMapBboxParam();
+      if (bbox) {
+        params.set("bbox", bbox);
+      }
+
+      const response = await fetch(`/api/monuments/map?${params.toString()}`, {
+        method: "GET",
+        credentials: "include"
+      });
+
+      const data = await response.json();
+
+      if (requestSeq !== monumentMapRequestSeq) {
+        return;
+      }
+
+      if (!response.ok || !data.ok) {
+        throw new Error(data.detail || data.error || "Failed to load monument map records");
+      }
+
+      standardRecords = data.records || [];
+    }
 
     if (requestSeq !== monumentMapRequestSeq) {
       return;
     }
 
-    if (!response.ok || !data.ok) {
-      throw new Error(data.detail || data.error || "Failed to load monument map records");
-    }
+    /*
+      Keep full clickable point records in state.
+      At low zoom, nationalClusterPointRecords will usually be empty because
+      the national endpoint returns clusters only.
+      At high zoom, it returns national points and those become clickable.
+    */
+    monumentMapRecords = [
+      ...standardRecords,
+      ...nationalClusterPointRecords
+    ];
 
-    monumentMapRecords = data.records || [];
-
-    drawMonumentRecords(monumentMapRecords);
+    /*
+      Draw only the standard records through the existing client-side layers.
+      National records are now drawn through the separate national-clusters source.
+    */
+    drawMonumentRecords(standardRecords);
 
     renderLiveMapLabels();
     updateMapOptionsState();
@@ -5277,6 +6022,36 @@ function bindMonumentLayerEvents() {
     "monument-all-caal-cluster-count"
   ]);
 
+  // Backend-generated national clusters.
+  // These are not MapLibre client clusters, so do not use getClusterExpansionZoom().
+    [
+      "national-cluster-circles",
+      "national-cluster-counts"
+    ].forEach((layerId) => {
+      if (!map.getLayer(layerId)) return;
+
+      map.on("click", layerId, (event) => {
+        const feature = event.features?.[0];
+        const coords = feature?.geometry?.coordinates;
+
+        if (!Array.isArray(coords)) return;
+
+        map.easeTo({
+          center: coords,
+          zoom: Math.min(map.getZoom() + 2, 10),
+          duration: 500
+        });
+      });
+
+      map.on("mouseenter", layerId, () => {
+        map.getCanvas().style.cursor = "pointer";
+      });
+
+      map.on("mouseleave", layerId, () => {
+        map.getCanvas().style.cursor = "";
+      });
+    });
+
   async function handleMonumentPointClick(e) {
     const feature = e.features?.[0];
     if (!feature) return;
@@ -5414,6 +6189,7 @@ function bindMonumentLayerEvents() {
   }
 
   [
+    "national-cluster-points",
     "monuments-national-layer",
     "monuments-all-caal-layer",
     "monuments-workspace-layer"
@@ -6475,6 +7251,7 @@ if (endDateInput) endDateInput.readOnly = true;
   }
   bindMonumentDirtyTracking();
   mWireEditMultiSelects();
+  wireLegacyTreePickers();
   recalculateMonumentDates(record);
   wireInlineLocationButtons();
   updateAddModeUI();
@@ -7222,27 +7999,6 @@ if (borderStyleSelect) {
   borderStyleSelect.addEventListener("change", () => {
     centralAsiaBorderStyle = borderStyleSelect.value || "subtle";
     applyCentralAsiaBorderStyle();
-  });
-}
-
-if (enableRegionSummaryClickCheckbox) {
-  enableRegionSummaryClickCheckbox.checked = adminBoundarySummaryClickEnabled;
-
-  enableRegionSummaryClickCheckbox.addEventListener("change", async () => {
-    adminBoundarySummaryClickEnabled =
-      enableRegionSummaryClickCheckbox.checked;
-
-    if (adminBoundarySummaryClickEnabled) {
-      centralAsiaBordersVisible = true;
-
-      if (showCentralAsiaBordersCheckbox) {
-        showCentralAsiaBordersCheckbox.checked = true;
-      }
-
-      ensureCentralAsiaBordersLayer();
-      setCentralAsiaBordersVisibility();
-      await loadCentralAsiaBorders();
-    }
   });
 }
 
