@@ -24,7 +24,23 @@ function archiveRegistryMatchSql(alias = "rr") {
 function makeArchiveBrowseScopeConfig(currentSession) {
   const currentAppUserId = currentAppUserIdFromSession(currentSession);
   const userId = currentAppUserId ?? -1;
+  const workspaceCode = getSessionWorkspaceCode(currentSession);
+
   const canEditCaal = canEditCaalArchive(currentSession);
+  const canEditNationalCaal = isNationalAdmin(currentSession);
+
+  const publicEditableSql = canEditCaal
+    ? "true"
+    : canEditNationalCaal
+      ? `m.workspace_code = '${workspaceCode.replace(/'/g, "''")}'`
+      : "false";
+
+  const allCaalEditableSql = canEditCaal ? "true" : "false";
+
+  const nationalWhere =
+    workspaceCode && workspaceCode !== "caal"
+      ? `m.workspace_code = '${workspaceCode.replace(/'/g, "''")}'`
+      : "false";
 
   const ownPromotedExclusion = `
     NOT EXISTS (
@@ -38,8 +54,6 @@ function makeArchiveBrowseScopeConfig(currentSession) {
   `;
 
   return {
-    // Internal key remains "workspace" for now.
-    // User-facing meaning: My workspace records.
     workspace: {
       sql: `
         SELECT
@@ -50,7 +64,7 @@ function makeArchiveBrowseScopeConfig(currentSession) {
           true AS is_editable_override,
           'kz_workspace'::text AS storage_scope,
           false AS is_promoted
-        FROM kz.v_archive_grid_base v
+        FROM ${ARCHIVE_WORKSPACE_VIEW} v
         LEFT JOIN public.record_registry rr
           ON rr.source_schema = 'kz'
          AND rr.source_table = 'CAAL_Archive'
@@ -62,11 +76,13 @@ function makeArchiveBrowseScopeConfig(currentSession) {
 
         SELECT
           m.*,
+          'workspace'::text AS source_scope,
+          true AS is_editable,
           'workspace'::text AS source_scope_override,
           true AS is_editable_override,
           'public_caal'::text AS storage_scope,
           true AS is_promoted
-        FROM kz.mv_archive_combined m
+        FROM ${ARCHIVE_CAAL_MV} m
         JOIN public.record_registry rr
           ON rr.caal_id = m."CAAL_ID"
          AND ${archiveRegistryMatchSql("rr")}
@@ -75,32 +91,38 @@ function makeArchiveBrowseScopeConfig(currentSession) {
       `
     },
 
-    // National public CAAL archive records, excluding my promoted records.
     national_ref: {
       sql: `
         SELECT
           m.*,
-          NULL::text AS source_scope_override,
-          NULL::boolean AS is_editable_override,
+          'national_ref'::text AS source_scope,
+          ${publicEditableSql} AS is_editable,
+          'national_ref'::text AS source_scope_override,
+          ${publicEditableSql} AS is_editable_override,
           'public_caal'::text AS storage_scope,
           true AS is_promoted
-        FROM kz.mv_archive_combined m
-        WHERE m.source_scope = 'national_ref'
+        FROM ${ARCHIVE_CAAL_MV} m
+        WHERE ${nationalWhere}
           AND ${ownPromotedExclusion}
       `
     },
 
-    // Other public CAAL archive records, excluding my promoted records.
     all_caal: {
       sql: `
         SELECT
           m.*,
-          NULL::text AS source_scope_override,
-          NULL::boolean AS is_editable_override,
+          'all_caal'::text AS source_scope,
+          ${allCaalEditableSql} AS is_editable,
+          'all_caal'::text AS source_scope_override,
+          ${allCaalEditableSql} AS is_editable_override,
           'public_caal'::text AS storage_scope,
           true AS is_promoted
-        FROM kz.mv_archive_combined m
-        WHERE m.source_scope = 'all_caal'
+        FROM ${ARCHIVE_CAAL_MV} m
+        WHERE (
+            ${workspaceCode && workspaceCode !== "caal"
+              ? `m.workspace_code IS DISTINCT FROM '${workspaceCode.replace(/'/g, "''")}'`
+              : "true"}
+          )
           AND ${ownPromotedExclusion}
       `
     }
@@ -219,6 +241,7 @@ function buildArchiveRecord(row, lang) {
     row.is_editable_override !== undefined
       ? row.is_editable_override
       : row.is_editable;
+
   return {
     identity: {
       id: row.id,
@@ -275,9 +298,25 @@ router.get("/", async (req, res) => {
     });
   }
 
+  function normalizeRequestedScopes(scopes) {
+    return Array.from(new Set(scopes));
+  }
+ 
   const requestedScopes = parseScopes(req.query.scopes);
+  const normalizedScopes = normalizeRequestedScopes(requestedScopes);
   const allowedScopes = getAllowedScopes(currentSession);
-  const scopes = requestedScopes.filter((scope) => allowedScopes.includes(scope));
+  const scopes = normalizedScopes.filter((scope) => allowedScopes.includes(scope));
+
+  console.log("[Archive browse debug]", {
+    username: currentSession?.user?.username,
+    userId: currentSession?.user?.user_id,
+    accessLevel: getAccessLevel(currentSession),
+    workspaceCode: getSessionWorkspaceCode(currentSession),
+    requestedScopes,
+    normalizedScopes,
+    allowedScopes,
+    scopes
+  });
 
   if (scopes.length === 0) {
     return res.status(403).json({
@@ -454,6 +493,9 @@ router.get("/", async (req, res) => {
 const ARCHIVE_WORKSPACE_TABLE = 'kz."CAAL_Archive"';
 const ARCHIVE_CAAL_TABLE = 'public."CAAL_Archive"';
 
+const ARCHIVE_WORKSPACE_VIEW = "kz.v_archive_grid_base_app";
+const ARCHIVE_CAAL_MV = "ui.mv_archive_caal_app";
+
 const ARCHIVE_EDITABLE_FIELDS = [
   "Level",
   "Original Reference",
@@ -494,12 +536,202 @@ const ARCHIVE_EDITABLE_FIELDS = [
   "Country"
 ];
 
+function getAccessLevel(session) {
+  return Number(
+    session?.user?.access_level ??
+    session?.profile?.access_level ??
+    session?.permissions?.access_level ??
+    session?.access_level ??
+    0
+  );
+}
+
+function getSessionWorkspaceCode(session) {
+  return String(
+    session?.user?.workspace_code ??
+    session?.profile?.workspace_code ??
+    ""
+  ).trim().toLowerCase();
+}
+
+function isCaalAdmin(session) {
+  return getAccessLevel(session) === 9 && getSessionWorkspaceCode(session) === "caal";
+}
+
+function isNationalAdmin(session) {
+  const workspaceCode = getSessionWorkspaceCode(session);
+  return getAccessLevel(session) === 9 && workspaceCode && workspaceCode !== "caal";
+}
+
 function canEditArchive(session) {
   return !!session?.permissions?.can_edit_workspace;
 }
 
+// Global CAAL admin only.
 function canEditCaalArchive(session) {
-  return !!session?.permissions?.can_edit_caal;
+  return isCaalAdmin(session);
+}
+
+function canEditPublicCaalArchive(session) {
+  return (
+    isCaalAdmin(session) ||
+    isNationalAdmin(session) ||
+    canEditArchive(session)
+  );
+}
+
+function normaliseArchiveLogValue(value) {
+  if (value === undefined) return null;
+  if (value instanceof Date) return value.toISOString();
+  if (value === null) return null;
+  return value;
+}
+
+function archiveValuesDifferForLog(oldValue, newValue) {
+  return JSON.stringify(normaliseArchiveLogValue(oldValue)) !==
+    JSON.stringify(normaliseArchiveLogValue(newValue));
+}
+
+function buildArchiveChangedValueSnapshots(oldRow, newRow, submittedFields) {
+  const changedFields = [];
+  const oldValues = {};
+  const newValues = {};
+
+  submittedFields.forEach((field) => {
+    const oldValue = oldRow?.[field] ?? null;
+    const newValue = newRow?.[field] ?? null;
+
+    if (archiveValuesDifferForLog(oldValue, newValue)) {
+      changedFields.push(field);
+      oldValues[field] = normaliseArchiveLogValue(oldValue);
+      newValues[field] = normaliseArchiveLogValue(newValue);
+    }
+  });
+
+  return { changedFields, oldValues, newValues };
+}
+
+function classifyArchiveEdit(changedFields = []) {
+  const set = new Set(changedFields);
+
+  if (
+    set.has("Associated CAAL_ID") ||
+    set.has("Related Countries") ||
+    set.has("Related Towns and Cities") ||
+    set.has("Related Religions") ||
+    set.has("Related Subjects") ||
+    set.has("Other Subjects")
+  ) {
+    return "relations_or_subjects";
+  }
+
+  if (
+    set.has("Content Type") ||
+    set.has("Level") ||
+    set.has("Languages of Material") ||
+    set.has("Script of Material") ||
+    set.has("Writing System")
+  ) {
+    return "classification";
+  }
+
+  if (
+    set.has("Digital Folder Name") ||
+    set.has("Digital Files Name") ||
+    set.has("Format of Digital Files") ||
+    set.has("Number of Digital Files") ||
+    set.has("Colour") ||
+    set.has("Resolution")
+  ) {
+    return "digital_files";
+  }
+
+  if (
+    set.has("Copyright Holder Name") ||
+    set.has("Copyright Attribution") ||
+    set.has("still_under_copyright")
+  ) {
+    return "copyright";
+  }
+
+  return "metadata";
+}
+
+async function logPublicCaalArchiveEdit({
+  oldRow,
+  newRow,
+  submittedFields,
+  currentSession,
+  note = null
+}) {
+  if (!oldRow || !newRow) return;
+
+  const { changedFields, oldValues, newValues } =
+    buildArchiveChangedValueSnapshots(oldRow, newRow, submittedFields);
+
+  if (changedFields.length === 0) return;
+
+  await pool.query(
+    `
+    INSERT INTO public."CAAL_Archive_web_edit_log" (
+      caal_id,
+      archive_id,
+      edited_by_app_user_id,
+      edited_by_username,
+      edit_type,
+      changed_fields,
+      old_values,
+      new_values,
+      note
+    )
+    VALUES (
+      $1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9
+    )
+    `,
+    [
+      newRow["CAAL_ID"],
+      newRow.id,
+      currentSession?.user?.user_id ?? null,
+      currentSession?.user?.username ?? null,
+      classifyArchiveEdit(changedFields),
+      changedFields,
+      JSON.stringify(oldValues),
+      JSON.stringify(newValues),
+      note
+    ]
+  );
+}
+
+function publicCaalArchiveEditWhereSql(session, tableAlias = "a", paramIndex) {
+  const workspaceCode = getSessionWorkspaceCode(session);
+
+  if (isCaalAdmin(session)) {
+    return {
+      sql: "",
+      values: []
+    };
+  }
+
+  if (isNationalAdmin(session)) {
+    return {
+      sql: `AND ${tableAlias}.workspace_code = $${paramIndex}`,
+      values: [workspaceCode]
+    };
+  }
+
+  return {
+    sql: `
+      AND EXISTS (
+        SELECT 1
+        FROM public.record_registry rr
+        WHERE rr.caal_id = ${tableAlias}."CAAL_ID"
+          AND rr.created_by_app_user_id = $${paramIndex}
+          AND ${archiveRegistryMatchSql("rr")}
+          AND COALESCE(rr.status, '') <> 'deleted'
+      )
+    `,
+    values: [currentAppUserIdFromSession(session) ?? -1]
+  };
 }
 
 function normaliseArchivePayload(input = {}) {
@@ -558,10 +790,10 @@ router.patch("/:id", async (req, res) => {
     });
   }
 
-  if (!canEditArchive(currentSession)) {
+  if (!canEditArchive(currentSession) && !canEditPublicCaalArchive(currentSession)) {
     return res.status(403).json({
       ok: false,
-      error: "You do not have permission to edit workspace archive records"
+      error: "You do not have permission to edit archive records"
     });
   }
 
@@ -587,22 +819,17 @@ router.patch("/:id", async (req, res) => {
   const values = fields.map((field) => payload[field]);
 
   try {
-    console.log("Archive PATCH id:", id);
-    console.log("Archive PATCH payload:", payload);
-    console.log("Archive PATCH fields:", fields);
-    console.log("Archive PATCH values:", values);
-    console.log("Archive PATCH setSql:", setSql);
-
     const userId = currentSession?.user?.user_id ?? null;
-    const canEditCaal = canEditCaalArchive(currentSession);
 
     let result;
     let returnedScope = "workspace";
     let returnedEditable = true;
+    let oldPublicCaalRow = null;
 
-    if (canEditCaal) {
-      // Super user can update either workspace or public CAAL.
-      // Try workspace first, then public CAAL.
+    // 1. Try KZ workspace table first.
+    // CAAL admins and national admins can edit any workspace row.
+    // Regular users can edit only their own workspace rows.
+    if (isCaalAdmin(currentSession) || isNationalAdmin(currentSession)) {
       result = await pool.query(
         `
         UPDATE ${ARCHIVE_WORKSPACE_TABLE}
@@ -614,25 +841,7 @@ router.patch("/:id", async (req, res) => {
         `,
         [...values, id]
       );
-
-      if (result.rows.length === 0) {
-        result = await pool.query(
-          `
-          UPDATE ${ARCHIVE_CAAL_TABLE}
-          SET
-            ${setSql},
-            "Tstamp" = NOW()
-          WHERE id = $${fields.length + 1}
-          RETURNING *
-          `,
-          [...values, id]
-        );
-
-        returnedScope = "all_caal";
-        returnedEditable = true;
-      }
     } else {
-      // Normal workspace editor can update own unpromoted workspace records.
       result = await pool.query(
         `
         UPDATE ${ARCHIVE_WORKSPACE_TABLE}
@@ -645,42 +854,73 @@ router.patch("/:id", async (req, res) => {
         `,
         [...values, id, userId]
       );
-
-      // If not found in workspace table, try an owned promoted public CAAL archive record.
-      if (result.rows.length === 0) {
-        result = await pool.query(
-          `
-          UPDATE ${ARCHIVE_CAAL_TABLE} a
-          SET
-            ${setSql},
-            "Tstamp" = NOW()
-          WHERE a.id = $${fields.length + 1}
-            AND EXISTS (
-              SELECT 1
-              FROM public.record_registry rr
-              WHERE rr.caal_id = a."CAAL_ID"
-                AND rr.created_by_app_user_id = $${fields.length + 2}
-                AND ${archiveRegistryMatchSql("rr")}
-                AND COALESCE(rr.status, '') <> 'deleted'
-            )
-          RETURNING *
-          `,
-          [...values, id, userId]
-        );
-
-        if (result.rows.length > 0) {
-          returnedScope = "workspace";
-          returnedEditable = true;
-        }
-      }
     }
 
+    // 2. If not found in workspace table, try public CAAL with role-aware rule.
+    if (result.rows.length === 0) {
+      const publicEditCheck = publicCaalArchiveEditWhereSql(
+        currentSession,
+        "a",
+        fields.length + 2
+      );
+
+      const publicOldCheck = publicCaalArchiveEditWhereSql(
+        currentSession,
+        "a",
+        2
+      );
+
+      const oldPublicResult = await pool.query(
+        `
+        SELECT a.*
+        FROM ${ARCHIVE_CAAL_TABLE} a
+        WHERE a.id = $1
+          ${publicOldCheck.sql}
+        `,
+        [id, ...publicOldCheck.values]
+      );
+
+      oldPublicCaalRow = oldPublicResult.rows[0] || null;
+
+      result = await pool.query(
+        `
+        UPDATE ${ARCHIVE_CAAL_TABLE} a
+        SET
+          ${setSql},
+          "Tstamp" = NOW()
+        WHERE a.id = $${fields.length + 1}
+          ${publicEditCheck.sql}
+        RETURNING *
+        `,
+        [...values, id, ...publicEditCheck.values]
+      );
+
+      if (result.rows.length > 0) {
+        if (isCaalAdmin(currentSession)) {
+          returnedScope = "all_caal";
+        } else if (isNationalAdmin(currentSession)) {
+          returnedScope = "national_ref";
+        } else {
+          returnedScope = "workspace";
+        }
+
+        returnedEditable = true;
+      }
+    }
     if (result.rows.length === 0) {
       return res.status(403).json({
         ok: false,
-        error: canEditCaal
-          ? "Archive record not found in workspace or public CAAL tables"
-          : "You can only edit your own workspace archive records"
+        error: "Archive record not found, or you do not have permission to edit it"
+      });
+    }
+
+    if (oldPublicCaalRow) {
+      await logPublicCaalArchiveEdit({
+        oldRow: oldPublicCaalRow,
+        newRow: result.rows[0],
+        submittedFields: fields,
+        currentSession,
+        note: "Edited through CAAL web app"
       });
     }
   
@@ -876,6 +1116,7 @@ router.post("/", async (req, res) => {
   payload.created_by_app_user_id = appUserId;
   payload["Archive Recorder"] = sessionUsername;
   payload["Preferred Language"] = preferredLanguage;
+  payload.workspace_code = getSessionWorkspaceCode(currentSession);
 
   if (!payload["Country"]) {
     payload["Country"] = sessionCountry;

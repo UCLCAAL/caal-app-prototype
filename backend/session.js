@@ -121,8 +121,14 @@ function resolveLabelWithFallback(record, requestedLanguage, rawValue = null) {
  * Map access levels to browser-safe permission flags.
  * Backend should remain the source of truth for permissions.
  */
-function permissionsFromAccessLevel(accessLevel) {
-  switch (Number(accessLevel)) {
+function permissionsFromAccessLevel(accessLevel, workspaceCodeRaw = "") {
+  const level = Number(accessLevel);
+  const workspaceCode = String(workspaceCodeRaw || "").trim().toLowerCase();
+
+  const isCaalAdmin = level === 9 && workspaceCode === "caal";
+  const isNationalAdmin = level === 9 && workspaceCode && workspaceCode !== "caal";
+
+  switch (level) {
     case 1:
       return {
         can_view_workspace: true,
@@ -130,6 +136,7 @@ function permissionsFromAccessLevel(accessLevel) {
         can_view_national_ref: false,
         can_view_all_caal: false,
         can_edit_caal: false,
+        can_edit_national_caal: false,
         can_delete: false,
         can_promote: false,
         role_label: "read_only"
@@ -142,6 +149,7 @@ function permissionsFromAccessLevel(accessLevel) {
         can_view_national_ref: true,
         can_view_all_caal: false,
         can_edit_caal: false,
+        can_edit_national_caal: false,
         can_delete: false,
         can_promote: false,
         role_label: "workspace_editor_plus_national_ref"
@@ -154,6 +162,7 @@ function permissionsFromAccessLevel(accessLevel) {
         can_view_national_ref: true,
         can_view_all_caal: true,
         can_edit_caal: false,
+        can_edit_national_caal: false,
         can_delete: false,
         can_promote: false,
         role_label: "workspace_editor_plus_all_caal_view"
@@ -165,10 +174,22 @@ function permissionsFromAccessLevel(accessLevel) {
         can_edit_workspace: true,
         can_view_national_ref: true,
         can_view_all_caal: true,
-        can_edit_caal: true,
+
+        // Global CAAL edit only if workspace_code is caal
+        can_edit_caal: isCaalAdmin,
+
+        // National admins edit national CAAL records via workspace_code boundaries
+        can_edit_national_caal: isNationalAdmin,
+
+        // global-only unless we want national admins to promote/delete
         can_delete: false,
-        can_promote: true,
-        role_label: "caal_admin"
+        can_promote: isCaalAdmin,
+
+        role_label: isCaalAdmin
+          ? "caal_admin"
+          : isNationalAdmin
+            ? "national_admin"
+            : "level_9_unscoped"
       };
 
     default:
@@ -178,6 +199,7 @@ function permissionsFromAccessLevel(accessLevel) {
         can_view_national_ref: false,
         can_view_all_caal: false,
         can_edit_caal: false,
+        can_edit_national_caal: false,
         can_delete: false,
         can_promote: false,
         role_label: "unknown"
@@ -192,24 +214,37 @@ function permissionsFromAccessLevel(accessLevel) {
 function buildSessionFromRow(sessionRow) {
   const preferredLanguage = normaliseLanguage(sessionRow.preferred_language);
 
+  const accessLevel = Number(sessionRow.access_level ?? 0);
+
+  const workspaceCode = String(
+    sessionRow.workspace_code ??
+    ""
+  ).trim().toLowerCase();
+
   return {
     user: {
       user_id: sessionRow.user_id,
-      username: sessionRow.username
+      username: sessionRow.username,
+      access_level: accessLevel,
+      workspace_code: workspaceCode
     },
+
     profile: {
       preferred_language: preferredLanguage,
       country: sessionRow.country,
-      workspace_code: sessionRow.workspace_code,
+      workspace_code: workspaceCode,
+      access_level: accessLevel,
       effective_monument_id_prefix: sessionRow.effective_monument_id_prefix,
       effective_archive_id_prefix: sessionRow.effective_archive_id_prefix
     },
+
     workspace: {
       workspace_label: sessionRow.workspace_label,
       schema_name: sessionRow.schema_name,
       default_country_value: sessionRow.default_country_value
     },
-    permissions: permissionsFromAccessLevel(sessionRow.access_level)
+
+    permissions: permissionsFromAccessLevel(accessLevel, workspaceCode)
   };
 }
 

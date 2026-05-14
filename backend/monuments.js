@@ -30,13 +30,16 @@ const ACTIVE_REGISTRY_STATUS_SQL = `
   COALESCE(rr.status, '') <> 'deleted'
 `;
 
-function nationalRefWhereSql(alias = "") {
+function nationalRefWhereSql(alias = "", currentSession = null) {
   const p = alias ? `${alias}.` : "";
+  const workspaceCode = getSessionWorkspaceCode(currentSession);
 
-  return `
-    ${p}"CAAL_ID" LIKE 'Mon_KZ_%'
-    OR btrim(coalesce(${p}"Country", '')) IN ('Kazakhstan', 'Казахстан')
-  `;
+  // CAAL/global users do not have a national reference subset
+  if (!workspaceCode || workspaceCode === "caal") {
+    return "false";
+  }
+
+  return `${p}workspace_code = '${workspaceCode.replace(/'/g, "''")}'`;
 }
 
 function currentAppUserIdFromSession(session) {
@@ -195,8 +198,18 @@ function monumentHelperColumnsSql(alias = "") {
 function makeBrowseScopeConfig(currentSession) {
   const currentAppUserId = currentAppUserIdFromSession(currentSession);
   const canEditCaal = canEditCaalMonuments(currentSession);
+  const workspaceCode = getSessionWorkspaceCode(currentSession);
+  const canEditNationalCaal = isNationalAdmin(currentSession);
 
-  const nationalWhere = nationalRefWhereSql("m");
+  const publicEditableSql = canEditCaal
+    ? "true"
+    : canEditNationalCaal
+      ? `m.workspace_code = '${workspaceCode.replace(/'/g, "''")}'`
+      : "false";
+
+  const allCaalEditableSql = canEditCaal ? "true" : "false";
+
+  const nationalWhere = nationalRefWhereSql("m", currentSession);
 
   return {
     // Frontend still calls this "workspace".
@@ -234,8 +247,8 @@ function makeBrowseScopeConfig(currentSession) {
       `
     },
 
-    // Frontend still calls this "national_ref".
-    // Backend semantics: national public CAAL records, excluding my own promoted records.
+    // Frontend calls this "national_ref".
+    // Backend: national public CAAL records, excluding my own promoted records.
     national_ref: {
       sql: `
         SELECT
@@ -243,7 +256,7 @@ function makeBrowseScopeConfig(currentSession) {
           'national_ref'::text AS source_scope,
           'public_caal'::text AS storage_scope,
           true AS is_promoted,
-          ${canEditCaal ? "true" : "false"} AS is_editable
+          ${publicEditableSql} AS is_editable
         FROM ${MONUMENTS_CAAL_MV} m
         WHERE (${nationalWhere})
           AND NOT EXISTS (
@@ -265,9 +278,13 @@ function makeBrowseScopeConfig(currentSession) {
           'all_caal'::text AS source_scope,
           'public_caal'::text AS storage_scope,
           true AS is_promoted,
-          ${canEditCaal ? "true" : "false"} AS is_editable
+          ${allCaalEditableSql} AS is_editable
         FROM ${MONUMENTS_CAAL_MV} m
-        WHERE NOT (${nationalWhere})
+        WHERE (
+            ${workspaceCode && workspaceCode !== "caal"
+              ? `m.workspace_code IS DISTINCT FROM '${workspaceCode.replace(/'/g, "''")}'`
+              : "true"}
+          )
           AND NOT EXISTS (
             SELECT 1
             FROM public.record_registry rr
@@ -292,14 +309,7 @@ function parseScopes(scopesParam) {
 }
 
 function normalizeRequestedScopes(scopes) {
-  const set = new Set(scopes);
-
-  // national_ref is a subset of all_caal, so do not query both
-  if (set.has("all_caal") && set.has("national_ref")) {
-    set.delete("national_ref");
-  }
-
-  return Array.from(set);
+  return Array.from(new Set(scopes));
 }
 
 function unique(values) {
@@ -592,7 +602,11 @@ function buildMonumentListRecord(row, lang, currentAppUserId = null, canEditCaal
       primary_name: row["Primary Name"],
       primary_name_english: row["Primary Name (English)"],
       classification: row.classification_display || row["Classification"],
-      monument_type1: row.monument_type1_display || row["Monument Type1"],
+      monument_type1:
+        row.monument_type1_display ||
+        row["Monument Type1"] ||
+        row.classification_display ||
+        row["Classification"],
       longitude: firstDefined(row["Longitude"], row.longitude, row.geom_lng),
       latitude: firstDefined(row["Latitude"], row.latitude, row.geom_lat)
     },
@@ -1750,10 +1764,184 @@ function getAccessLevel(session) {
   );
 }
 
+function getSessionWorkspaceCode(session) {
+  return String(
+    session?.user?.workspace_code ??
+    session?.profile?.workspace_code ??
+    ""
+  ).trim().toLowerCase();
+}
+
+function isCaalAdmin(session) {
+  return getAccessLevel(session) === 9 && getSessionWorkspaceCode(session) === "caal";
+}
+
+function isNationalAdmin(session) {
+  const workspaceCode = getSessionWorkspaceCode(session);
+  return getAccessLevel(session) === 9 && workspaceCode && workspaceCode !== "caal";
+}
+
+function canEditMonuments(session) {
+  return !!session?.permissions?.can_edit_workspace;
+}
+
+// This now means "global CAAL admin", not any level-9 user.
 function canEditCaalMonuments(session) {
+  return isCaalAdmin(session);
+}
+
+function canEditPublicCaalMonuments(session) {
   return (
-    session?.permissions?.can_edit_caal === true ||
-    getAccessLevel(session) === 9
+    isCaalAdmin(session) ||
+    isNationalAdmin(session) ||
+    canEditMonuments(session)
+  );
+}
+
+function publicCaalMonumentEditWhereSql(session, tableAlias = "m", paramIndex) {
+  const workspaceCode = getSessionWorkspaceCode(session);
+
+  if (isCaalAdmin(session)) {
+    return {
+      sql: "",
+      values: []
+    };
+  }
+
+  if (isNationalAdmin(session)) {
+    return {
+      sql: `AND ${tableAlias}.workspace_code = $${paramIndex}`,
+      values: [workspaceCode]
+    };
+  }
+
+  return {
+    sql: `
+      AND EXISTS (
+        SELECT 1
+        FROM public.record_registry rr
+        WHERE rr.caal_id = ${tableAlias}."CAAL_ID"
+          AND rr.created_by_app_user_id = $${paramIndex}
+          AND COALESCE(rr.status, '') <> 'deleted'
+      )
+    `,
+    values: [currentAppUserIdFromSession(session) ?? -1]
+  };
+}
+
+function normaliseLogValue(value) {
+  if (value === undefined) return null;
+  if (value instanceof Date) return value.toISOString();
+
+  // Keep null as null.
+  if (value === null) return null;
+
+  // Avoid tiny differences between numeric strings and numbers being missed.
+  return value;
+}
+
+function valuesDifferForLog(oldValue, newValue) {
+  return JSON.stringify(normaliseLogValue(oldValue)) !==
+    JSON.stringify(normaliseLogValue(newValue));
+}
+
+function buildChangedValueSnapshots(oldRow, newRow, submittedFields) {
+  const changedFields = [];
+  const oldValues = {};
+  const newValues = {};
+
+  submittedFields.forEach((field) => {
+    const oldValue = oldRow?.[field] ?? null;
+    const newValue = newRow?.[field] ?? null;
+
+    if (valuesDifferForLog(oldValue, newValue)) {
+      changedFields.push(field);
+      oldValues[field] = normaliseLogValue(oldValue);
+      newValues[field] = normaliseLogValue(newValue);
+    }
+  });
+
+  return {
+    changedFields,
+    oldValues,
+    newValues
+  };
+}
+
+function classifyMonumentEdit(changedFields = []) {
+  const set = new Set(changedFields);
+
+  if (set.has("Longitude") || set.has("Latitude") || set.has("Altitude") || set.has("Location Notes")) {
+    return "location";
+  }
+
+  if (
+    set.has("Classification") ||
+    Array.from(set).some((field) => field.startsWith("Monument Type")) ||
+    Array.from(set).some((field) => field.startsWith("Cultural Period")) ||
+    Array.from(set).some((field) => field.startsWith("Religion"))
+  ) {
+    return "classification";
+  }
+
+  if (
+    set.has("Monument is part of") ||
+    set.has("Monument contains") ||
+    set.has("Monument is associated with") ||
+    set.has("MasterID")
+  ) {
+    return "relations";
+  }
+
+  return "metadata";
+}
+
+async function logPublicCaalMonumentEdit({
+  oldRow,
+  newRow,
+  submittedFields,
+  currentSession,
+  note = null
+}) {
+  if (!oldRow || !newRow) return;
+
+  const {
+    changedFields,
+    oldValues,
+    newValues
+  } = buildChangedValueSnapshots(oldRow, newRow, submittedFields);
+
+  // Do not log a no-op PATCH.
+  if (changedFields.length === 0) return;
+
+  await pool.query(
+    `
+    INSERT INTO public."CAAL_Monuments_web_edit_log" (
+      caal_id,
+      monument_id,
+      edited_by_app_user_id,
+      edited_by_username,
+      edit_type,
+      changed_fields,
+      old_values,
+      new_values,
+      note
+    )
+    VALUES (
+      $1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9
+    )
+    `,
+    [
+      newRow["CAAL_ID"],
+      newRow.id,
+      currentSession?.user?.user_id ?? null,
+      currentSession?.user?.username ?? null,
+      classifyMonumentEdit(changedFields),
+      changedFields,
+      JSON.stringify(oldValues),
+      JSON.stringify(newValues),
+      note
+    ]
   );
 }
 
@@ -1850,7 +2038,15 @@ function normaliseMonumentPayload(input = {}) {
 }
 
 function payloadIncludesMasterId(payload = {}) {
-  return Object.prototype.hasOwnProperty.call(payload, "MasterID");
+  if (!Object.prototype.hasOwnProperty.call(payload, "MasterID")) {
+    return false;
+  }
+
+  const value = payload.MasterID;
+
+  return value !== null &&
+    value !== undefined &&
+    String(value).trim() !== "";
 }
 
 async function fetchMonumentRowById(id) {
@@ -1881,6 +2077,9 @@ async function fetchPublicMonumentRowById(id) {
     SELECT
       m.*,
       'all_caal'::text AS source_scope,
+      'public_caal'::text AS storage_scope,
+      true AS is_promoted,
+      true AS is_editable,
       CASE
         WHEN m.geom IS NOT NULL THEN ST_X(m.geom::geometry)
         ELSE NULL
@@ -1889,14 +2088,13 @@ async function fetchPublicMonumentRowById(id) {
         WHEN m.geom IS NOT NULL THEN ST_Y(m.geom::geometry)
         ELSE NULL
       END AS geom_lat
-    FROM ui.mv_monuments_caal m
+    FROM ${MONUMENTS_CAAL_TABLE} m
     WHERE m.id = $1
     `,
     [id]
   );
 
-  const row = result.rows[0] || null;
-  return row ? stripMonumentInternalFields(row) : null;
+  return result.rows[0] || null;
 }
 
 // ========================================================
@@ -1920,11 +2118,23 @@ router.post("/monuments", async (req, res) => {
   const payload = normaliseMonumentPayload(req.body || {});
   const canEditCaal = canEditCaalMonuments(currentSession);
 
-  if (!canEditCaal && payloadIncludesMasterId(payload)) {
-    return res.status(403).json({
-      ok: false,
-      error: "Only super users can assign MasterID"
-    });
+  // For now, only global CAAL admins can change MasterID.
+  // If a non-CAAL user sends a blank MasterID field, ignore it rather than blocking save.
+  if (!canEditCaal && Object.prototype.hasOwnProperty.call(payload, "MasterID")) {
+    const masterIdValue = payload.MasterID;
+
+    if (
+      masterIdValue !== null &&
+      masterIdValue !== undefined &&
+      String(masterIdValue).trim() !== ""
+    ) {
+      return res.status(403).json({
+        ok: false,
+        error: "Only CAAL superusers can change MasterID"
+      });
+    }
+
+    delete payload.MasterID;
   }
 
   const appUserId = currentSession?.user?.user_id ?? null;
@@ -2018,10 +2228,10 @@ router.post("/monuments", async (req, res) => {
 router.post("/monuments/admin/refresh-caal-cache", async (req, res) => {
   const currentSession = req.session?.appSession || null;
 
-  if (!currentSession?.permissions?.can_edit_caal) {
+  if (!isCaalAdmin(currentSession)) {
     return res.status(403).json({
       ok: false,
-      error: "Admin only"
+      error: "CAAL admin only"
     });
   }
 
@@ -2048,7 +2258,7 @@ router.patch("/monuments/:id", async (req, res) => {
     return res.status(401).json({ ok: false, error: "No active session" });
   }
 
-  if (!canEditMonuments(currentSession) && !canEditCaalMonuments(currentSession)) {
+  if (!canEditMonuments(currentSession) && !canEditPublicCaalMonuments(currentSession)) {
     return res.status(403).json({
       ok: false,
       error: "You do not have permission to edit monument records"
@@ -2060,14 +2270,26 @@ router.patch("/monuments/:id", async (req, res) => {
     return res.status(400).json({ ok: false, error: "Invalid monument id" });
   }
 
-  const canEditCaal = canEditCaalMonuments(currentSession);
   const payload = normaliseMonumentPayload(req.body || {});
+  const canEditCaal = canEditCaalMonuments(currentSession);
 
-  if (!canEditCaal && payloadIncludesMasterId(payload)) {
-    return res.status(403).json({
-      ok: false,
-      error: "Only super users can change MasterID"
-    });
+  // For now, only global CAAL admins can change MasterID.
+  // If a non-CAAL user sends a blank MasterID field, ignore it rather than blocking save.
+  if (!canEditCaal && Object.prototype.hasOwnProperty.call(payload, "MasterID")) {
+    const masterIdValue = payload.MasterID;
+
+    if (
+      masterIdValue !== null &&
+      masterIdValue !== undefined &&
+      String(masterIdValue).trim() !== ""
+    ) {
+      return res.status(403).json({
+        ok: false,
+        error: "Only CAAL superusers can change MasterID"
+      });
+    }
+
+    delete payload.MasterID;
   }
 
   const fields = Object.keys(payload);
@@ -2099,118 +2321,95 @@ router.patch("/monuments/:id", async (req, res) => {
 
   try {
     const userId = currentSession?.user?.user_id ?? null;
-    //const canEditCaal = canEditCaalMonuments(currentSession);
 
     console.log("Monument PATCH permissions:", {
+      id,
       userId,
+      workspaceCode: getSessionWorkspaceCode(currentSession),
       accessLevel: getAccessLevel(currentSession),
       canEditWorkspace: canEditMonuments(currentSession),
-      canEditCaal,
-      permissions: currentSession?.permissions,
-      user: currentSession?.user,
-      profile: currentSession?.profile
+      isCaalAdmin: isCaalAdmin(currentSession),
+      isNationalAdmin: isNationalAdmin(currentSession),
+      canEditPublicCaal: canEditPublicCaalMonuments(currentSession)
     });
 
     let updateResult;
     let updatedScope = "workspace";
+    let oldPublicCaalRow = null;
 
-    let updateSql;
-    let updateValues;
-
-    if (!canEditCaal) {
-      const targetCheck = await pool.query(
+    // 1. Try the KZ workspace table first.
+    // CAAL admins and national admins can edit any workspace row.
+    // Regular users can edit only their own workspace rows.
+    if (isCaalAdmin(currentSession) || isNationalAdmin(currentSession)) {
+      updateResult = await pool.query(
         `
-        SELECT id, created_by_app_user_id, "MasterID"
-        FROM ${MONUMENTS_WORKSPACE_TABLE}
-        WHERE id = $1
-        `,
-        [id]
-      );
-
-      const target = targetCheck.rows[0];
-
-      if (!target) {
-        return res.status(404).json({
-          ok: false,
-          error: "Monument record not found"
-        });
-      }
-
-      if (Number(target.created_by_app_user_id) !== Number(userId)) {
-        return res.status(403).json({
-          ok: false,
-          error: "You can only edit your own workspace records"
-        });
-      }
-
-      if (String(target["MasterID"] || "").trim() !== "") {
-        return res.status(403).json({
-          ok: false,
-          error: "Records linked to a MasterID are read-only"
-        });
-      }
-    }
-
-    if (canEditCaal) {
-      console.log("Trying workspace monument update:", {
-        table: MONUMENTS_WORKSPACE_TABLE,
-        id,
-        canEditCaal
-      });
-
-      updateSql = `
         UPDATE ${MONUMENTS_WORKSPACE_TABLE}
         SET ${setParts.join(", ")}
         WHERE id = $${values.length + 1}
         RETURNING id
-      `;
-      updateValues = [...values, id];
-
-      updateResult = await pool.query(updateSql, updateValues);
-
-      console.log("Workspace update row count:", updateResult.rows.length);
-
-      if (updateResult.rows.length === 0) {
-        console.log("Trying public CAAL monument update:", {
-          table: MONUMENTS_CAAL_TABLE,
-          id,
-          canEditCaal
-        });
-
-        updateSql = `
-          UPDATE ${MONUMENTS_CAAL_TABLE}
-          SET ${setParts.join(", ")}
-          WHERE id = $${values.length + 1}
-          RETURNING id
-        `;
-        updateValues = [...values, id];
-
-        updateResult = await pool.query(updateSql, updateValues);
-
-        console.log("Public CAAL update row count:", updateResult.rows.length);
-
-        updatedScope = "all_caal";
-      }
+        `,
+        [...values, id]
+      );
     } else {
-      // Normal editor: own workspace records only.
-      updateSql = `
+      updateResult = await pool.query(
+        `
         UPDATE ${MONUMENTS_WORKSPACE_TABLE}
         SET ${setParts.join(", ")}
         WHERE id = $${values.length + 1}
           AND created_by_app_user_id = $${values.length + 2}
+          AND COALESCE("MasterID", '') = ''
         RETURNING id
-      `;
-      updateValues = [...values, id, userId];
+        `,
+        [...values, id, userId]
+      );
+    }
 
-      updateResult = await pool.query(updateSql, updateValues);
+    // 2. If not found in the workspace table, try public CAAL.
+    if (updateResult.rows.length === 0) {
+      const publicEditCheck = publicCaalMonumentEditWhereSql(
+        currentSession,
+        "m",
+        values.length + 2
+      );
+
+      const publicOldCheck = publicCaalMonumentEditWhereSql(
+        currentSession,
+        "m",
+        2
+      );
+
+      const oldPublicResult = await pool.query(
+        `
+        SELECT m.*
+        FROM ${MONUMENTS_CAAL_TABLE} m
+        WHERE m.id = $1
+          ${publicOldCheck.sql}
+        `,
+        [id, ...publicOldCheck.values]
+      );
+
+      oldPublicCaalRow = oldPublicResult.rows[0] || null;
+
+      updateResult = await pool.query(
+        `
+        UPDATE ${MONUMENTS_CAAL_TABLE} m
+        SET ${setParts.join(", ")}
+        WHERE m.id = $${values.length + 1}
+          ${publicEditCheck.sql}
+        RETURNING m.*
+        `,
+        [...values, id, ...publicEditCheck.values]
+      );
+
+      if (updateResult.rows.length > 0) {
+        updatedScope = "all_caal";
+      }
     }
 
     if (updateResult.rows.length === 0) {
       return res.status(403).json({
         ok: false,
-        error: canEditCaal
-        ? "Monument record not found in workspace or public CAAL tables"
-        : "You can only edit your own workspace records"
+        error: "Monument record not found, or you do not have permission to edit it"
       });
     }
 
@@ -2225,6 +2424,17 @@ router.patch("/monuments/:id", async (req, res) => {
         error: "Monument updated but refreshed record could not be loaded"
       });
     }
+
+    if (updatedScope !== "workspace" && oldPublicCaalRow) {
+      await logPublicCaalMonumentEdit({
+        oldRow: oldPublicCaalRow,
+        newRow: freshRow,
+        submittedFields: fields,
+        currentSession,
+        note: "Edited through CAAL web app"
+      });
+    }
+
     const lang = req.query.lang || currentSession.profile?.preferred_language || "en";
 
     const record = buildMonumentRecord(

@@ -2433,10 +2433,14 @@ function updateMonumentActionBar() {
   }
 
   if (monumentEditBtn) {
-    monumentEditBtn.hidden = monumentIsEditMode || !hasSelectedRecord;
-    monumentEditBtn.disabled = !canEditThisRecord;
-    monumentEditBtn.title = canEditThisRecord ? "" : mLabel("Read only", "Read only");
-    monumentEditBtn.classList.toggle("is-disabled", !canEditThisRecord);
+    monumentEditBtn.hidden =
+      monumentIsEditMode ||
+      !hasSelectedRecord ||
+      !canEditThisRecord;
+
+    monumentEditBtn.disabled = false;
+    monumentEditBtn.title = "";
+    monumentEditBtn.classList.remove("is-disabled");
   }
 
   if (monumentSaveBtn) {
@@ -2458,8 +2462,13 @@ function updateMonumentActionBar() {
     monumentDeleteBtn.hidden = !canDelete;
   }
 }
+
 function canEditMonumentRecord(record) {
   if (!record) return false;
+
+  if (record?.source?.is_editable === true) {
+    return true;
+  }
 
   const currentAppUserId = window.appSession?.user?.user_id ?? null;
   const recordAppUserId = record?.raw?.created_by_app_user_id ?? null;
@@ -2469,29 +2478,33 @@ function canEditMonumentRecord(record) {
     recordAppUserId !== null &&
     Number(currentAppUserId) === Number(recordAppUserId);
 
-  const isSuperUser =
-    window.appSession?.permissions?.can_edit_caal === true;
-
   const isWorkspaceRecord = record?.source?.scope === "workspace";
-  const isCaalRecord =
-    record?.source?.scope === "national_ref" ||
-    record?.source?.scope === "all_caal";
 
-  // Superusers can edit MasterID-linked records.
-  if (isSuperUser) {
-    return isWorkspaceRecord || isCaalRecord;
-  }
-
-  // Normal users cannot edit records assigned to a MasterID.
-  if (monumentHasMasterId(record)) {
+  if (monumentHasMasterId(record) && !monumentUserCanEditMasterId()) {
     return false;
   }
 
   return isWorkspaceRecord && isOwner;
 }
 
+function monumentUserIsCaalAdmin() {
+  const accessLevel = Number(
+    window.appSession?.user?.access_level ??
+    window.appSession?.profile?.access_level ??
+    0
+  );
+
+  const workspaceCode = String(
+    window.appSession?.user?.workspace_code ??
+    window.appSession?.profile?.workspace_code ??
+    ""
+  ).trim().toLowerCase();
+
+  return accessLevel === 9 && workspaceCode === "caal";
+}
+
 function monumentUserCanEditMasterId() {
-  return window.appSession?.permissions?.can_edit_caal === true;
+  return monumentUserIsCaalAdmin();
 }
 
 function getMonumentEnabledScopes() {
@@ -2666,7 +2679,7 @@ function wireMonumentCulturalPeriodDateRecalc() {
 // -------------------------------------
 const refreshMonumentsCacheBtn = document.getElementById("refreshMonumentsCacheBtn");
 
-if (window.appSession?.permissions?.can_edit_caal && refreshMonumentsCacheBtn) {
+if (monumentUserIsCaalAdmin() && refreshMonumentsCacheBtn) {
   refreshMonumentsCacheBtn.hidden = false;
 
   refreshMonumentsCacheBtn.addEventListener("click", async () => {
@@ -4323,7 +4336,17 @@ async function loadFullMonumentRecord(record) {
   }
 
   data.record.source = data.record.source || {};
-  data.record.source.is_editable = canEditMonumentRecord(data.record);
+
+  // Preserve the source/editability decision from the list/map record.
+  // The browse/map API is the place where scope-specific editability is calculated.
+  if (record?.source) {
+    data.record.source.scope = record.source.scope;
+    data.record.source.storage = record.source.storage;
+    data.record.source.is_promoted = record.source.is_promoted;
+    data.record.source.is_editable = record.source.is_editable === true;
+  } else {
+    data.record.source.is_editable = false;
+  }
 
   return data.record;
 }
@@ -6137,7 +6160,33 @@ async function saveCurrentMonumentRecord() {
       return;
     }
 
-    showToast(t("record_saved", "Record saved"));
+    const savedStorage =
+      data?.record?.source?.storage ||
+      monumentSelectedRecord?.source?.storage ||
+      null;
+
+    const isPublicCaalRecord = savedStorage === "public_caal";
+
+    if (isPublicCaalRecord && monumentUserIsCaalAdmin()) {
+      showToast(
+        t(
+          "caal_record_saved_cache_refresh_needed",
+          "Record saved. This is a CAAL record, so the map position and search/list values may not update until the CAAL cache is refreshed. Use Refresh CAAL cache to update them now."
+        ),
+        12000
+      );
+    } else if (isPublicCaalRecord) {
+      showToast(
+        t(
+          "caal_record_saved_cache_pending",
+          "Record saved. This is a CAAL record, so the map position and search/list values may not update until the CAAL cache refreshes. Your changes have been saved, but they may not appear immediately in the map or search results."
+        ),
+        12000
+      );
+    } else {
+      showToast(t("record_saved", "Record saved"), 3000);
+    }
+        
     monumentPendingNewRecord = null;
     monumentIsEditMode = false;
     monumentSyncModeVisualState();
@@ -6662,7 +6711,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   const refreshMonumentsCacheBtn = document.getElementById("refreshMonumentsCacheBtn");
 
   if (refreshMonumentsCacheBtn) {
-    refreshMonumentsCacheBtn.hidden = !session.permissions?.can_edit_caal;
+    refreshMonumentsCacheBtn.hidden = !monumentUserIsCaalAdmin();
   }
 
   setMonumentsLoading(false);

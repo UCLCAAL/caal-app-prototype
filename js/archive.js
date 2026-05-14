@@ -168,7 +168,7 @@ function setArchiveResultsCountLoading(message = null) {
   }
 }
 
-function showArchiveToast(message, variant = "success") {
+function showArchiveToast(message, variant = "success", durationMs = 3000) {
   let toast = document.getElementById("archiveToast");
 
   if (!toast) {
@@ -184,7 +184,7 @@ function showArchiveToast(message, variant = "success") {
   window.clearTimeout(showArchiveToast._timer);
   showArchiveToast._timer = window.setTimeout(() => {
     toast.classList.remove("is-visible");
-  }, 2500);
+  }, durationMs);
 }
 
 // Label helpers
@@ -1076,6 +1076,17 @@ async function loadFullArchiveRecord(record, langOverride = null) {
     throw new Error(t("resolved_record_not_archive", "Resolved record is not an archive record"));
   }
 
+  data.record.source = data.record.source || {};
+
+  if (record?.source) {
+    data.record.source.scope = record.source.scope;
+    data.record.source.storage = record.source.storage;
+    data.record.source.is_promoted = record.source.is_promoted;
+    data.record.source.is_editable = record.source.is_editable === true;
+  } else {
+    data.record.source.is_editable = false;
+  }
+
   return data.record;
 }
 
@@ -1606,28 +1617,7 @@ window.archiveCanChangeLanguage = function () {
 
 // for buttons
 function canEditArchiveRecord(record) {
-  if (!record) return false;
-
-  const currentAppUserId = window.appSession?.user?.user_id ?? null;
-  const recordAppUserId = record?.raw?.created_by_app_user_id ?? null;
-
-  const isOwner =
-    currentAppUserId !== null &&
-    recordAppUserId !== null &&
-    Number(currentAppUserId) === Number(recordAppUserId);
-
-  const isSuperUser =
-    window.appSession?.permissions?.can_edit_caal === true;
-
-  const isWorkspaceRecord = record?.source?.scope === "workspace";
-  const isCaalRecord =
-    record?.source?.scope === "national_ref" ||
-    record?.source?.scope === "all_caal";
-
-  return (
-    (isWorkspaceRecord && (isOwner || isSuperUser)) ||
-    (isCaalRecord && isSuperUser)
-  );
+  return record?.source?.is_editable === true;
 }
 
 function archiveRenderActionBar({ hasRecord = false, canEdit = false } = {}) {
@@ -1640,14 +1630,14 @@ function archiveRenderActionBar({ hasRecord = false, canEdit = false } = {}) {
     archiveSelectedRecord?.identity?.id;
 
   if (addArchiveBtn) addArchiveBtn.hidden = isEditing;
-  if (archiveEditBtn) archiveEditBtn.hidden = isEditing || !hasRecord;
+  if (archiveEditBtn) archiveEditBtn.hidden = isEditing || !hasRecord || !canEdit;
   if (archiveSaveBtn) archiveSaveBtn.hidden = !isEditing;
   if (archiveCancelEditBtn) archiveCancelEditBtn.hidden = !isEditing;
   if (archiveDeleteBtn) archiveDeleteBtn.hidden = !canDelete;
 
   if (archiveEditBtn) {
-    archiveEditBtn.disabled = !canEdit;
-    archiveEditBtn.title = canEdit ? "" : archiveLabel("Read only", "Read only");
+    archiveEditBtn.disabled = false;
+    archiveEditBtn.title = "";
   }
 
   if (addArchiveBtn) addArchiveBtn.classList.toggle("is-active", !isEditing && !hasRecord);
@@ -2487,11 +2477,36 @@ if (archiveSaveBtn) {
         canEdit: canEditArchiveRecord(savedRecord)
       });
 
-      showArchiveToast(
-        isNewRecord
-          ? t("archive_record_created", "Archive record created")
-          : t("archive_record_saved", "Archive record saved")
-      );
+      const savedStorage =
+        savedRecord?.source?.storage ||
+        record?.source?.storage ||
+        archiveSelectedRecord?.source?.storage ||
+        null;
+
+      const isPublicCaalArchiveRecord = savedStorage === "public_caal";
+
+      if (isNewRecord) {
+        showArchiveToast(
+          t("archive_record_created", "Archive record created"),
+          "success",
+          3000
+        );
+      } else if (isPublicCaalArchiveRecord) {
+        showArchiveToast(
+          t(
+            "caal_archive_record_saved_cache_pending",
+            "Record saved. This is a CAAL archive record, so search/list values may not update until the CAAL cache refreshes. Your changes have been saved, but they may not appear immediately in the results list."
+          ),
+          "success",
+          12000
+        );
+      } else {
+        showArchiveToast(
+          t("archive_record_saved", "Archive record saved"),
+          "success",
+          3000
+        );
+      }
 
       try {
         await loadArchiveRecords(archiveLimit, archiveOffset, {

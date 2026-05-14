@@ -374,21 +374,41 @@ window.getCurrentLanguage = getCurrentLanguage;
 
 // save feedback
 // ----------------------------------------------
-function showToast(message, type = "success") {
-  const toast = document.createElement("div");
-  toast.className = `toast toast-${type}`;
+let toastHideTimer = null;
+
+function showToast(message, durationMs = 3000) {
+  const toast = document.getElementById("toast");
+
+  if (!toast) {
+    console.warn("Toast element not found: expected id='toast'");
+    return;
+  }
+
   toast.textContent = message;
 
-  document.body.appendChild(toast);
+  // Force visibility regardless of whether the CSS uses hidden, display, opacity, or class names.
+  toast.hidden = false;
+  toast.style.display = "block";
+  toast.style.opacity = "1";
+  toast.style.transform = "translateY(0)";
 
-  setTimeout(() => toast.classList.add("visible"), 10);
+  // Support both old and new CSS class names.
+  toast.classList.add("visible");
+  toast.classList.add("is-visible");
 
-  setTimeout(() => {
+  if (toastHideTimer) {
+    clearTimeout(toastHideTimer);
+  }
+
+  toastHideTimer = setTimeout(() => {
     toast.classList.remove("visible");
-    setTimeout(() => toast.remove(), 300);
-  }, 2500);
+    toast.classList.remove("is-visible");
+    toast.style.opacity = "";
+    toast.style.transform = "";
+    toast.style.display = "";
+    toast.hidden = true;
+  }, durationMs);
 }
-
 // load full record from related
 // ------------------------------------
 function getInitialCaalIdFromUrl() {
