@@ -32,6 +32,11 @@ const closeMapOptionsBtn = document.getElementById("closeMapOptionsBtn");
 const mapOptionsPanel = document.getElementById("mapOptionsPanel");
 
 const basemapSelect = document.getElementById("basemapSelect");
+
+const showCentralAsiaBordersCheckbox = document.getElementById("showCentralAsiaBordersCheckbox");
+const enableRegionSummaryClickCheckbox = document.getElementById("enableRegionSummaryClickCheckbox");
+const borderStyleSelect = document.getElementById("borderStyleSelect");
+
 const mapLabelScopeSelect = document.getElementById("mapLabelScopeSelect");
 const mapLabelModeSelect = document.getElementById("mapLabelModeSelect");
 const mapLabelScopeHelp = document.getElementById("mapLabelScopeHelp");
@@ -113,10 +118,31 @@ let monumentTotalIsExact = true;
 let monumentMapIsStale = false;
 let monumentRelatedSelectionGeojson = null;
 
+let centralAsiaBordersVisible = false;
+let centralAsiaBorderStyle = "subtle";
+let centralAsiaBordersRequestSeq = 0;
+
+let selectedAdminBoundary = null;
+let adminBoundarySummaryClickEnabled = false;
+let hoveredAdminBoundaryId = null;
+
+let centralAsiaBordersDebounceTimer = null;
 
 // --------------------------------------------------------
 // MapLibre map
 // --------------------------------------------------------
+
+const MONUMENT_MAP_COLOURS = {
+  workspace: "#2E7D32",          // my workspace records
+  national: "#B7791F",           // national CAAL records, amber/ochre
+  allCaal: "#C95A4A",            // other CAAL records
+  newPoint: "#1D4ED8",           // new / moved point, blue
+  selected: "#00E5FF",           // selected record ring
+  selectedFill: "rgba(0, 229, 255, 0.12)",
+  related: "#7C3AED",            // related records
+  whiteStroke: "rgba(255,255,255,0.92)"
+};
+
 const mapElement = document.getElementById("map");
 let map = null;
 let mapLoaded = false;
@@ -173,9 +199,9 @@ function drawSelectedMonumentHighlight(record) {
           8, 9,
           12, 11
         ],
-        "circle-color": "rgba(0, 229, 255, 0.12)",
-        "circle-stroke-width": 4,
-        "circle-stroke-color": "#00e5ff"
+        "circle-color": MONUMENT_MAP_COLOURS.selectedFill,
+        "circle-stroke-color": MONUMENT_MAP_COLOURS.selected,
+        "circle-stroke-width": 4
       }
     });
   }
@@ -306,10 +332,10 @@ function drawPendingPickPoint(lng, lat) {
       source: "monument-pick-point",
       paint: {
         "circle-radius": 8,
-        "circle-color": "#1d4ed8",
+        "circle-color": MONUMENT_MAP_COLOURS.newPoint,
+        "circle-stroke-color": "#ffffff",
         "circle-opacity": 0.95,
-        "circle-stroke-width": 3,
-        "circle-stroke-color": "#ffffff"
+        "circle-stroke-width": 3
       }
     });
   }
@@ -501,34 +527,34 @@ function getCurrentMapLegendItems() {
   if (hasWorkspace) {
     items.push({
       label: t("monuments_workspace_records", "My workspace records"),
-      color: "#2e7d32",
+      color: MONUMENT_MAP_COLOURS.workspace,
       type: "circle"
     });
   }
 
   if (hasNational) {
     items.push({ label: t("monuments_national_records", "National CAAL records"),
-      color: "#0f766e", type: "circle" });
+      color: MONUMENT_MAP_COLOURS.national, type: "circle" });
   }
 
   if (hasAllCaal) {
     items.push({ label: t("other_caal_records", "Other CAAL records"),
-      color: "#c95a4a", type: "circle" });
+      color: MONUMENT_MAP_COLOURS.allCaal, type: "circle" });
   }
 
   if (hasSelected) {
     items.push({ label: t("selected_record", "Selected record"),
-      color: "#263238", type: "ring" });
+      color: MONUMENT_MAP_COLOURS.selected, type: "ring" });
   }
 
   if (hasPending) {
     items.push({ label: t("new_or_moved_point", "New / moved point"),
-      color: "#1d4ed8", type: "circle" });
+      color: MONUMENT_MAP_COLOURS.newPoint, type: "circle" });
   }
 
   if (hasRelatedMap) {
     items.push({ label: t("related_monument", "Related monument"),
-      color: "#7c3aed", type: "circle" });
+      color: MONUMENT_MAP_COLOURS.related, type: "circle" });
   }
 
   return items;
@@ -1174,6 +1200,20 @@ function updateMapStatusLine() {
     : 0;
 
   const totalCount = Number(monumentTotalCount || 0);
+
+  const selectedRegionName = selectedAdminBoundary?.admin_name || "";
+
+  if (selectedRegionName && totalCount) {
+    mapStatusLine.textContent =
+      t(
+        "mapped_records_region_status",
+        "Showing {mapped} mapped records from {total} matching records within {region}."
+      )
+        .replace("{mapped}", formatCount(mappedCount))
+        .replace("{total}", formatCount(totalCount))
+        .replace("{region}", selectedRegionName);
+    return;
+  }
 
   if (!mappedCount && !totalCount) {
     mapStatusLine.textContent = t(
@@ -2593,6 +2633,10 @@ function buildMonumentQueryParams({ includePaging = true } = {}) {
     params.set("offset", String(monumentPageOffset));
   }
 
+  if (selectedAdminBoundary?.boundary_id) {
+    params.set("adminBoundaryId", String(selectedAdminBoundary.boundary_id));
+  }
+
   return params;
 }
 
@@ -3349,7 +3393,7 @@ function renderRelatedMonumentsMapOverlay() {
       paint: {
         "line-width": 2.5,
         "line-opacity": 0.85,
-        "line-color": "#7c3aed"
+        "line-color": MONUMENT_MAP_COLOURS.related
       }
     });
   }
@@ -3368,7 +3412,7 @@ function renderRelatedMonumentsMapOverlay() {
       ],
       paint: {
         "circle-radius": 7,
-        "circle-color": "#7c3aed",
+        "circle-color": MONUMENT_MAP_COLOURS.related,
         "circle-opacity": 0.9,
         "circle-stroke-width": 2,
         "circle-stroke-color": "#ffffff"
@@ -3417,6 +3461,8 @@ function clearSelectedMonumentRecord() {
 function bringMonumentOverlaysToFront() {
   if (!map) return;
 
+  bringBorderLayerBehindMonuments();
+
   [
     "monument-related-lines-halo",
     "monument-related-lines",
@@ -3431,6 +3477,417 @@ function bringMonumentOverlaysToFront() {
       map.moveLayer(layerId);
     }
   });
+}
+
+function bindAdminBoundaryLayerEvents() {
+  if (!map || map.__adminBoundaryEventsBound) return;
+
+  map.__adminBoundaryEventsBound = true;
+
+  map.on("click", "central-asia-borders-fill", async (event) => {
+    if (!adminBoundarySummaryClickEnabled) {
+      return;
+    }
+
+    const feature = event.features?.[0];
+    if (!feature) return;
+
+    const boundaryId = Number(feature.properties?.boundary_id);
+    if (!Number.isInteger(boundaryId)) return;
+
+    await openAdminBoundarySummary(feature, event.lngLat);
+  });
+
+  map.on("mousemove", "central-asia-borders-fill", (event) => {
+    const feature = event.features?.[0];
+    if (!feature) return;
+
+    const boundaryId = Number(feature.id || feature.properties?.boundary_id);
+    if (!Number.isInteger(boundaryId)) return;
+
+    if (hoveredAdminBoundaryId !== null && hoveredAdminBoundaryId !== boundaryId) {
+      map.setFeatureState(
+        {
+          source: "central-asia-borders",
+          id: hoveredAdminBoundaryId
+        },
+        { hover: false }
+      );
+    }
+
+    hoveredAdminBoundaryId = boundaryId;
+
+    map.setFeatureState(
+      {
+        source: "central-asia-borders",
+        id: boundaryId
+      },
+      { hover: true }
+    );
+
+    map.getCanvas().style.cursor = adminBoundarySummaryClickEnabled
+      ? "pointer"
+      : "";
+  });
+
+  map.on("mouseleave", "central-asia-borders-fill", () => {
+    if (hoveredAdminBoundaryId !== null) {
+      map.setFeatureState(
+        {
+          source: "central-asia-borders",
+          id: hoveredAdminBoundaryId
+        },
+        { hover: false }
+      );
+    }
+
+    hoveredAdminBoundaryId = null;
+    map.getCanvas().style.cursor = "";
+  });
+}
+
+async function fetchAdminBoundarySummary(boundaryId) {
+  const params = buildMonumentQueryParams({ includePaging: false });
+  params.set("adminBoundaryId", String(boundaryId));
+
+  const response = await fetch(
+    `/api/map/admin-boundaries/${encodeURIComponent(boundaryId)}/summary?${params.toString()}`,
+    {
+      method: "GET",
+      credentials: "include"
+    }
+  );
+
+  const data = await response.json();
+
+  if (!response.ok || !data.ok) {
+    throw new Error(data.detail || data.error || "Failed to load region summary");
+  }
+
+  return data;
+}
+
+function summaryRowsHtml(rows) {
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return `<li>${t("none_recorded", "None recorded")}</li>`;
+  }
+
+  return rows.map((row) => {
+    return `<li><strong>${mSafeValue(row.label)}</strong>: ${formatCount(row.count)}</li>`;
+  }).join("");
+}
+
+async function openAdminBoundarySummary(feature, lngLat) {
+  const boundaryId = Number(feature.properties?.boundary_id);
+  if (!Number.isInteger(boundaryId)) return;
+
+  const boundaryName =
+    feature.properties?.admin_name ||
+    feature.properties?.name ||
+    t("selected_region", "Selected region");
+
+  const loadingHtml = `
+    <div class="map-popup region-summary-popup">
+      <button
+        type="button"
+        class="region-summary-close"
+        data-close-region-summary
+        aria-label="${t("close", "Close")}"
+      >
+        ×
+      </button>
+
+      <h3>${mSafeValue(boundaryName)}</h3>
+      <p class="region-summary-meta">
+        ${t("loading_region_summary", "Loading region summary...")}
+      </p>
+
+      <div class="region-summary-loading">
+        <span class="spinner"></span>
+        <span>${t("calculating_region_counts", "Calculating regional counts...")}</span>
+      </div>
+    </div>
+  `;
+
+  showAdminBoundarySummaryPanel(loadingHtml);
+
+  setMonumentsLoading(true, t("loading_region_summary", "Loading region summary..."));
+
+  try {
+    const summary = await fetchAdminBoundarySummary(boundaryId);
+
+    const boundaryName =
+      summary.boundary?.admin_name ||
+      feature.properties?.admin_name ||
+      feature.properties?.name ||
+      "";
+
+    const html = `
+      <div class="map-popup region-summary-popup">
+        <button
+          type="button"
+          class="region-summary-close"
+          data-close-region-summary
+          aria-label="${t("close", "Close")}"
+        >
+          ×
+        </button>
+        <h3>${mSafeValue(boundaryName)}</h3>
+
+        <p class="region-summary-meta">
+          ${mSafeValue(summary.boundary?.country_iso3)}
+        </p>
+
+        <div class="region-summary-counts">
+          <div>
+            <span>${t("total_caal_records_in_region", "Total CAAL records")}</span>
+            <strong>${formatCount(summary.counts?.total_all_caal_records || 0)}</strong>
+          </div>
+
+          <div>
+            <span>${t("visible_records_current_filters", "Visible in current view")}</span>
+            <strong>${formatCount(summary.counts?.visible_records || 0)}</strong>
+          </div>
+        </div>
+
+        <div class="region-summary-section">
+          ${t("top_classifications_in_region", "Top classifications in region")}
+          <ul>${summaryRowsHtml(summary.top?.classifications)}</ul>
+        </div>
+
+        <div class="region-summary-section">
+          ${t("top_monument_types_all_caal", "Top monument types in region")}
+          <ul>${summaryRowsHtml(summary.top?.monument_types)}</ul>
+        </div>
+
+        <div class="region-summary-section">
+          ${t("top_cultural_periods_all_caal", "Top cultural periods in region")}
+          <ul>${summaryRowsHtml(summary.top?.cultural_periods)}</ul>
+        </div>
+
+        <div class="region-summary-actions">
+          <button
+            type="button"
+            class="action-btn primary"
+            id="showRegionRecordsBtn"
+            data-boundary-id="${boundaryId}"
+          >
+            ${t("show_region_records_in_results", "Show visible records in results")}
+          </button>
+
+          <button
+            type="button"
+            class="action-btn"
+            id="clearRegionSelectionBtn"
+          >
+            ${t("clear_region_selection", "Clear region selection")}
+          </button>
+        </div>
+      </div>
+    `;
+
+    const panel = showAdminBoundarySummaryPanel(html);
+
+    setTimeout(() => {
+      const showBtn = document.getElementById("showRegionRecordsBtn");
+      if (showBtn) {
+        showBtn.addEventListener("click", async () => {
+          await applyAdminBoundaryFilter(boundaryId, boundaryName);
+          removeAdminBoundarySummaryPanel();
+        });
+      }
+
+      const clearBtn = document.getElementById("clearRegionSelectionBtn");
+      if (clearBtn) {
+        clearBtn.addEventListener("click", async () => {
+          await clearAdminBoundaryFilter();
+          removeAdminBoundarySummaryPanel();
+        });
+      }
+    }, 0);
+  } catch (error) {
+    console.error("Could not load region summary:", error);
+    alert(error.message || t("could_not_load_region_summary", "Could not load region summary"));
+  } finally {
+    setMonumentsLoading(false);
+  }
+}
+
+function removeAdminBoundarySummaryPanel() {
+  const existing = document.getElementById("adminBoundarySummaryPanel");
+  if (existing) existing.remove();
+}
+
+function showAdminBoundarySummaryPanel(html) {
+  removeAdminBoundarySummaryPanel();
+
+  const mapPane = document.getElementById("map-pane") || document.getElementById("map");
+  if (!mapPane) return null;
+
+  const panel = document.createElement("div");
+  panel.id = "adminBoundarySummaryPanel";
+  panel.className = "region-summary-floating-panel";
+  panel.innerHTML = html;
+
+  mapPane.appendChild(panel);
+
+  const closeBtn = panel.querySelector("[data-close-region-summary]");
+  if (closeBtn) {
+    closeBtn.addEventListener("click", () => {
+      removeAdminBoundarySummaryPanel();
+    });
+  }
+
+  return panel;
+}
+
+async function applyAdminBoundaryFilter(boundaryId, boundaryName = "") {
+  selectedAdminBoundary = {
+    boundary_id: boundaryId,
+    admin_name: boundaryName
+  };
+
+  monumentPageOffset = 0;
+
+  setMapStaleState(
+    true,
+    t("region_filter_applied", "Applying region filter...")
+  );
+
+  await applyMonumentFilters({
+    includeMap: true,
+    listFirst: true
+  });
+
+  updateMapStatusLine();
+}
+
+async function clearAdminBoundaryFilter() {
+  selectedAdminBoundary = null;
+
+  monumentPageOffset = 0;
+
+  await applyMonumentFilters({
+    includeMap: true,
+    listFirst: true
+  });
+
+  updateMapStatusLine();
+}
+
+function getCentralAsiaBorderPaint(style = "subtle") {
+  if (style === "dark") {
+    return {
+      fill: {
+        "fill-color": "#ffffff",
+        "fill-opacity": 0
+      },
+      line: {
+        "line-color": "#374151",
+        "line-opacity": 0.75,
+        "line-width": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          2, 0.6,
+          5, 1,
+          8, 1.5,
+          12, 2
+        ]
+      },
+      label: {
+        "text-color": "#374151",
+        "text-halo-color": "rgba(255,255,255,0.85)",
+        "text-halo-width": 1
+      }
+    };
+  }
+
+  if (style === "filled") {
+    return {
+      fill: {
+        "fill-color": "#2f6f5f",
+        "fill-opacity": 0.045
+      },
+      line: {
+        "line-color": "#2f6f5f",
+        "line-opacity": 0.55,
+        "line-width": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          2, 0.5,
+          5, 0.8,
+          8, 1.2,
+          12, 1.6
+        ]
+      },
+      label: {
+        "text-color": "#2f4f46",
+        "text-halo-color": "rgba(255,255,255,0.9)",
+        "text-halo-width": 1
+      }
+    };
+  }
+
+  return {
+    fill: {
+      "fill-color": "#ffffff",
+      "fill-opacity": 0
+    },
+    line: {
+      "line-color": "#4b5563",
+      "line-opacity": 0.38,
+      "line-width": [
+        "interpolate",
+        ["linear"],
+        ["zoom"],
+        2, 0.35,
+        5, 0.55,
+        8, 0.9,
+        12, 1.2
+      ]
+    },
+    label: {
+      "text-color": "#4b5563",
+      "text-halo-color": "rgba(255,255,255,0.75)",
+      "text-halo-width": 0.8
+    }
+  };
+}
+
+function applyCentralAsiaBorderStyle() {
+  if (!map) return;
+
+  const paint = getCentralAsiaBorderPaint(centralAsiaBorderStyle);
+
+  if (map.getLayer("central-asia-borders-fill")) {
+    map.setPaintProperty("central-asia-borders-fill", "fill-color", [
+      "case",
+      ["boolean", ["feature-state", "hover"], false],
+      "#F59E0B",
+      paint.fill["fill-color"]
+    ]);
+
+    map.setPaintProperty("central-asia-borders-fill", "fill-opacity", [
+      "case",
+      ["boolean", ["feature-state", "hover"], false],
+      0.22,
+      paint.fill["fill-opacity"]
+    ]);
+  }
+
+  if (map.getLayer("central-asia-borders-line")) {
+    map.setPaintProperty("central-asia-borders-line", "line-color", paint.line["line-color"]);
+    map.setPaintProperty("central-asia-borders-line", "line-opacity", paint.line["line-opacity"]);
+    map.setPaintProperty("central-asia-borders-line", "line-width", paint.line["line-width"]);
+  }
+
+  if (map.getLayer("central-asia-borders-label")) {
+    map.setPaintProperty("central-asia-borders-label", "text-color", paint.label["text-color"]);
+    map.setPaintProperty("central-asia-borders-label", "text-halo-color", paint.label["text-halo-color"]);
+    map.setPaintProperty("central-asia-borders-label", "text-halo-width", paint.label["text-halo-width"]);
+  }
 }
 
 // modal helpers
@@ -3984,7 +4441,7 @@ function initMonumentPreviewMiniMap(record) {
           8, 4.5,
           12, 6
         ],
-        "circle-color": "#c95a4a",
+        "circle-color": MONUMENT_MAP_COLOURS.allCaal,
         "circle-opacity": 0.7,
         "circle-stroke-width": 0.7,
         "circle-stroke-color": "rgba(255,255,255,0.9)"
@@ -4200,6 +4657,199 @@ function getMapBboxParam() {
     bounds.getEast(),
     bounds.getNorth()
   ].join(",");
+}
+
+function emptyFeatureCollection() {
+  return {
+    type: "FeatureCollection",
+    features: []
+  };
+}
+
+function ensureCentralAsiaBordersLayer() {
+  if (!map || !mapLoaded) return;
+
+  if (!map.getSource("central-asia-borders")) {
+    map.addSource("central-asia-borders", {
+      type: "geojson",
+      data: emptyFeatureCollection(),
+      promoteId: "boundary_id"
+    });
+  }
+
+  if (!map.getLayer("central-asia-borders-fill")) {
+    map.addLayer({
+      id: "central-asia-borders-fill",
+      type: "fill",
+      source: "central-asia-borders",
+      paint: {
+        "fill-color": [
+          "case",
+          ["boolean", ["feature-state", "hover"], false],
+          "#F59E0B",
+          "#ffffff"
+        ],
+        "fill-opacity": [
+          "case",
+          ["boolean", ["feature-state", "hover"], false],
+          0.22,
+          0.035
+        ]
+      }
+    });
+  }
+
+  if (!map.getLayer("central-asia-borders-line")) {
+    map.addLayer({
+      id: "central-asia-borders-line",
+      type: "line",
+      source: "central-asia-borders",
+      paint: {
+        "line-color": "#4b5563",
+        "line-opacity": 0.85,
+        "line-width": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          2, 0.5,
+          5, 0.9,
+          8, 1.4,
+          12, 2
+        ]
+      }
+    });
+  }
+
+  if (!map.getLayer("central-asia-borders-label")) {
+    map.addLayer({
+      id: "central-asia-borders-label",
+      type: "symbol",
+      source: "central-asia-borders",
+      minzoom: 3,
+      layout: {
+        "text-field": ["coalesce", ["get", "admin_name"], ["get", "admin_code"], ""],
+        "text-size": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          5, 10,
+          6, 12,
+          9, 14
+        ],
+        "text-font": ["Open Sans Semibold", "Arial Unicode MS Bold"],
+        "text-allow-overlap": false,
+        "text-ignore-placement": false
+      },
+      paint: {
+        "text-color": "#374151",
+        "text-halo-color": "rgba(255,255,255,0.85)",
+        "text-halo-width": 1
+      }
+    });
+  }
+
+  setCentralAsiaBordersVisibility();
+  applyCentralAsiaBorderStyle();
+  setCentralAsiaBordersVisibility();
+  bindAdminBoundaryLayerEvents();
+}
+
+function setCentralAsiaBordersVisibility() {
+  if (!map) return;
+
+  [
+    "central-asia-borders-fill",
+    "central-asia-borders-line",
+    "central-asia-borders-label"
+  ].forEach((layerId) => {
+    if (map.getLayer(layerId)) {
+      map.setLayoutProperty(
+        layerId,
+        "visibility",
+        centralAsiaBordersVisible ? "visible" : "none"
+      );
+    }
+  });
+}
+
+async function loadCentralAsiaBorders() {
+  if (!map || !mapLoaded || !centralAsiaBordersVisible) return;
+
+  const requestSeq = ++centralAsiaBordersRequestSeq;
+
+  ensureCentralAsiaBordersLayer();
+
+  const bbox = getMapBboxParam();
+  if (!bbox) return;
+
+  const zoom = map.getZoom ? map.getZoom() : 4;
+
+  try {
+    const params = new URLSearchParams();
+    params.set("bbox", bbox);
+    params.set("zoom", String(zoom));
+
+    const response = await fetch(`/api/map/borders?${params.toString()}`, {
+      method: "GET",
+      credentials: "include"
+    });
+
+    const data = await response.json();
+
+    if (requestSeq !== centralAsiaBordersRequestSeq) {
+      return;
+    }
+
+    if (!response.ok || !data.ok) {
+      throw new Error(data.detail || data.error || "Failed to load borders");
+    }
+
+    const source = map.getSource("central-asia-borders");
+    if (source && typeof source.setData === "function") {
+      source.setData(data.borders || emptyFeatureCollection());
+    }
+
+    bringBorderLayerBehindMonuments();
+  } catch (error) {
+    console.error("Failed to load Central Asia borders:", error);
+  }
+}
+
+function scheduleCentralAsiaBordersReload() {
+  if (!centralAsiaBordersVisible) return;
+
+  if (centralAsiaBordersDebounceTimer) {
+    clearTimeout(centralAsiaBordersDebounceTimer);
+  }
+
+  centralAsiaBordersDebounceTimer = setTimeout(() => {
+    loadCentralAsiaBorders();
+  }, 600);
+}
+
+function bringBorderLayerBehindMonuments() {
+  if (!map) return;
+
+  // Keep borders above the basemap but below monument points/clusters.
+  const firstMonumentLayer = [
+    "monument-national-clusters",
+    "monument-all-caal-clusters",
+    "monuments-national-layer",
+    "monuments-all-caal-layer",
+    "monuments-workspace-layer"
+  ].find((layerId) => map.getLayer(layerId));
+
+  [
+    "central-asia-borders-fill",
+    "central-asia-borders-line",
+    "central-asia-borders-label"
+  ].forEach((layerId) => {
+    if (!map.getLayer(layerId)) return;
+
+    if (firstMonumentLayer) {
+      map.moveLayer(layerId, firstMonumentLayer);
+    }
+  });
 }
 
 // --------------------------------------------------------
@@ -4892,10 +5542,10 @@ function drawMonumentRecords(records) {
     filter: ["has", "point_count"],
     paint: {
       "circle-radius": ["step", ["get", "point_count"], 14, 20, 18, 100, 22, 500, 26],
-      "circle-color": "#0f766e",
+      "circle-color": MONUMENT_MAP_COLOURS.national,
       "circle-opacity": 0.78,
-      "circle-stroke-width": 1,
-      "circle-stroke-color": "rgba(255,255,255,0.9)"
+      "circle-stroke-width": 1.4,
+      "circle-stroke-color": MONUMENT_MAP_COLOURS.whiteStroke
     }
   });
 
@@ -4920,7 +5570,7 @@ function drawMonumentRecords(records) {
     filter: ["has", "point_count"],
     paint: {
       "circle-radius": ["step", ["get", "point_count"], 14, 20, 18, 100, 22, 500, 26],
-      "circle-color": "#c95a4a",
+      "circle-color": MONUMENT_MAP_COLOURS.allCaal,
       "circle-opacity": 0.72,
       "circle-stroke-width": 1,
       "circle-stroke-color": "rgba(255,255,255,0.9)"
@@ -4948,10 +5598,10 @@ function drawMonumentRecords(records) {
     filter: ["!", ["has", "point_count"]],
     paint: {
       "circle-radius": ["interpolate", ["linear"], ["zoom"], 4, 4.5, 8, 6, 12, 8],
-      "circle-color": "#0f766e",
-      "circle-opacity": 0.88,
-      "circle-stroke-width": 1.2,
-      "circle-stroke-color": "rgba(255,255,255,0.9)"
+      "circle-color": MONUMENT_MAP_COLOURS.national,
+      "circle-opacity": 0.84,
+      "circle-stroke-width": 1.5,
+      "circle-stroke-color": MONUMENT_MAP_COLOURS.whiteStroke
     }
   });
 
@@ -4962,7 +5612,7 @@ function drawMonumentRecords(records) {
     filter: ["!", ["has", "point_count"]],
     paint: {
       "circle-radius": ["interpolate", ["linear"], ["zoom"], 4, 4.5, 8, 6, 12, 8],
-      "circle-color": "#c95a4a",
+      "circle-color": MONUMENT_MAP_COLOURS.allCaal,
       "circle-opacity": 0.8,
       "circle-stroke-width": 1.2,
       "circle-stroke-color": "rgba(255,255,255,0.9)"
@@ -4982,9 +5632,9 @@ function drawMonumentRecords(records) {
         8, 7,
         12, 9
       ],
-      "circle-color": "#2e7d32",
-      "circle-opacity": 0.95,
-      "circle-stroke-width": 1.6,
+      "circle-color": MONUMENT_MAP_COLOURS.workspace,
+      "circle-opacity": 0.96,
+      "circle-stroke-width": 2,
       "circle-stroke-color": "rgba(255,255,255,0.95)"
     }
   });
@@ -5423,13 +6073,13 @@ function renderMonumentDisplayMode(record) {
     </div>
 
     <div class="group-stack">
-      ${mRenderGroupBlock(mLabel("Location", "Location"), locationHtml, true)}
-      ${mRenderGroupBlock(mLabel("Basic", "Basic"), basicHtml, true)}
-      ${mRenderGroupBlock(t("nav_monuments", "Monument"), monumentHtml, true)}
-      ${mRenderGroupBlock(mLabel("Administration", "Administration"), adminHtml, true)}
-      ${mRenderGroupBlock(mLabel("Measurements", "Measurements"), measurementsHtml, measurementsHasValues)}
-      ${mRenderGroupBlock(mLabel("Related resources", "Related resources"), relatedHtml, true)}
-      ${mRenderGroupBlock(mLabel("Metadata", "Metadata"), metadataHtml, true)}
+      ${mRenderGroupBlock(t("location", "Location"), locationHtml, true)}
+      ${mRenderGroupBlock(t("basic", "Basic"), basicHtml, true)}
+      ${mRenderGroupBlock(t("nav_monuments", "Monuments"), monumentHtml, true)}
+      ${mRenderGroupBlock(t("administration", "Administration"), adminHtml, true)}
+      ${mRenderGroupBlock(t("measurements", "Measurements"), measurementsHtml, measurementsHasValues)}
+      ${mRenderGroupBlock(t("related_resources", "Related Resources"), relatedHtml, true)}
+      ${mRenderGroupBlock(t("metadata", "Metadata"), metadataHtml, true)}
     </div>
   `;
   const zoomBtn = document.getElementById("zoomToSelectedMonumentBtn");
@@ -5644,7 +6294,7 @@ function renderMonumentEditMode(record) {
       <div class="group-block">
         <div class="group-grid">
           <div class="detail-item full-width section-header">
-            <span class="detail-section-title">${mLabel("Location", "Location")}</span>
+            <span class="detail-section-title">${t("location", "Location")}</span>
           </div>
 
           <div class="detail-item full-width">
@@ -5673,7 +6323,7 @@ function renderMonumentEditMode(record) {
       <div class="group-block">
         <div class="group-grid">
           <div class="detail-item full-width section-header">
-            <span class="detail-section-title">${mLabel("Basic", "Basic")}</span>
+            <span class="detail-section-title">${t("basic", "Basic")}</span>
           </div>
 
           ${mRenderTextInput("Primary Name", mLabel("Primary Name", "Primary Name"), mRaw(record, "Primary Name"), true)}
@@ -5742,7 +6392,7 @@ function renderMonumentEditMode(record) {
       <div class="group-block">
         <div class="group-grid">
           <div class="detail-item full-width section-header">
-            <span class="detail-section-title">${mLabel("Administration", "Administration")}</span>
+            <span class="detail-section-title">${t("administration", "Administration")}</span>
           </div>
           ${mRenderTextInput("Administrative Subdivision Name1", mLabel("Administrative Subdivision Name1", "Administrative Subdivision Name1"), mRaw(record, "Administrative Subdivision Name1"))}
           ${mRenderSelect("Administrative Subdivision Type1", mLabel("Administrative Subdivision Type1", "Administrative Subdivision Type1"), "admin_subdivision_type", mRaw(record, "Administrative Subdivision Type1"))}
@@ -5758,7 +6408,7 @@ function renderMonumentEditMode(record) {
       <div class="group-block">
         <div class="group-grid">
           <div class="detail-item full-width section-header">
-            <span class="detail-section-title">${mLabel("Measurements", "Measurements")}</span>
+            <span class="detail-section-title">${t("measurements", "Measurements")}</span>
           </div>
           ${mRenderMeasurementEditSet(1, record)}
           ${mRenderMeasurementEditSet(2, record)}
@@ -5770,7 +6420,7 @@ function renderMonumentEditMode(record) {
       <div class="group-block">
         <div class="group-grid">
           <div class="detail-item full-width section-header">
-            <span class="detail-section-title">${mLabel("Related resources", "Related resources")}</span>
+            <span class="detail-section-title">${t("related_resources", "Related resources")}</span>
           </div>
 
           ${mRenderTextInput("Monument is part of", mLabel("Monument is part of", "Monument is part of"), mRaw(record, "Monument is part of"), true)}
@@ -5782,7 +6432,7 @@ function renderMonumentEditMode(record) {
       <div class="group-block">
         <div class="group-grid">
           <div class="detail-item full-width section-header">
-            <span class="detail-section-title">${mLabel("Metadata", "Metadata")}</span>
+            <span class="detail-section-title">${t("metadata", "Metadata")}</span>
           </div>
 
           ${mRenderReadOnlyItem(mLabel("Preferred Language", "Preferred Language"),displayLanguageName(mRaw(record, "Preferred Language")))}
@@ -6551,6 +7201,51 @@ if (showRelationshipLinesCheckbox) {
   });
 }
 
+if (showCentralAsiaBordersCheckbox) {
+  showCentralAsiaBordersCheckbox.checked = centralAsiaBordersVisible;
+
+  showCentralAsiaBordersCheckbox.addEventListener("change", async () => {
+    centralAsiaBordersVisible = showCentralAsiaBordersCheckbox.checked;
+
+    ensureCentralAsiaBordersLayer();
+    setCentralAsiaBordersVisibility();
+
+    if (centralAsiaBordersVisible) {
+      await loadCentralAsiaBorders();
+    }
+  });
+}
+
+if (borderStyleSelect) {
+  borderStyleSelect.value = centralAsiaBorderStyle;
+
+  borderStyleSelect.addEventListener("change", () => {
+    centralAsiaBorderStyle = borderStyleSelect.value || "subtle";
+    applyCentralAsiaBorderStyle();
+  });
+}
+
+if (enableRegionSummaryClickCheckbox) {
+  enableRegionSummaryClickCheckbox.checked = adminBoundarySummaryClickEnabled;
+
+  enableRegionSummaryClickCheckbox.addEventListener("change", async () => {
+    adminBoundarySummaryClickEnabled =
+      enableRegionSummaryClickCheckbox.checked;
+
+    if (adminBoundarySummaryClickEnabled) {
+      centralAsiaBordersVisible = true;
+
+      if (showCentralAsiaBordersCheckbox) {
+        showCentralAsiaBordersCheckbox.checked = true;
+      }
+
+      ensureCentralAsiaBordersLayer();
+      setCentralAsiaBordersVisibility();
+      await loadCentralAsiaBorders();
+    }
+  });
+}
+
 document.addEventListener("keydown", async (event) => {
   if (event.key === "Escape") {
     if (monumentIsAddMode) {
@@ -6835,9 +7530,12 @@ document.addEventListener("DOMContentLoaded", async () => {
       mapLoaded = true;
       updateAddModeUI();
 
+      ensureCentralAsiaBordersLayer();
+
       setMonumentsLoading(true, t("loading_records", "Loading records..."));
 
       try {
+        await loadCentralAsiaBorders();
         await loadMonumentMapRecords();
         await loadMonumentListRecords();
 
@@ -6882,9 +7580,12 @@ document.addEventListener("DOMContentLoaded", async () => {
         }
 
         try {
-          await loadMonumentMapRecords();
+          await Promise.all([
+            loadCentralAsiaBorders(),
+            loadMonumentMapRecords()
+          ]);
         } catch (error) {
-          console.error("Failed to reload monuments for bbox:", error);
+          console.error("Failed to reload map layers for bbox:", error);
         }
       }, 1500);
     });
@@ -6896,8 +7597,11 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         map.setStyle(getBasemapStyle(basemapSelect.value));
 
-        map.once("style.load", () => {
+        map.once("style.load", async () => {
           mapLoaded = true;
+
+          ensureCentralAsiaBordersLayer();
+          await loadCentralAsiaBorders();
 
           monumentsLayerEventsBound = false;
           drawMonumentRecords(monumentMapRecords);

@@ -1378,7 +1378,7 @@ function archiveRenderAssociatedArchivePreview(record, caalId, fullRecordUrl) {
       <div class="group-block">
         <div class="group-grid">
           <div class="detail-item full-width section-header">
-            <span class="detail-section-title">${archiveLabel("Material Details", "Material Details")}</span>
+            <span class="detail-section-title">${t("material_details", "Material Details")}</span>
           </div>
 
           ${archiveRenderDetailItem(archiveLabel("CAAL_ID", "CAAL_ID"), record.identity?.caal_id)}
@@ -1400,7 +1400,7 @@ function archiveRenderAssociatedArchivePreview(record, caalId, fullRecordUrl) {
       <div class="group-block">
         <div class="group-grid">
           <div class="detail-item full-width section-header">
-            <span class="detail-section-title">${archiveLabel("Publication Details", "Publication Details")}</span>
+            <span class="detail-section-title">${t("publication_details", "Publication Details")}</span>
           </div>
 
           ${archiveRenderDetailItem(archiveLabel("Dates of Original Material", "Dates of Original Material"), archiveRaw(record, "Dates of Original Material"))}
@@ -1451,7 +1451,7 @@ function archiveRenderAssociatedMonumentPreview(record, caalId, fullRecordUrl) {
       <div class="group-block">
         <div class="group-grid">
           <div class="detail-item full-width section-header">
-            <span class="detail-section-title">${archiveLabel("Basic", "Basic")}</span>
+            <span class="detail-section-title">${t("basic", "Basic")}</span>
           </div>
 
           ${archiveRenderDetailItem(archiveLabel("CAAL_ID", "CAAL_ID"), caalId)}
@@ -1480,7 +1480,7 @@ function archiveRenderAssociatedMonumentPreview(record, caalId, fullRecordUrl) {
       <div class="group-block">
         <div class="group-grid">
           <div class="detail-item full-width section-header">
-            <span class="detail-section-title">${archiveLabel("Location", "Location")}</span>
+            <span class="detail-section-title">${t("location", "Location")}</span>
           </div>
 
           ${archiveRenderDetailItem(archiveLabel("Longitude", "Longitude"), record.summary?.longitude || record.raw?.["Longitude"])}
@@ -1520,7 +1520,7 @@ function archiveOpenPreview(record) {
       <div class="group-block">
         <div class="group-grid">
           <div class="detail-item full-width section-header">
-            <span class="detail-section-title">${archiveLabel("Material Details", "Material Details")}</span>
+            <span class="detail-section-title">${t("material_details", "Material Details")}</span>
           </div>
 
           ${archiveRenderDetailItem(archiveLabel("CAAL_ID", "CAAL_ID"), archiveIdentity(record, "caal_id"))}
@@ -1547,7 +1547,7 @@ function archiveOpenPreview(record) {
       <div class="group-block">
         <div class="group-grid">
           <div class="detail-item full-width section-header">
-            <span class="detail-section-title">${archiveLabel("Publication Details", "Publication Details")}</span>
+            <span class="detail-section-title">${t("publication_details", "Publication Details")}</span>
           </div>
 
           ${archiveRenderDetailItem(archiveLabel("Dates of Original Material", "Dates of Original Material"), archiveRaw(record, "Dates of Original Material"))}
@@ -2228,12 +2228,12 @@ function archiveRenderDisplayMode(record) {
     </div>
 
     <div class="group-stack">
-      ${archiveRenderGroupBlock(archiveLabel("Material Details", "Material Details"), materialHtml, materialHasValues)}
-      ${archiveRenderGroupBlock(archiveLabel("Publication Details", "Publication Details"), publicationHtml, publicationHasValues)}
-      ${archiveRenderGroupBlock(archiveLabel("Content", "Content"), contentHtml, contentHasValues)}
-      ${archiveRenderGroupBlock(archiveLabel("Digital Files", "Digital Files"), digitalHtml, digitalHasValues)}
-      ${archiveRenderGroupBlock(archiveLabel("Related resources", "Related resources"), relatedHtml, true)}
-      ${archiveRenderGroupBlock(archiveLabel("Metadata", "Metadata"), metadataHtml, metadataHasValues)}
+      ${archiveRenderGroupBlock(t("material_details", "Material Details"), materialHtml, materialHasValues)}
+      ${archiveRenderGroupBlock(t("publication_details", "Publication Details"), publicationHtml, publicationHasValues)}
+      ${archiveRenderGroupBlock(t("content", "Content"), contentHtml, contentHasValues)}
+      ${archiveRenderGroupBlock(t("digital_files", "Digital Files"), digitalHtml, digitalHasValues)}
+      ${archiveRenderGroupBlock(t("related_resources", "Related resources"), relatedHtml, true)}
+      ${archiveRenderGroupBlock(t("metadata", "Metadata"), metadataHtml, metadataHasValues)}
     </div>
   `;
 
@@ -2390,11 +2390,11 @@ function archiveRenderEditMode(record) {
     </div>
 
     <div class="group-stack">
-      ${archiveRenderGroupBlock(archiveLabel("Material Details", "Material Details"), materialHtml, true)}
-      ${archiveRenderGroupBlock(archiveLabel("Publication Details", "Publication Details"), publicationHtml, true)}
-      ${archiveRenderGroupBlock(archiveLabel("Content", "Content"), contentHtml, true)}
-      ${archiveRenderGroupBlock(archiveLabel("Digital Files", "Digital Files"), digitalHtml, true)}
-      ${archiveRenderGroupBlock(archiveLabel("Metadata", "Metadata"), metadataHtml, true)}
+      ${archiveRenderGroupBlock(t("material_details", "Material Details"), materialHtml, true)}
+      ${archiveRenderGroupBlock(t("publication_details", "Publication Details"), publicationHtml, true)}
+      ${archiveRenderGroupBlock(t("content", "Content"), contentHtml, true)}
+      ${archiveRenderGroupBlock(t("digital_files", "Digital Files"), digitalHtml, true)}
+      ${archiveRenderGroupBlock(t("metadata", "Metadata"), metadataHtml, true)}
     </div>
   `;
 

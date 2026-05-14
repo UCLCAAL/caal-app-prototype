@@ -822,6 +822,58 @@ function buildMonumentFilterWhere(req, lang = "en") {
   };
 }
 
+// REGIONAL SUMMARY HELPERS
+function parseAdminBoundaryId(value) {
+  const parsed = Number(value);
+  return Number.isInteger(parsed) ? parsed : null;
+}
+
+function appendAdminBoundaryFilter({
+  sql,
+  values,
+  tableAlias = "combined",
+  boundaryId
+}) {
+  if (!boundaryId) {
+    return {
+      sql,
+      values
+    };
+  }
+
+  const nextIndex = values.length + 1;
+  const p = tableAlias ? `${tableAlias}.` : "";
+
+  const boundaryClause = `
+    EXISTS (
+      SELECT 1
+      FROM ui.mv_admin_boundaries_map b
+      WHERE b.boundary_id = $${nextIndex}
+        AND ${p}"Longitude" IS NOT NULL
+        AND ${p}"Latitude" IS NOT NULL
+        AND ST_Intersects(
+          ST_SetSRID(
+            ST_MakePoint(${p}"Longitude", ${p}"Latitude"),
+            4326
+          ),
+          b.geom
+        )
+    )
+  `;
+
+  if (sql) {
+    return {
+      sql: `${sql} AND ${boundaryClause}`,
+      values: [...values, boundaryId]
+    };
+  }
+
+  return {
+    sql: `WHERE ${boundaryClause}`,
+    values: [...values, boundaryId]
+  };
+}
+
 //bbox helper
 function parseBboxParam(bboxParam) {
   if (!bboxParam) return null;
@@ -1286,6 +1338,364 @@ router.get("/lookups/monuments", async (req, res) => {
   }
 });
 
+router.get("/map/borders", async (req, res) => {
+  const currentSession = req.session?.appSession || null;
+
+  if (!currentSession) {
+    return res.status(401).json({ ok: false, error: "No active session" });
+  }
+
+  const bbox = parseBboxParam(req.query.bbox);
+
+  if (!bbox) {
+    return res.status(400).json({
+      ok: false,
+      error: "Missing or invalid bbox"
+    });
+  }
+
+  const zoom = Number(req.query.zoom || 0);
+
+  // Keep simplification conservative. At high zoom, do not simplify.
+  const simplifyTolerance =
+    zoom < 4 ? 0.08 :
+    zoom < 6 ? 0.03 :
+    zoom < 8 ? 0.01 :
+    0;
+
+  try {
+    const result = await pool.query(
+      `
+      SELECT jsonb_build_object(
+        'type', 'FeatureCollection',
+        'features', COALESCE(jsonb_agg(feature), '[]'::jsonb)
+      ) AS geojson
+      FROM (
+        SELECT jsonb_build_object(
+          'type', 'Feature',
+          'id', boundary_id,
+          'geometry',
+            CASE
+              WHEN $5::double precision > 0 THEN
+                ST_AsGeoJSON(
+                  ST_SimplifyPreserveTopology(geom, $5::double precision)
+                )::jsonb
+              ELSE
+                ST_AsGeoJSON(geom)::jsonb
+            END,
+          'properties', jsonb_build_object(
+            'boundary_id', boundary_id,
+            'source', source,
+            'source_version', source_version,
+            'country_iso3', country_iso3,
+            'admin_level', admin_level,
+            'admin_code', admin_code,
+            'admin_name', admin_name,
+            'admin_type', admin_type
+          )
+        ) AS feature
+        FROM ui.mv_admin_boundaries_map
+        WHERE geom && ST_MakeEnvelope($1, $2, $3, $4, 4326)
+        ORDER BY country_iso3, admin_name
+      ) q;
+      `,
+      [
+        bbox.minLng,
+        bbox.minLat,
+        bbox.maxLng,
+        bbox.maxLat,
+        simplifyTolerance
+      ]
+    );
+    return res.json({
+      ok: true,
+      borders: result.rows[0]?.geojson || {
+        type: "FeatureCollection",
+        features: []
+      }
+    });
+  } catch (error) {
+    console.error("Central Asia borders fetch failed:");
+    console.error(error);
+
+    return res.status(500).json({
+      ok: false,
+      error: "Central Asia borders fetch failed",
+      detail: error.message
+    });
+  }
+});
+
+// SUMMARY FOR REGIONAL MAPPING
+router.get("/map/admin-boundaries/:boundaryId/summary", async (req, res) => {
+  const currentSession = req.session?.appSession || null;
+
+  if (!currentSession) {
+    return res.status(401).json({ ok: false, error: "No active session" });
+  }
+
+  const boundaryId = Number(req.params.boundaryId);
+
+  if (!Number.isInteger(boundaryId)) {
+    return res.status(400).json({
+      ok: false,
+      error: "Invalid boundary id"
+    });
+  }
+
+  const lang =
+    req.query.lang ||
+    currentSession.profile?.preferred_language ||
+    "en";
+
+  const safeLang = safeMonumentLang(lang);
+  const fallbackLang = fallbackLookupLang(safeLang);
+
+  const requestedScopes = parseScopes(req.query.scopes);
+  const normalizedScopes = normalizeRequestedScopes(requestedScopes);
+  const allowedScopes = getAllowedScopes(currentSession);
+  const scopes = normalizedScopes.filter((s) => allowedScopes.includes(s));
+
+  if (scopes.length === 0) {
+    return res.status(403).json({
+      ok: false,
+      error: "No permitted scopes requested"
+    });
+  }
+
+  try {
+    const boundaryResult = await pool.query(
+      `
+      SELECT
+        boundary_id,
+        country_iso3,
+        admin_level,
+        admin_code,
+        admin_name,
+        admin_type,
+        geom
+      FROM ui.mv_admin_boundaries_map
+      WHERE boundary_id = $1
+      `,
+      [boundaryId]
+    );
+
+    const boundary = boundaryResult.rows[0];
+
+    if (!boundary) {
+      return res.status(404).json({
+        ok: false,
+        error: "Boundary not found"
+      });
+    }
+
+    /*
+      True total:
+      Counts public CAAL monument records in the boundary,
+      regardless of the current user's visible scopes.
+    */
+    const trueCountResult = await pool.query(
+      `
+      SELECT COUNT(*)::integer AS total
+      FROM ui.monument_admin_boundary_membership
+      WHERE boundary_id = $1
+      `,
+      [boundaryId]
+    );
+
+    /*
+      Visible total:
+      Counts the records the user can actually browse,
+      using the same scoped union and filters as the map/list APIs.
+    */
+    const unionSql = buildBrowseUnionSql(scopes, currentSession);
+    const filter = buildMonumentFilterWhere(req, lang);
+
+    const boundaryParamIndex = filter.values.length + 1;
+
+    const visibleWhere = filter.whereSql || "";
+
+    const visibleCountResult = await pool.query(
+      `
+      SELECT COUNT(*)::integer AS total
+      FROM (
+        ${unionSql}
+      ) combined
+      JOIN ui.monument_admin_boundary_membership abm
+        ON abm.caal_id = combined."CAAL_ID"
+      AND abm.boundary_id = $${boundaryParamIndex}
+      ${visibleWhere}
+      `,
+      [...filter.values, boundaryId]
+    );
+
+    const classificationResult = await pool.query(
+      `
+      SELECT
+        COALESCE(
+          cls.display_${safeLang},
+          cls.display_${fallbackLang},
+          cls.display_en,
+          NULLIF(m."Classification", ''),
+          'Unspecified'
+        ) AS label,
+        NULLIF(m."Classification", '') AS value,
+        COUNT(*)::integer AS count
+      FROM ui.monument_admin_boundary_membership abm
+      JOIN ${MONUMENTS_CAAL_MV} m
+        ON m."CAAL_ID" = abm.caal_id
+      LEFT JOIN ui.v_lkp_classifications cls
+        ON cls.canonical_value = NULLIF(m."Classification", '')
+      WHERE abm.boundary_id = $1
+      GROUP BY
+        COALESCE(
+          cls.display_${safeLang},
+          cls.display_${fallbackLang},
+          cls.display_en,
+          NULLIF(m."Classification", ''),
+          'Unspecified'
+        ),
+        NULLIF(m."Classification", '')
+      ORDER BY count DESC, label
+      LIMIT 5
+      `,
+      [boundaryId]
+    );
+
+    const typeResult = await pool.query(
+      `
+      WITH scoped_records AS (
+        SELECT
+          m."CAAL_ID",
+          m.monument_types_arr
+        FROM ui.monument_admin_boundary_membership abm
+        JOIN ${MONUMENTS_CAAL_MV} m
+          ON m."CAAL_ID" = abm.caal_id
+        WHERE abm.boundary_id = $1
+      ),
+      specified AS (
+        SELECT
+          NULLIF(btrim(type_value), '') AS value,
+          COUNT(*)::integer AS count
+        FROM scoped_records
+        CROSS JOIN LATERAL unnest(monument_types_arr) AS type_value
+        WHERE NULLIF(btrim(type_value), '') IS NOT NULL
+        GROUP BY NULLIF(btrim(type_value), '')
+      ),
+      unspecified AS (
+        SELECT
+          NULL::text AS value,
+          COUNT(*)::integer AS count
+        FROM scoped_records
+        WHERE COALESCE(array_length(monument_types_arr, 1), 0) = 0
+      ),
+      combined AS (
+        SELECT value, count FROM specified
+        UNION ALL
+        SELECT value, count FROM unspecified WHERE count > 0
+      )
+      SELECT
+        COALESCE(
+          mt.display_${safeLang},
+          mt.display_${fallbackLang},
+          mt.display_en,
+          combined.value,
+          'Unspecified'
+        ) AS label,
+        combined.value,
+        combined.count
+      FROM combined
+      LEFT JOIN ui.v_lkp_site_types_context mt
+        ON mt.canonical_value = combined.value
+      ORDER BY combined.count DESC, label
+      LIMIT 5
+      `,
+      [boundaryId]
+    );
+
+    const periodResult = await pool.query(
+      `
+      WITH scoped_records AS (
+        SELECT
+          m."CAAL_ID",
+          m.cultural_periods_arr
+        FROM ui.monument_admin_boundary_membership abm
+        JOIN ${MONUMENTS_CAAL_MV} m
+          ON m."CAAL_ID" = abm.caal_id
+        WHERE abm.boundary_id = $1
+      ),
+      specified AS (
+        SELECT
+          NULLIF(btrim(period_value), '') AS value,
+          COUNT(*)::integer AS count
+        FROM scoped_records
+        CROSS JOIN LATERAL unnest(cultural_periods_arr) AS period_value
+        WHERE NULLIF(btrim(period_value), '') IS NOT NULL
+        GROUP BY NULLIF(btrim(period_value), '')
+      ),
+      unspecified AS (
+        SELECT
+          NULL::text AS value,
+          COUNT(*)::integer AS count
+        FROM scoped_records
+        WHERE COALESCE(array_length(cultural_periods_arr, 1), 0) = 0
+      ),
+      combined AS (
+        SELECT value, count FROM specified
+        UNION ALL
+        SELECT value, count FROM unspecified WHERE count > 0
+      )
+      SELECT
+        COALESCE(
+          cp.display_${safeLang},
+          cp.display_${fallbackLang},
+          cp.display_en,
+          combined.value,
+          'Unspecified'
+        ) AS label,
+        combined.value,
+        combined.count
+      FROM combined
+      LEFT JOIN ui.v_lkp_cultural_periods_context cp
+        ON cp.canonical_value = combined.value
+      ORDER BY combined.count DESC, label
+      LIMIT 5
+      `,
+      [boundaryId]
+    );
+
+    return res.json({
+      ok: true,
+      boundary: {
+        boundary_id: boundary.boundary_id,
+        country_iso3: boundary.country_iso3,
+        admin_level: boundary.admin_level,
+        admin_code: boundary.admin_code,
+        admin_name: boundary.admin_name,
+        admin_type: boundary.admin_type
+      },
+      counts: {
+        total_all_caal_records: Number(trueCountResult.rows[0]?.total || 0),
+        visible_records: Number(visibleCountResult.rows[0]?.total || 0)
+      },
+      top: {
+        classifications: classificationResult.rows,
+        monument_types: typeResult.rows,
+        cultural_periods: periodResult.rows
+      }
+    });
+  } catch (error) {
+    console.error("Admin boundary summary failed:");
+    console.error(error);
+
+    return res.status(500).json({
+      ok: false,
+      error: "Admin boundary summary failed",
+      detail: error.message
+    });
+  }
+});
+
 router.get("/monuments/map", async (req, res) => {
   //console.log("MONUMENTS route session:", JSON.stringify(req.session, null, 2));
   //console.log("MONUMENTS query:", req.query);
@@ -1451,6 +1861,18 @@ router.get("/monuments/map", async (req, res) => {
     }
   }
 
+  const adminBoundaryId = parseAdminBoundaryId(req.query.adminBoundaryId);
+
+  const boundaryFiltered = appendAdminBoundaryFilter({
+    sql: combinedWhere,
+    values: extraValues,
+    tableAlias: "combined",
+    boundaryId: adminBoundaryId
+  });
+
+  combinedWhere = boundaryFiltered.sql;
+  const finalMapValues = boundaryFiltered.values;
+
   // --- final query ---
   try {
     //console.log("MAP scopes:", scopes);
@@ -1461,7 +1883,7 @@ router.get("/monuments/map", async (req, res) => {
     const hasFreeTextSearch = hasExpensiveFreeTextSearch(req);
     const mapLimit = hasFreeTextSearch ? 1500 : 5000;
 
-    const limitParamIndex = extraValues.length + 1;
+    const limitParamIndex = finalMapValues.length + 1;
 
     const dataSql = `
       SELECT
@@ -1496,9 +1918,10 @@ router.get("/monuments/map", async (req, res) => {
       LIMIT $${limitParamIndex}
     `;
 
-    const result = await pool.query(dataSql, [...extraValues, mapLimit]);
+    const result = await pool.query(dataSql, [...finalMapValues, mapLimit]);
 
-    //console.log("MAP raw rows:", result.rows.length);
+    console.log("MAP SQL:", dataSql);
+    console.log("MAP values:", [...extraValues, mapLimit]);
 
     const currentAppUserId = currentSession?.user?.user_id ?? null;
     const canEditCaal = canEditCaalMonuments(currentSession);
@@ -1675,6 +2098,18 @@ router.get("/monuments", async (req, res) => {
 
     const { whereSql, values } = buildMonumentFilterWhere(req, lang);
 
+    const adminBoundaryId = parseAdminBoundaryId(req.query.adminBoundaryId);
+
+    const boundaryFiltered = appendAdminBoundaryFilter({
+      sql: whereSql,
+      values,
+      tableAlias: "combined",
+      boundaryId: adminBoundaryId
+    });
+
+    const finalWhereSql = boundaryFiltered.sql;
+    const finalValues = boundaryFiltered.values;
+
     const safeLang = safeMonumentLang(lang);
 
     const dataSql = `
@@ -1683,7 +2118,7 @@ router.get("/monuments", async (req, res) => {
       FROM (
         ${unionSql}
       ) combined
-      ${whereSql}
+      ${finalWhereSql}
       ORDER BY
         CASE combined.source_scope
           WHEN 'workspace' THEN 0
@@ -1693,12 +2128,12 @@ router.get("/monuments", async (req, res) => {
         END,
         combined."Tstamp" DESC NULLS LAST,
         combined.id DESC
-      LIMIT $${values.length + 1} OFFSET $${values.length + 2}
+      LIMIT $${finalValues.length + 1} OFFSET $${finalValues.length + 2}
     `;
 
     const hasFreeTextSearch = hasExpensiveFreeTextSearch(req);
 
-    const dataResult = await pool.query(dataSql, [...values, limit, offset]);
+    const dataResult = await pool.query(dataSql, [...finalValues, limit, offset]);
 
     let totalIsExact = false;
     let total = estimateReturnedTotal({
@@ -1713,10 +2148,10 @@ router.get("/monuments", async (req, res) => {
         FROM (
           ${unionSql}
         ) combined
-        ${whereSql}
+        ${finalWhereSql}
       `;
 
-      const countResult = await pool.query(countSql, values);
+      const countResult = await pool.query(countSql, finalValues);
       total = Number(countResult.rows[0].total);
       totalIsExact = true;
     }

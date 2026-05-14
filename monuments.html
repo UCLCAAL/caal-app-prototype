@@ -167,7 +167,7 @@
           </label>
 
           <label class="browse-checkbox">
-            <input type="checkbox" id="showNationalRecords" />
+            <input type="checkbox" id="showNationalRecords" checked />
             <span data-i18n="monuments_national_records">National CAAL records</span>
           </label>
 
@@ -331,6 +331,26 @@
           <option value="maptiler-satellite" data-i18n="basemap_satellite_only">Satellite only</option>
           <option value="maptiler-topo" data-i18n="basemap_topographic_map">Topographic map</option>
           <option value="osm" data-i18n="basemap_openstreetmap">OpenStreetMap</option>
+        </select>
+      </div>
+
+      <div class="map-options-section">
+        <span class="map-options-section-title" data-i18n="context_layers">Context layers</span>
+
+        <label class="map-options-check">
+          <input type="checkbox" id="showCentralAsiaBordersCheckbox">
+          <span data-i18n="show_admin_boundaries">Administrative boundaries</span>
+        </label>
+        <label class="map-options-check">
+          <input type="checkbox" id="enableRegionSummaryClickCheckbox">
+          <span data-i18n="enable_region_summary_click">Click regions for summaries</span>
+        </label>
+
+        <label for="borderStyleSelect" data-i18n="border_style">Border style</label>
+        <select id="borderStyleSelect" class="form-control">
+          <option value="subtle" selected data-i18n="border_style_subtle">Subtle</option>
+          <option value="dark" data-i18n="border_style_dark">Dark</option>
+          <option value="filled" data-i18n="border_style_filled">Light fill</option>
         </select>
       </div>
 
