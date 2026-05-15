@@ -37,10 +37,12 @@ const basemapSelect = document.getElementById("basemapSelect");
 const showCentralAsiaBordersCheckbox = document.getElementById("showCentralAsiaBordersCheckbox");
 const enableRegionSummaryClickCheckbox = document.getElementById("enableRegionSummaryClickCheckbox");
 const borderStyleSelect = document.getElementById("borderStyleSelect");
+const borderStyleOptions = document.getElementById("borderStyleOptions");
 
+const showMapLabelsCheckbox = document.getElementById("showMapLabelsCheckbox");
+const mapLabelsOptions = document.getElementById("mapLabelsOptions");
 const mapLabelScopeSelect = document.getElementById("mapLabelScopeSelect");
 const mapLabelModeSelect = document.getElementById("mapLabelModeSelect");
-const mapLabelModeSection = document.getElementById("mapLabelModeSection");
 const mapLabelScopeHelp = document.getElementById("mapLabelScopeHelp");
 
 const mapStatusLine = document.getElementById("mapStatusLine");
@@ -488,16 +490,20 @@ function toggleMapOptionsPanel() {
 }
 
 function resetMapOptionsPanelState() {
+  if (showMapLabelsCheckbox) {
+    showMapLabelsCheckbox.checked = false;
+  }
+
   if (mapLabelScopeSelect) {
-    mapLabelScopeSelect.value = "none";
+    mapLabelScopeSelect.value = "results";
   }
 
   if (mapLabelModeSelect) {
     mapLabelModeSelect.value = "name";
   }
 
-  if (mapLabelModeSection) {
-    mapLabelModeSection.hidden = true;
+  if (mapLabelsOptions) {
+    mapLabelsOptions.hidden = true;
   }
 
   if (mapLabelWarning) {
@@ -1885,7 +1891,15 @@ function updateMapLabelHelpText() {
   mapLabelScopeHelp.textContent = messages[mapLabelScopeSelect.value] || messages.none;
 }
 
+function updateBorderStyleOptionsVisibility() {
+  if (!borderStyleOptions || !showCentralAsiaBordersCheckbox) return;
+
+  borderStyleOptions.hidden = !showCentralAsiaBordersCheckbox.checked;
+}
+
 function updateMapOptionsState() {
+  updateBorderStyleOptionsVisibility();
+
   const hasResults =
     Array.isArray(monumentMapRecords) &&
     monumentMapRecords.some((record) => Array.isArray(record?.geometry?.coordinates));
@@ -1919,23 +1933,23 @@ function updateMapOptionsState() {
 
   if (mapLabelScopeSelect) {
     if (mapLabelScopeSelect.value === "results" && !hasResults) {
-      mapLabelScopeSelect.value = "none";
+      mapLabelScopeSelect.value = hasSelected ? "selected" : "results";
     }
 
     if (mapLabelScopeSelect.value === "selected" && !hasSelected) {
-      mapLabelScopeSelect.value = "none";
+      mapLabelScopeSelect.value = hasResults ? "results" : "selected";
     }
 
     if (
       mapLabelScopeSelect.value === "selected_related" &&
       !(hasSelected && hasRelatedOverlay)
     ) {
-      mapLabelScopeSelect.value = hasSelected ? "selected" : "none";
+      mapLabelScopeSelect.value = hasSelected ? "selected" : "results";
     }
   }
 
-  if (mapLabelModeSection && mapLabelScopeSelect) {
-    mapLabelModeSection.hidden = mapLabelScopeSelect.value === "none";
+  if (mapLabelsOptions && showMapLabelsCheckbox) {
+    mapLabelsOptions.hidden = !showMapLabelsCheckbox.checked;
   }
 
   updateMapLabelHelpText();
@@ -2008,12 +2022,12 @@ function renderLiveMapLabels() {
     map.removeLayer("monument-live-labels");
   }
 
-  const scope = mapLabelScopeSelect?.value || "none";
-
-  if (scope === "none") {
+  if (!showMapLabelsCheckbox?.checked) {
     updateMapLabelWarning();
     return;
   }
+
+  const scope = mapLabelScopeSelect?.value || "results";
 
   let sourceId = null;
   let filter = null;
@@ -2095,7 +2109,11 @@ function renderLiveMapLabels() {
 function getLiveResultsLabelBlockReason() {
   if (!map) return null;
 
-  const scope = mapLabelScopeSelect?.value || "none";
+  if (!showMapLabelsCheckbox?.checked) {
+    return null;
+  }
+
+  const scope = mapLabelScopeSelect?.value || "results";
 
   if (scope !== "results") {
     return null;
@@ -8771,6 +8789,20 @@ if (closeMapOptionsBtn && mapOptionsPanel) {
   closeMapOptionsBtn.addEventListener("click", closeMapOptionsPanel);
 }
 
+if (showMapLabelsCheckbox) {
+  showMapLabelsCheckbox.addEventListener("change", () => {
+    updateMapOptionsState();
+    renderLiveMapLabels();
+  });
+}
+
+if (mapLabelScopeSelect) {
+  mapLabelScopeSelect.addEventListener("change", () => {
+    updateMapOptionsState();
+    renderLiveMapLabels();
+  });
+}
+
 if (mapLabelScopeSelect) {
   mapLabelScopeSelect.addEventListener("change", () => {
     updateMapOptionsState();
@@ -8809,6 +8841,7 @@ if (showCentralAsiaBordersCheckbox) {
 
     if (centralAsiaBordersVisible) {
       await loadCentralAsiaBorders();
+      updateBorderStyleOptionsVisibility();
     }
   });
 }

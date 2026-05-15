@@ -744,8 +744,43 @@ body {
   font-weight: 500;
 }
 
+.map-options-subsection {
+  margin-top: 0.55rem;
+  margin-left: 1.35rem;
+  padding-left: 0.9rem;
+  border-left: 2px solid #e2e8f0;
+  display: grid;
+  gap: 0.4rem;
+}
 
+.map-options-subsection label {
+  font-size: 0.84rem;
+  font-weight: 700;
+  color: #334155;
+}
 
+.map-options-subsection .map-options-help {
+  margin: 0 0 0.15rem;
+}
+
+.map-options-panel .map-options-subsection {
+  margin-top: 0.55rem;
+  margin-left: 1.35rem;
+  padding-left: 0.9rem;
+  border-left: 2px solid #e2e8f0;
+  display: grid;
+  gap: 0.55rem;
+}
+
+.map-options-panel .map-options-subsection label {
+  font-size: 0.84rem;
+  font-weight: 700;
+  color: #334155;
+}
+
+.map-options-panel .map-options-subsection .form-control {
+  margin-bottom: 0.15rem;
+}
 /* --------------------------------------------------------
    Legacy hierarchy tree pickers
    Used for Monument Type and Cultural Period edit fields
