@@ -75,6 +75,68 @@ const monumentPreviewModal = document.getElementById("monumentPreviewModal");
 const monumentPreviewTitle = document.getElementById("monumentPreviewTitle");
 const monumentPreviewBody = document.getElementById("monumentPreviewBody");
 const monumentPreviewCloseBtn = document.getElementById("monumentPreviewCloseBtn");
+
+const monumentPreviewModalOriginalParent = monumentPreviewModal?.parentNode || null;
+
+function getMapPaneBody() {
+  return document.querySelector(".map-pane-body");
+}
+
+function getFullscreenElement() {
+  return (
+    document.fullscreenElement ||
+    document.webkitFullscreenElement ||
+    null
+  );
+}
+
+function syncMapModalFullscreenPlacement() {
+  if (!monumentPreviewModal) return;
+
+  const fullscreenEl = getFullscreenElement();
+  const mapPaneBody = getMapPaneBody();
+
+  const mapIsFullscreen =
+    !!fullscreenEl &&
+    !!mapPaneBody &&
+    fullscreenEl === mapPaneBody;
+
+  if (mapIsFullscreen) {
+    if (monumentPreviewModal.parentNode !== mapPaneBody) {
+      mapPaneBody.appendChild(monumentPreviewModal);
+    }
+
+    monumentPreviewModal.classList.add("modal-over-map-fullscreen");
+    return;
+  }
+
+  if (
+    monumentPreviewModalOriginalParent &&
+    monumentPreviewModal.parentNode !== monumentPreviewModalOriginalParent
+  ) {
+    monumentPreviewModalOriginalParent.appendChild(monumentPreviewModal);
+  }
+
+  monumentPreviewModal.classList.remove("modal-over-map-fullscreen");
+}
+
+async function exitMapFullscreenIfActive() {
+  const fullscreenEl = getFullscreenElement();
+  if (!fullscreenEl) return;
+
+  try {
+    if (document.exitFullscreen) {
+      await document.exitFullscreen();
+    } else if (document.webkitExitFullscreen) {
+      document.webkitExitFullscreen();
+    }
+  } catch (error) {
+    console.warn("Could not exit fullscreen:", error);
+  }
+
+  syncMapModalFullscreenPlacement();
+}
+
 // related
 const relatedRecordStatusCache = new Map();
 const relatedPreviewRecordCache = new Map();
@@ -676,7 +738,7 @@ function renderMonumentLegend() {
         <span class="legend-symbol legend-reference"></span>
         <span>${
           monumentUserIsGlobalCaal()
-            ? t("monuments_all_records_global", t("all_caal_records", "All CAAL records"))
+            ? t("monuments_all_records", t("monuments_all_records", "All CAAL records"))
             : t("other_caal_records", "Other CAAL records")
         }</span>
       </div>
@@ -4917,6 +4979,8 @@ function renderMonumentPreviewModal(record) {
 
   if (!modal || !titleEl || !bodyEl || !record) return;
 
+  syncMapModalFullscreenPlacement();
+
   resetRelatedPreviewNavigation();
 
   const basicFields = getPopulatedPreviewFields(record, [
@@ -5015,8 +5079,10 @@ function renderMonumentPreviewModal(record) {
   const previewOpenBtn = document.getElementById("previewOpenInDetailsBtn");
 
   if (previewOpenBtn) {
-    previewOpenBtn.addEventListener("click", () => {
+    previewOpenBtn.addEventListener("click", async () => {
       if (!monumentConfirmLoseChanges()) return;
+
+      await exitMapFullscreenIfActive();
 
       monumentIsEditMode = false;
       monumentSyncModeVisualState();
@@ -5063,6 +5129,8 @@ function renderMonumentPreviewModal(record) {
 
 // related record modal 
 function renderRelatedRecordModal(record, recordType, caalId, options = {}) {
+  syncMapModalFullscreenPlacement();
+
   const { pushCurrent = false } = options;
 
   const nextKey = `${recordType || ""}:${String(caalId || "").trim().toLowerCase()}`;
@@ -5135,6 +5203,8 @@ function renderRelatedRecordModal(record, recordType, caalId, options = {}) {
 }
 
 function renderRelatedMonumentModal(record, caalId, fullRecordUrl) {
+  syncMapModalFullscreenPlacement();
+
   const title =
     mSummary(record, "primary_name") ||
     mRaw(record, "Primary Name") ||
@@ -5253,6 +5323,8 @@ function renderRelatedMonumentModal(record, caalId, fullRecordUrl) {
 }
 
 function renderRelatedArchiveModal(record, caalId, fullRecordUrl) {
+  syncMapModalFullscreenPlacement();
+
   const s = record.summary || {};
 
   const title =
@@ -5444,6 +5516,8 @@ function closeMonumentPreviewModal() {
     monumentPreviewMap.remove();
     monumentPreviewMap = null;
   }
+
+  syncMapModalFullscreenPlacement();
 }
 
 // --------------------------------------------------------
@@ -8576,6 +8650,25 @@ document.addEventListener("DOMContentLoaded", async () => {
   const session = await requireSession();
   if (!session) return;
 
+  document.addEventListener("fullscreenchange", syncMapModalFullscreenPlacement);
+  document.addEventListener("webkitfullscreenchange", syncMapModalFullscreenPlacement);
+
+  document.addEventListener("keydown", (event) => {
+    if (event.key !== "Escape") return;
+    if (!mapOptionsPanel || mapOptionsPanel.hidden) return;
+
+    const fullscreenEl = getFullscreenElement();
+
+    /*
+      In fullscreen, Escape is expected to exit fullscreen.
+      Do not compete with the browser's fullscreen behaviour.
+      The panel can still be closed with its × or the floating map options button.
+    */
+    if (fullscreenEl) return;
+
+    closeMapOptionsPanel();
+  });
+
   const refreshMonumentsCacheBtn = document.getElementById("refreshMonumentsCacheBtn");
 
   if (refreshMonumentsCacheBtn) {
@@ -8686,7 +8779,12 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
 
     map.addControl(new maplibregl.NavigationControl(), "top-right");
-    map.addControl(new maplibregl.FullscreenControl(), "top-right");
+    map.addControl(
+      new maplibregl.FullscreenControl({
+        container: document.querySelector(".map-pane-body")
+      }),
+      "top-right"
+    );
 
     addMapOptionsControl();
     addMapResetControl();

@@ -2590,6 +2590,77 @@ Popup preview */
   pointer-events: none;
 }
 
+.maplibregl-ctrl-top-right {
+  right: 10px !important;
+}
+
+.map-pane-body:fullscreen {
+  background: #ffffff;
+}
+
+.map-pane-body:fullscreen #map {
+  width: 100%;
+  height: 100%;
+  min-height: 100vh;
+}
+
+.map-pane-body:fullscreen .map-options-panel {
+  z-index: 10020;
+}
+
+.map-pane-body:fullscreen .monument-map-legend {
+  z-index: 10010;
+}
+
+.map-pane-body:fullscreen .maplibregl-control-container {
+  z-index: 10030;
+}
+
+.map-pane-body:-webkit-full-screen {
+  background: #ffffff;
+}
+
+.map-pane-body:-webkit-full-screen #map {
+  width: 100%;
+  height: 100%;
+  min-height: 100vh;
+}
+
+.map-pane-body:-webkit-full-screen .map-options-panel {
+  z-index: 10020;
+}
+
+.map-pane-body:-webkit-full-screen .monument-map-legend {
+  z-index: 10010;
+}
+
+.map-pane-body:-webkit-full-screen .maplibregl-control-container {
+  z-index: 10030;
+}
+
+.modal-over-map-fullscreen {
+  position: absolute;
+  inset: 0;
+  z-index: 10050;
+  background: rgba(15, 23, 42, 0.45);
+}
+
+.map-pane-body:fullscreen .modal-dialog {
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
+}
+
+.map-pane-body:-webkit-full-screen .modal-dialog {
+  max-height: calc(100vh - 80px);
+  overflow-y: auto;
+}
+
+.map-pane-body:fullscreen .modal-overlay.modal-over-map-fullscreen,
+.map-pane-body:-webkit-full-screen .modal-overlay.modal-over-map-fullscreen {
+  position: absolute;
+  inset: 0;
+  z-index: 10050;
+}
 /* =========================================================
     RESPONSIVE LAYOUT */
 @media (max-width: 900px) {
