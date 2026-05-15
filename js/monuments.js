@@ -26,7 +26,8 @@ const resultsList = document.getElementById("resultsList");
 const resultsCount = document.getElementById("resultsCount");
 const filterResultsCount = document.getElementById("filterResultsCount");
 //map controls
-const downloadMapBtn = document.getElementById("downloadMapBtn");
+let downloadMapBtn = document.getElementById("downloadMapBtn");
+let resetMapBtn = document.getElementById("resetMapBtn");
 let mapOptionsBtn = document.getElementById("mapOptionsBtn");
 const closeMapOptionsBtn = document.getElementById("closeMapOptionsBtn");
 const mapOptionsPanel = document.getElementById("mapOptionsPanel");
@@ -42,7 +43,6 @@ const mapLabelModeSelect = document.getElementById("mapLabelModeSelect");
 const mapLabelModeSection = document.getElementById("mapLabelModeSection");
 const mapLabelScopeHelp = document.getElementById("mapLabelScopeHelp");
 
-const resetMapBtn = document.getElementById("resetMapBtn");
 const mapStatusLine = document.getElementById("mapStatusLine");
 const mapLabelWarning = document.getElementById("mapLabelWarning");
 const showRelatedFromMapOptionsBtn = document.getElementById("showRelatedFromMapOptionsBtn");
@@ -464,23 +464,14 @@ function addMapOptionsControl() {
       this._map = mapInstance;
 
       const container = document.createElement("div");
-      container.className = "maplibregl-ctrl map-options-map-control";
+      container.className = "maplibregl-ctrl map-custom-control map-options-map-control";
 
-      const button = document.createElement("button");
-      button.type = "button";
-      button.id = "mapOptionsBtn";
-      button.className = "map-options-map-toggle";
-      button.title = t("map_options", "Map options");
-      button.setAttribute("aria-label", t("map_options", "Map options"));
-      button.setAttribute("aria-expanded", "false");
-      button.innerHTML = `
-        <span aria-hidden="true">☰</span>
-      `;
-
-      button.addEventListener("click", (event) => {
-        event.preventDefault();
-        event.stopPropagation();
-        toggleMapOptionsPanel();
+      const button = createMapIconButton({
+        id: "mapOptionsBtn",
+        title: t("map_options", "Map options"),
+        className: "map-options-map-toggle",
+        html: `<span aria-hidden="true">☰</span>`,
+        onClick: toggleMapOptionsPanel
       });
 
       container.appendChild(button);
@@ -495,15 +486,139 @@ function addMapOptionsControl() {
         this._container.parentNode.removeChild(this._container);
       }
 
-      if (mapOptionsBtn === this._container?.querySelector("#mapOptionsBtn")) {
-        mapOptionsBtn = null;
-      }
-
+      mapOptionsBtn = null;
       this._map = undefined;
     }
   }
 
   map.addControl(new MapOptionsControl(), "top-right");
+}
+
+function addMapResetControl() {
+  if (!map) return;
+
+  class MapResetControl {
+    onAdd(mapInstance) {
+      this._map = mapInstance;
+
+      const container = document.createElement("div");
+      container.className = "maplibregl-ctrl map-custom-control map-reset-map-control";
+
+      const button = createMapIconButton({
+        id: "resetMapBtn",
+        title: t("reset_map", "Reset map"),
+        className: "map-reset-map-toggle",
+        html: `
+          <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18">
+            <path
+              d="M4 11.5 12 5l8 6.5v7a1.5 1.5 0 0 1-1.5 1.5H15v-5H9v5H5.5A1.5 1.5 0 0 1 4 18.5v-7Z"
+              fill="currentColor"
+            />
+          </svg>
+        `,
+        onClick: resetMapView
+      });
+
+      container.appendChild(button);
+      resetMapBtn = button;
+
+      this._container = container;
+      return container;
+    }
+
+    onRemove() {
+      if (this._container?.parentNode) {
+        this._container.parentNode.removeChild(this._container);
+      }
+
+      resetMapBtn = null;
+      this._map = undefined;
+    }
+  }
+
+  map.addControl(new MapResetControl(), "top-right");
+}
+
+function addMapDownloadControl() {
+  if (!map) return;
+
+  class MapDownloadControl {
+    onAdd(mapInstance) {
+      this._map = mapInstance;
+
+      const container = document.createElement("div");
+      container.className = "maplibregl-ctrl map-custom-control map-download-map-control";
+
+      const button = createMapIconButton({
+        id: "downloadMapBtn",
+        title: t("download_map", "Download map"),
+        className: "map-download-map-toggle",
+        html: `
+          <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18">
+            <path
+              d="M12 4a1 1 0 0 1 1 1v8.1l2.8-2.8a1 1 0 0 1 1.4 1.4l-4.5 4.5a1 1 0 0 1-1.4 0l-4.5-4.5a1 1 0 1 1 1.4-1.4L11 13.1V5a1 1 0 0 1 1-1Z"
+              fill="currentColor"
+            />
+            <path
+              d="M5 18a1 1 0 0 1 1-1h1.5a1 1 0 1 1 0 2H6v1h12v-1h-1.5a1 1 0 1 1 0-2H18a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-2Z"
+              fill="currentColor"
+            />
+          </svg>
+        `,
+        onClick: () => {
+          downloadCurrentMapImage({
+            labelScope: mapLabelScopeSelect?.value || "none",
+            labelMode: mapLabelModeSelect?.value || "name"
+          });
+        }
+      });
+
+      container.appendChild(button);
+      downloadMapBtn = button;
+
+      this._container = container;
+      return container;
+    }
+
+    onRemove() {
+      if (this._container?.parentNode) {
+        this._container.parentNode.removeChild(this._container);
+      }
+
+      downloadMapBtn = null;
+      this._map = undefined;
+    }
+  }
+
+  map.addControl(new MapDownloadControl(), "top-right");
+}
+
+function createMapIconButton({
+  id,
+  title,
+  className = "",
+  html,
+  onClick
+}) {
+  const button = document.createElement("button");
+
+  button.type = "button";
+  button.id = id;
+  button.className = `map-icon-toggle ${className}`.trim();
+  button.title = title;
+  button.setAttribute("aria-label", title);
+  button.innerHTML = html;
+
+  button.addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    if (typeof onClick === "function") {
+      onClick(event);
+    }
+  });
+
+  return button;
 }
 
 function renderMonumentLegend() {
@@ -8084,10 +8199,6 @@ async function monumentDeleteCurrentRecord() {
 // --------------------------------------------------------
 // Events
 // --------------------------------------------------------
-if (resetMapBtn) {
-  resetMapBtn.addEventListener("click", resetMapView);
-}
-
 if (showRelatedFromMapOptionsBtn) {
   showRelatedFromMapOptionsBtn.addEventListener("click", async () => {
     if (!selectedRecordHasRelatedIds()) return;
@@ -8191,14 +8302,6 @@ if (clearFiltersBtn) {
   });
 }
 
-if (downloadMapBtn) {
-  downloadMapBtn.addEventListener("click", () => {
-    downloadCurrentMapImage({
-      labelScope: mapLabelScopeSelect?.value || "none",
-      labelMode: mapLabelModeSelect?.value || "name"
-    });
-  });
-}
 
 if (addMonumentBtn) {
   addMonumentBtn.addEventListener("click", () => {
@@ -8583,7 +8686,12 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
 
     map.addControl(new maplibregl.NavigationControl(), "top-right");
+    map.addControl(new maplibregl.FullscreenControl(), "top-right");
+
     addMapOptionsControl();
+    addMapResetControl();
+    addMapDownloadControl();
+
     addMonumentLegendControl();
 
     map.on("click", (event) => {

@@ -654,7 +654,7 @@ body {
 #map {
   width: 100%;
   height: 100%;
-  min-height: 520px;
+  min-height: 560px;
 }
 
 .map-options-panel {
@@ -743,6 +743,8 @@ body {
   color: #b42318;
   font-weight: 500;
 }
+
+
 
 /* --------------------------------------------------------
    Legacy hierarchy tree pickers
@@ -2529,6 +2531,63 @@ Popup preview */
   box-shadow:
     0 0 0 2px rgba(15, 59, 111, 0.45),
     0 1px 5px rgba(0, 0, 0, 0.28) !important;
+}
+
+.maplibregl-ctrl-top-right .maplibregl-ctrl.map-custom-control {
+  background: transparent !important;
+  box-shadow: none !important;
+  border: 0 !important;
+  margin-top: 8px;
+}
+
+.maplibregl-ctrl-top-right .maplibregl-ctrl.map-custom-control button.map-icon-toggle {
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+
+  width: 29px !important;
+  height: 29px !important;
+  min-width: 29px !important;
+  min-height: 29px !important;
+
+  padding: 0 !important;
+  margin: 0 !important;
+  border: 0 !important;
+  border-radius: 4px !important;
+
+  background: rgba(255, 255, 255, 0.96) !important;
+  color: #1f2933 !important;
+
+  font-size: 18px !important;
+  font-weight: 700;
+  line-height: 1 !important;
+
+  cursor: pointer;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.16),
+    0 1px 4px rgba(0, 0, 0, 0.22) !important;
+}
+
+.maplibregl-ctrl-top-right .maplibregl-ctrl.map-custom-control button.map-icon-toggle:hover,
+.maplibregl-ctrl-top-right .maplibregl-ctrl.map-custom-control button.map-icon-toggle:focus {
+  background: #f3f4f6 !important;
+  color: #111827 !important;
+  outline: none !important;
+}
+
+.maplibregl-ctrl-top-right .maplibregl-ctrl.map-custom-control button.map-icon-toggle.is-active,
+.maplibregl-ctrl-top-right .maplibregl-ctrl.map-custom-control button.map-icon-toggle.is-active:hover,
+.maplibregl-ctrl-top-right .maplibregl-ctrl.map-custom-control button.map-icon-toggle.is-active:focus {
+  background: #ffffff !important;
+  color: #111827 !important;
+  box-shadow:
+    0 0 0 2px rgba(15, 59, 111, 0.45),
+    0 1px 5px rgba(0, 0, 0, 0.28) !important;
+}
+
+.maplibregl-ctrl-top-right .maplibregl-ctrl.map-custom-control svg {
+  display: block;
+  pointer-events: none;
 }
 
 /* =========================================================
