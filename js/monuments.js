@@ -69,6 +69,7 @@ const monumentEditBtn = document.getElementById("monumentEditBtn");
 const monumentSaveBtn = document.getElementById("monumentSaveBtn");
 const monumentCancelEditBtn = document.getElementById("monumentCancelEditBtn");
 const monumentDeleteBtn = document.getElementById("monumentDeleteBtn");
+const monumentCloseRecordBtn = document.getElementById("monumentCloseRecordBtn");
 
 // modal
 const monumentPreviewModal = document.getElementById("monumentPreviewModal");
@@ -2209,6 +2210,45 @@ function monumentResultTitle(record) {
   );
 }
 
+function hasActiveDetailsRecord() {
+  return !!monumentSelectedRecord?.identity?.caal_id;
+}
+
+async function openResultRecordFromList(lightRecord) {
+  if (!lightRecord) return;
+
+  setMonumentsLoading(true, t("loading_full_record", "Loading full record..."));
+
+  try {
+    const fullRecord = await loadFullMonumentRecord(lightRecord);
+
+    if (hasActiveDetailsRecord()) {
+      renderMonumentPreviewModal(fullRecord);
+      return;
+    }
+
+    monumentIsEditMode = false;
+    monumentSyncModeVisualState();
+    monumentPendingNewRecord = null;
+    monumentSelectedRecord = fullRecord;
+    clearRelationshipStateForNewSelection();
+
+    renderMonumentRecordDetails(fullRecord);
+    updateSelectedResultCard();
+
+    if (map && fullRecord.geometry?.coordinates) {
+      drawSelectedMonumentHighlight(fullRecord);
+    } else if (map && lightRecord.geometry?.coordinates) {
+      drawSelectedMonumentHighlight(lightRecord);
+    }
+  } catch (error) {
+    console.error("Failed to load monument record:", error);
+    alert(error.message || t("could_not_load_full_monument_record", "Could not load full monument record"));
+  } finally {
+    setMonumentsLoading(false);
+  }
+}
+
 function updateSelectedResultCard() {
   if (!resultsList) return;
 
@@ -3339,6 +3379,10 @@ function updateMonumentActionBar() {
 
   if (monumentCancelEditBtn) {
     monumentCancelEditBtn.hidden = !monumentIsEditMode;
+  }
+
+  if (monumentCloseRecordBtn) {
+    monumentCloseRecordBtn.hidden = monumentIsEditMode || !hasSelectedRecord;
   }
 
   const canDelete =
@@ -5454,9 +5498,9 @@ function initMonumentPreviewMiniMap(record) {
 
   monumentPreviewMap = new maplibregl.Map({
     container: "monumentPreviewMiniMap",
-    style: getBasemapStyle("osm"),
+    style: getBasemapStyle("maptiler-hybrid"),
     center: [lng, lat],
-    zoom: 12,
+    zoom: 12.5,
     interactive: false
   });
 
@@ -6925,6 +6969,109 @@ function drawMonumentRecords(records) {
 // --------------------------------------------------------
 // Results list
 // --------------------------------------------------------
+function svgEyeIcon() {
+  return `
+    <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16">
+      <path
+        d="M12 5.5c5.2 0 8.5 4.7 9.5 6.5-1 1.8-4.3 6.5-9.5 6.5S3.5 13.8 2.5 12C3.5 10.2 6.8 5.5 12 5.5Zm0 2C8.5 7.5 6 10.2 4.8 12c1.2 1.8 3.7 4.5 7.2 4.5s6-2.7 7.2-4.5C18 10.2 15.5 7.5 12 7.5Zm0 1.8a2.7 2.7 0 1 1 0 5.4 2.7 2.7 0 0 1 0-5.4Z"
+        fill="currentColor"
+      />
+    </svg>
+  `;
+}
+
+function svgTargetIcon() {
+  return `
+    <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16">
+      <path
+        d="M12 2a1 1 0 0 1 1 1v1.1a8 8 0 0 1 6.9 6.9H21a1 1 0 1 1 0 2h-1.1a8 8 0 0 1-6.9 6.9V21a1 1 0 1 1-2 0v-1.1A8 8 0 0 1 4.1 13H3a1 1 0 1 1 0-2h1.1A8 8 0 0 1 11 4.1V3a1 1 0 0 1 1-1Zm0 4a6 6 0 1 0 0 12 6 6 0 0 0 0-12Zm0 3.2a2.8 2.8 0 1 1 0 5.6 2.8 2.8 0 0 1 0-5.6Z"
+        fill="currentColor"
+      />
+    </svg>
+  `;
+}
+
+function svgCloseIcon() {
+  return `
+    <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16">
+      <path
+        d="M6.4 5 12 10.6 17.6 5 19 6.4 13.4 12 19 17.6 17.6 19 12 13.4 6.4 19 5 17.6 10.6 12 5 6.4 6.4 5Z"
+        fill="currentColor"
+      />
+    </svg>
+  `;
+}
+
+async function previewMonumentFromLightRecord(lightRecord) {
+  if (!lightRecord) return;
+
+  setMonumentsLoading(true, t("loading_preview", "Loading preview..."));
+
+  try {
+    const fullRecord = await loadFullMonumentRecord(lightRecord);
+    renderMonumentPreviewModal(fullRecord);
+  } catch (error) {
+    console.error("Failed to load monument preview:", error);
+    alert(error.message || t("could_not_load_monument_preview", "Could not load monument preview"));
+  } finally {
+    setMonumentsLoading(false);
+  }
+}
+
+function centreLightRecordOnMap(lightRecord) {
+  if (!map || !lightRecord?.geometry?.coordinates) return;
+
+  drawFocusedResultHighlight(lightRecord);
+
+  map.easeTo({
+    center: lightRecord.geometry.coordinates,
+    zoom: Math.max(map.getZoom(), 10),
+    duration: 600
+  });
+}
+
+async function openLightRecordInDetails(lightRecord) {
+  if (!lightRecord) return;
+
+  setMonumentsLoading(true, t("loading_full_record", "Loading full record..."));
+
+  try {
+    const fullRecord = await loadFullMonumentRecord(lightRecord);
+
+    monumentIsEditMode = false;
+    monumentSyncModeVisualState();
+    monumentPendingNewRecord = null;
+    monumentSelectedRecord = fullRecord;
+    clearRelatedMonumentsMap();
+    clearRelationshipStateForNewSelection();
+
+    renderMonumentRecordDetails(fullRecord);
+    updateSelectedResultCard();
+
+    if (map && fullRecord.geometry?.coordinates) {
+      drawSelectedMonumentHighlight(fullRecord);
+    } else if (map && lightRecord.geometry?.coordinates) {
+      drawSelectedMonumentHighlight(lightRecord);
+    }
+  } catch (error) {
+    console.error("Failed to load full monument record:", error);
+    alert(error.message || t("could_not_load_full_monument_record", "Could not load full monument record"));
+  } finally {
+    setMonumentsLoading(false);
+  }
+}
+
+async function handleResultCardOpen(lightRecord) {
+  if (!lightRecord) return;
+
+  if (monumentIsEditMode) {
+    await previewMonumentFromLightRecord(lightRecord);
+    return;
+  }
+
+  await openLightRecordInDetails(lightRecord);
+}
+
 function renderMonumentResultsList(records) {
   if (!resultsList) return;
 
@@ -6967,14 +7114,22 @@ function renderMonumentResultsList(records) {
         <div class="result-card-meta">${mSafeValue(mSummary(record, "classification"))}</div>
         <div class="result-card-meta">${mSafeValue(mSummary(record, "monument_type1"))}</div>
 
-        <div class="result-card-actions">
-          <button
-            type="button"
-            class="action-btn result-preview-btn"
-            data-preview-index="${index}"
-          >
-            ${t("preview", "Preview")}
-          </button>
+        <div class="result-card-actions result-card-actions-compact">
+          ${
+            record?.geometry?.coordinates
+              ? `
+                <button
+                  type="button"
+                  class="icon-action-btn result-centre-btn"
+                  data-centre-index="${index}"
+                  title="${t("centre_on_map", "Centre on map")}"
+                  aria-label="${t("centre_on_map", "Centre on map")}"
+                >
+                  ${svgTargetIcon()}
+                </button>
+              `
+              : ""
+          }
         </div>
       </div>
     `;
@@ -6983,61 +7138,32 @@ function renderMonumentResultsList(records) {
 
   Array.from(resultsList.querySelectorAll(".result-card")).forEach((card) => {
     card.addEventListener("click", async () => {
-      if (!monumentConfirmLoseChanges()) return;
-
       const idx = Number(card.dataset.resultIndex);
       const lightRecord = records[idx];
-      if (!lightRecord) return;
 
-      setMonumentsLoading(true, t("loading_full_record", "Loading full record..."));
-
-      try {
-        const fullRecord = await loadFullMonumentRecord(lightRecord);
-
-        monumentIsEditMode = false;
-        monumentSyncModeVisualState();
-        monumentPendingNewRecord = null;
-        monumentSelectedRecord = fullRecord;
-        clearRelatedMonumentsMap();
-
-        clearRelationshipStateForNewSelection();
-
-        renderMonumentRecordDetails(fullRecord);
-        updateSelectedResultCard();
-
-        if (map && fullRecord.geometry?.coordinates) {
-          drawSelectedMonumentHighlight(fullRecord);
-        } else if (map && lightRecord.geometry?.coordinates) {
-          drawSelectedMonumentHighlight(lightRecord);
-        }
-      } catch (error) {
-        console.error("Failed to load full monument record:", error);
-        alert(error.message || "Could not load full monument record");
-      } finally {
-        setMonumentsLoading(false);
-      }
+      await handleResultCardOpen(lightRecord);
     });
-
   });
+
   Array.from(resultsList.querySelectorAll(".result-preview-btn")).forEach((btn) => {
     btn.addEventListener("click", async (event) => {
       event.stopPropagation();
 
       const idx = Number(btn.dataset.previewIndex);
       const lightRecord = records[idx];
-      if (!lightRecord) return;
 
-      setMonumentsLoading(true, t("loading_preview", "Loading preview..."));
+      await previewMonumentFromLightRecord(lightRecord);
+    });
+  });
 
-      try {
-        const fullRecord = await loadFullMonumentRecord(lightRecord);
-        renderMonumentPreviewModal(fullRecord);
-      } catch (error) {
-        console.error("Failed to load monument preview:", error);
-        alert(error.message || t("could_not_load_monument_preview", "Could not load monument preview"));
-      } finally {
-        setMonumentsLoading(false);
-      }
+  Array.from(resultsList.querySelectorAll(".result-centre-btn")).forEach((btn) => {
+    btn.addEventListener("click", (event) => {
+      event.stopPropagation();
+
+      const idx = Number(btn.dataset.centreIndex);
+      const lightRecord = records[idx];
+
+      centreLightRecordOnMap(lightRecord);
     });
   });
 }
@@ -7325,24 +7451,32 @@ function renderMonumentDisplayMode(record) {
 
   recordDetails.innerHTML = `
     <div class="record-title">
-      <div class="record-title-row">
-        <h3>${mSafeValue(mSummary(record, "primary_name"))}</h3>
+      <div class="record-title-actions record-title-actions-topright">
         ${statusBadge}
+
+        ${
+          record?.geometry?.coordinates
+            ? `
+              <button
+                type="button"
+                class="icon-action-btn record-title-icon-btn"
+                id="zoomToSelectedMonumentBtn"
+                title="${t("centre_on_map", "Centre on map")}"
+                aria-label="${t("centre_on_map", "Centre on map")}"
+              >
+                ${svgTargetIcon()}
+              </button>
+            `
+            : ""
+        }
       </div>
 
-      <p>${mSafeValue(mIdentity(record, "caal_id"))}</p>
+      <div class="record-title-main">
+        <h3>${mSafeValue(mSummary(record, "primary_name"))}</h3>
+        <p>${mSafeValue(mIdentity(record, "caal_id"))}</p>
+      </div>
 
       ${renderMasterIdChip(record)}
-
-      <div class="record-title-actions">
-        <button type="button" class="action-btn" id="zoomToSelectedMonumentBtn">
-          ${t("centre_on_map", "Centre on map")}
-        </button>
-
-        <button type="button" class="action-btn" id="clearSelectedMonumentBtn">
-          ${t("close_record", "Close record")}
-        </button>
-      </div>
     </div>
 
     <div class="group-stack">
@@ -7370,11 +7504,7 @@ function renderMonumentDisplayMode(record) {
       });
     });
   }
-  const clearSelectedBtn = document.getElementById("clearSelectedMonumentBtn");
 
-  if (clearSelectedBtn) {
-    clearSelectedBtn.addEventListener("click", clearSelectedMonumentRecord);
-  }
   wireRelatedRecordChips();
   wireMasterIdChip();
 
@@ -8404,6 +8534,12 @@ if (monumentEditBtn) {
     monumentIsDirty = false;
     renderMonumentRecordDetails(monumentSelectedRecord);
     updateSelectedResultCard();
+  });
+}
+
+if (monumentCloseRecordBtn) {
+  monumentCloseRecordBtn.addEventListener("click", () => {
+    clearSelectedMonumentRecord();
   });
 }
 

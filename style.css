@@ -1000,11 +1000,24 @@ body {
   overflow-wrap: anywhere;
 }
 
-.record-title-actions {
+.result-card {
+  position: relative;
+  padding-right: 58px;
+}
+
+.result-card .scope-badge,
+.result-card .result-scope-badge {
+  position: absolute;
+  top: 14px;
+  right: 52px;
+}
+
+.result-card-actions-compact {
+  position: absolute;
+  top: 12px;
+  right: 14px;
   display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
+  gap: 4px;
 }
 
 .detail-value-list {
@@ -2661,6 +2674,125 @@ Popup preview */
   inset: 0;
   z-index: 10050;
 }
+
+.result-card {
+  position: relative;
+}
+
+.result-card-topline {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding-right: 48px;
+}
+
+.result-card-actions-compact {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  display: flex;
+  gap: 4px;
+  opacity: 0.55;
+  transition: opacity 0.15s ease;
+}
+
+.result-card:hover .result-card-actions-compact,
+.result-card:focus-within .result-card-actions-compact {
+  opacity: 1;
+}
+
+.icon-action-btn {
+  width: 26px;
+  height: 26px;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.82);
+  color: #475569;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  cursor: pointer;
+}
+
+.icon-action-btn:hover,
+.icon-action-btn:focus {
+  background: #ffffff;
+  color: #0f172a;
+  border-color: rgba(71, 85, 105, 0.55);
+  outline: none;
+}
+
+.icon-action-btn svg {
+  display: block;
+  pointer-events: none;
+}
+
+.record-title-heading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 12px;
+}
+
+.record-title {
+  position: relative;
+  padding-right: 150px;
+}
+
+.record-title .record-title-main {
+  min-width: 0;
+}
+
+.record-title > .record-title-actions-topright {
+  position: absolute;
+  top: 18px;
+  right: 18px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.record-title > .record-title-actions-topright .record-title-icon-btn {
+  width: 32px;
+  height: 32px;
+  flex: 0 0 auto;
+}
+
+/* Results card header layout: title + scope badge, with map icon at far right */
+.result-card {
+  position: relative;
+  padding: 0.75rem 3.2rem 0.75rem 0.75rem;
+}
+
+.result-card-topline {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding-right: 0;
+}
+
+.result-card-header {
+  min-width: 0;
+  margin-bottom: 0.25rem;
+}
+
+.result-card .scope-badge {
+  position: static;
+  margin: 0.15rem 0 0;
+  flex: 0 0 auto;
+}
+
+.result-card .result-card-actions-compact {
+  position: absolute;
+  top: 0.8rem;
+  right: 0.75rem;
+  display: flex;
+  gap: 4px;
+}
+
 /* =========================================================
     RESPONSIVE LAYOUT */
 @media (max-width: 900px) {
