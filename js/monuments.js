@@ -51,6 +51,9 @@ const relationshipMapOptions = document.getElementById("relationshipMapOptions")
 const showRelatedPointsCheckbox = document.getElementById("showRelatedPointsCheckbox");
 const showRelationshipLinesCheckbox = document.getElementById("showRelationshipLinesCheckbox");
 
+const LIVE_RESULTS_LABEL_MIN_ZOOM = 7;
+const LIVE_RESULTS_LABEL_MAX_RECORDS = 150;
+
 const showWorkspaceRecords = document.getElementById("showWorkspaceRecords");
 const showNationalRecords = document.getElementById("showNationalRecords");
 const showAllCaalRecords = document.getElementById("showAllCaalRecords");
@@ -398,17 +401,44 @@ function addMonumentLegendControl() {
 function toggleMapOptionsPanel() {
   if (!mapOptionsPanel) return;
 
+  if (!mapOptionsPanel.hidden) {
+    closeMapOptionsPanel();
+    return;
+  }
+
   updateMapOptionsState();
 
-  const willOpen = mapOptionsPanel.hidden;
-  mapOptionsPanel.hidden = !willOpen;
+  mapOptionsPanel.hidden = false;
 
   if (mapOptionsBtn) {
-    mapOptionsBtn.classList.toggle("is-active", willOpen);
-    mapOptionsBtn.setAttribute("aria-expanded", String(willOpen));
-    mapOptionsBtn.innerHTML = willOpen
-      ? `<span aria-hidden="true">×</span>`
-      : `<span aria-hidden="true">☰</span>`;
+    mapOptionsBtn.classList.add("is-active");
+    mapOptionsBtn.setAttribute("aria-expanded", "true");
+    mapOptionsBtn.innerHTML = `<span aria-hidden="true">×</span>`;
+  }
+}
+
+function resetMapOptionsPanelState() {
+  if (mapLabelScopeSelect) {
+    mapLabelScopeSelect.value = "none";
+  }
+
+  if (mapLabelModeSelect) {
+    mapLabelModeSelect.value = "name";
+  }
+
+  if (mapLabelModeSection) {
+    mapLabelModeSection.hidden = true;
+  }
+
+  if (mapLabelWarning) {
+    mapLabelWarning.hidden = true;
+    mapLabelWarning.textContent = "";
+  }
+
+  updateMapLabelHelpText();
+
+  if (map && map.getLayer("monument-live-labels")) {
+    map.removeLayer("monument-live-labels");
   }
 }
 
@@ -416,6 +446,8 @@ function closeMapOptionsPanel() {
   if (!mapOptionsPanel) return;
 
   mapOptionsPanel.hidden = true;
+
+  resetMapOptionsPanelState();
 
   if (mapOptionsBtn) {
     mapOptionsBtn.classList.remove("is-active");
@@ -1794,6 +1826,7 @@ function renderLiveMapLabels() {
   const scope = mapLabelScopeSelect?.value || "none";
 
   if (scope === "none") {
+    updateMapLabelWarning();
     return;
   }
 
@@ -1801,8 +1834,22 @@ function renderLiveMapLabels() {
   let filter = null;
 
   if (scope === "results") {
+    const blockReason = getLiveResultsLabelBlockReason();
+
+    if (blockReason) {
+      if (map.getLayer("monument-live-labels")) {
+        map.removeLayer("monument-live-labels");
+      }
+
+      updateMapLabelWarning();
+      return;
+    }
+
     const hasResultsSource = refreshCurrentResultsLabelSource();
-    if (!hasResultsSource) return;
+    if (!hasResultsSource) {
+      updateMapLabelWarning();
+      return;
+    }
 
     sourceId = "monument-results-labels";
     filter = ["==", ["geometry-type"], "Point"];
@@ -1857,6 +1904,47 @@ function renderLiveMapLabels() {
   if (map.getLayer("monument-live-labels")) {
     map.moveLayer("monument-live-labels");
   }
+  updateMapLabelWarning();
+}
+
+function getLiveResultsLabelBlockReason() {
+  if (!map) return null;
+
+  const scope = mapLabelScopeSelect?.value || "none";
+
+  if (scope !== "results") {
+    return null;
+  }
+
+  const zoom = map.getZoom();
+  const labelableCount = Array.isArray(monumentMapRecords)
+    ? monumentMapRecords.filter((record) => Array.isArray(record?.geometry?.coordinates)).length
+    : 0;
+
+  if (zoom < LIVE_RESULTS_LABEL_MIN_ZOOM) {
+    return t(
+      "labels_zoom_in_warning",
+      "Zoom in to show labels for records shown on the map."
+    );
+  }
+
+  if (labelableCount > LIVE_RESULTS_LABEL_MAX_RECORDS) {
+    return t(
+      "too_many_records_to_label",
+      "Too many records to label clearly. Zoom in for labels."
+    );
+  }
+
+  return null;
+}
+
+function updateMapLabelWarning() {
+  if (!mapLabelWarning) return;
+
+  const reason = getLiveResultsLabelBlockReason();
+
+  mapLabelWarning.hidden = !reason;
+  mapLabelWarning.textContent = reason || "";
 }
 
 function monumentRecordToLiveLabelFeature(record) {
@@ -8580,6 +8668,10 @@ document.addEventListener("DOMContentLoaded", async () => {
           console.error("Failed to reload map layers for bbox:", error);
         }
       }, 1500);
+    });
+
+    map.on("zoomend", () => {
+      renderLiveMapLabels();
     });
 
     if (basemapSelect) {
