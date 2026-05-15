@@ -173,7 +173,7 @@
 
           <label class="browse-checkbox" id="allCaalMonumentsToggleWrapper" hidden>
             <input type="checkbox" id="showAllCaalRecords" />
-            <span data-i18n="monuments_all_records">All CAAL records</span>
+            <span data-i18n="monuments_other_records">Other CAAL records</span>
           </label>
         </div>
     
@@ -300,7 +300,6 @@
     </div>
 
     <div class="map-actions">
-      <button type="button" class="action-btn" id="mapOptionsBtn" data-i18n="map_options">Map options</button>
       <button type="button" class="action-btn" id="resetMapBtn" data-i18n="reset_map">Reset map</button>
       <button type="button" class="action-btn" id="downloadMapBtn" data-i18n="download_map">Download map</button>
     </div>
@@ -371,8 +370,8 @@
         </p>
       </div>
 
-      <div class="map-options-section">
-        <label for="mapLabelModeSelect" data-i18n="labels">Labels</label>
+      <div class="map-options-section" id="mapLabelModeSection" hidden>
+        <label for="mapLabelModeSelect" data-i18n="label_content">Label content</label>
         <select id="mapLabelModeSelect" class="form-control">
           <option value="name" selected data-i18n="name">Name</option>
           <option value="caal_id" data-i18n="caal_id">CAAL_ID</option>

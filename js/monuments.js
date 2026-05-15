@@ -27,7 +27,7 @@ const resultsCount = document.getElementById("resultsCount");
 const filterResultsCount = document.getElementById("filterResultsCount");
 //map controls
 const downloadMapBtn = document.getElementById("downloadMapBtn");
-const mapOptionsBtn = document.getElementById("mapOptionsBtn");
+let mapOptionsBtn = document.getElementById("mapOptionsBtn");
 const closeMapOptionsBtn = document.getElementById("closeMapOptionsBtn");
 const mapOptionsPanel = document.getElementById("mapOptionsPanel");
 
@@ -39,6 +39,7 @@ const borderStyleSelect = document.getElementById("borderStyleSelect");
 
 const mapLabelScopeSelect = document.getElementById("mapLabelScopeSelect");
 const mapLabelModeSelect = document.getElementById("mapLabelModeSelect");
+const mapLabelModeSection = document.getElementById("mapLabelModeSection");
 const mapLabelScopeHelp = document.getElementById("mapLabelScopeHelp");
 
 const resetMapBtn = document.getElementById("resetMapBtn");
@@ -394,6 +395,85 @@ function addMonumentLegendControl() {
   map.addControl(new MonumentLegendControl(), "bottom-right");
 }
 
+function toggleMapOptionsPanel() {
+  if (!mapOptionsPanel) return;
+
+  updateMapOptionsState();
+
+  const willOpen = mapOptionsPanel.hidden;
+  mapOptionsPanel.hidden = !willOpen;
+
+  if (mapOptionsBtn) {
+    mapOptionsBtn.classList.toggle("is-active", willOpen);
+    mapOptionsBtn.setAttribute("aria-expanded", String(willOpen));
+    mapOptionsBtn.innerHTML = willOpen
+      ? `<span aria-hidden="true">×</span>`
+      : `<span aria-hidden="true">☰</span>`;
+  }
+}
+
+function closeMapOptionsPanel() {
+  if (!mapOptionsPanel) return;
+
+  mapOptionsPanel.hidden = true;
+
+  if (mapOptionsBtn) {
+    mapOptionsBtn.classList.remove("is-active");
+    mapOptionsBtn.setAttribute("aria-expanded", "false");
+    mapOptionsBtn.innerHTML = `<span aria-hidden="true">☰</span>`;
+  }
+}
+
+function addMapOptionsControl() {
+  if (!map) return;
+
+  class MapOptionsControl {
+    onAdd(mapInstance) {
+      this._map = mapInstance;
+
+      const container = document.createElement("div");
+      container.className = "maplibregl-ctrl map-options-map-control";
+
+      const button = document.createElement("button");
+      button.type = "button";
+      button.id = "mapOptionsBtn";
+      button.className = "map-options-map-toggle";
+      button.title = t("map_options", "Map options");
+      button.setAttribute("aria-label", t("map_options", "Map options"));
+      button.setAttribute("aria-expanded", "false");
+      button.innerHTML = `
+        <span aria-hidden="true">☰</span>
+      `;
+
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleMapOptionsPanel();
+      });
+
+      container.appendChild(button);
+      mapOptionsBtn = button;
+
+      this._container = container;
+      return container;
+    }
+
+    onRemove() {
+      if (this._container?.parentNode) {
+        this._container.parentNode.removeChild(this._container);
+      }
+
+      if (mapOptionsBtn === this._container?.querySelector("#mapOptionsBtn")) {
+        mapOptionsBtn = null;
+      }
+
+      this._map = undefined;
+    }
+  }
+
+  map.addControl(new MapOptionsControl(), "top-right");
+}
+
 function renderMonumentLegend() {
   if (!monumentLegendEl) return;
 
@@ -447,7 +527,11 @@ function renderMonumentLegend() {
     rows.push(`
       <div class="legend-row">
         <span class="legend-symbol legend-reference"></span>
-        <span>${t("other_caal_records", "Other CAAL records")}</span>
+        <span>${
+          monumentUserIsGlobalCaal()
+            ? t("monuments_all_records_global", t("all_caal_records", "All CAAL records"))
+            : t("other_caal_records", "Other CAAL records")
+        }</span>
       </div>
     `);
   }
@@ -1631,6 +1715,10 @@ function updateMapOptionsState() {
     ) {
       mapLabelScopeSelect.value = hasSelected ? "selected" : "none";
     }
+  }
+
+  if (mapLabelModeSection && mapLabelScopeSelect) {
+    mapLabelModeSection.hidden = mapLabelScopeSelect.value === "none";
   }
 
   updateMapLabelHelpText();
@@ -3044,6 +3132,129 @@ function monumentUserCanEditMasterId() {
   return monumentUserIsCaalAdmin();
 }
 
+function getMonumentSessionWorkspaceCode(session = window.appSession) {
+  return String(
+    session?.user?.workspace_code ??
+    session?.profile?.workspace_code ??
+    session?.permissions?.workspace_code ??
+    session?.workspace_code ??
+    ""
+  ).trim().toLowerCase();
+}
+
+function monumentUserIsGlobalCaal(session = window.appSession) {
+  return getMonumentSessionWorkspaceCode(session) === "caal";
+}
+
+function monumentUserCanViewAllCaal(session = window.appSession) {
+  return (
+    session?.permissions?.can_view_all_caal === true ||
+    monumentUserIsCaalAdmin()
+  );
+}
+
+function normaliseMonumentScopeForSession(scope, session = window.appSession) {
+  if (monumentUserIsGlobalCaal(session) && scope === "national_ref") {
+    return "all_caal";
+  }
+
+  return scope;
+}
+
+function setScopeLabelForInput(inputEl, key, fallback) {
+  const labelEl = inputEl?.closest("label");
+  const span = labelEl?.querySelector("[data-i18n]");
+
+  if (!span) return;
+
+  span.dataset.i18n = key;
+  span.textContent = t(key, fallback);
+}
+
+function applyMonumentScopeUiForSession(
+  session = window.appSession,
+  { setDefault = false } = {}
+) {
+  const isGlobalCaalUser = monumentUserIsGlobalCaal(session);
+  const canViewAllCaal = monumentUserCanViewAllCaal(session);
+
+  const nationalWrapper = showNationalRecords?.closest("label");
+  const workspaceWrapper = showWorkspaceRecords?.closest("label");
+
+  if (isGlobalCaalUser) {
+    if (nationalWrapper) {
+      nationalWrapper.hidden = true;
+    }
+
+    if (showNationalRecords) {
+      showNationalRecords.checked = false;
+      showNationalRecords.disabled = true;
+    }
+
+    if (allCaalMonumentsToggleWrapper) {
+      allCaalMonumentsToggleWrapper.hidden = !canViewAllCaal;
+    }
+
+    if (showAllCaalRecords) {
+      showAllCaalRecords.disabled = !canViewAllCaal;
+    }
+
+    /*
+      Use your all-CAAL translation key here. If your DB key is called
+      something else, change only this key string.
+    */
+    setScopeLabelForInput(
+      showAllCaalRecords,
+      "monuments_all_records",
+      t("monuments_all_records", "All CAAL records")
+    );
+
+    /*
+      Optional but helpful: global users do not have a national workspace.
+      This avoids opening the page with an empty national scope.
+    */
+    if (setDefault && canViewAllCaal) {
+      if (showWorkspaceRecords) showWorkspaceRecords.checked = true;
+      if (showAllCaalRecords) showAllCaalRecords.checked = true;
+    }
+
+    if (workspaceWrapper) {
+      workspaceWrapper.title = t(
+        "global_workspace_scope_help",
+        "Records directly editable through this account, if any."
+      );
+    }
+
+    return;
+  }
+
+  if (nationalWrapper) {
+    nationalWrapper.hidden = false;
+  }
+
+  if (showNationalRecords) {
+    showNationalRecords.disabled = false;
+  }
+
+  if (allCaalMonumentsToggleWrapper) {
+    allCaalMonumentsToggleWrapper.hidden = !canViewAllCaal;
+  }
+
+  if (showAllCaalRecords) {
+    showAllCaalRecords.disabled = !canViewAllCaal;
+  }
+
+  setScopeLabelForInput(
+    showAllCaalRecords,
+    "monument_other_records",
+    "Other CAAL records"
+  );
+
+  if (workspaceWrapper) {
+    workspaceWrapper.title = "";
+  }
+}
+
 function getMonumentEnabledScopes() {
   const scopes = [];
 
@@ -3055,20 +3266,29 @@ function getMonumentEnabledScopes() {
 }
 
 function monumentScopeLabel(scope) {
-  switch (scope) {
+  const normalisedScope = normaliseMonumentScopeForSession(scope);
+
+  switch (normalisedScope) {
     case "workspace":
       return t("workspace", "Workspace");
+
     case "national_ref":
       return t("monuments_national_records", "National CAAL records");
+
     case "all_caal":
-      return t("other_caal_records", "Other CAAL records");
+      return monumentUserIsGlobalCaal()
+        ? t("monuments_all_records", t("monuments_all_records", "All CAAL records"))
+        : t("monuments_other_records", "Other CAAL records");
+
     default:
-      return scope || t("unknown", "Unknown");
+      return normalisedScope || t("unknown", "Unknown");
   }
 }
 
 function monumentDisplayScope(record) {
-  const rawScope = record?.source?.scope || "unknown";
+  const rawScope = normaliseMonumentScopeForSession(
+    record?.source?.scope || "unknown"
+  );
 
   const nationalChecked = showNationalRecords?.checked === true;
   const allCaalChecked = showAllCaalRecords?.checked === true;
@@ -7939,21 +8159,16 @@ if (monumentDeleteBtn) {
 }
 
 if (mapOptionsBtn && mapOptionsPanel) {
-  mapOptionsBtn.addEventListener("click", () => {
-    updateMapOptionsState();
-    mapOptionsPanel.hidden = !mapOptionsPanel.hidden;
-  });
+  mapOptionsBtn.addEventListener("click", toggleMapOptionsPanel);
 }
 
 if (closeMapOptionsBtn && mapOptionsPanel) {
-  closeMapOptionsBtn.addEventListener("click", () => {
-    mapOptionsPanel.hidden = true;
-  });
+  closeMapOptionsBtn.addEventListener("click", closeMapOptionsPanel);
 }
 
 if (mapLabelScopeSelect) {
   mapLabelScopeSelect.addEventListener("change", () => {
-    updateMapLabelHelpText();
+    updateMapOptionsState();
     renderLiveMapLabels();
   });
 }
@@ -8041,6 +8256,8 @@ document.addEventListener("app:languageChanged", async () => {
   try {
     await loadMonumentLabels();
     applyMonumentStaticLabels();
+    applyMonumentScopeUiForSession(window.appSession);
+    renderMonumentLegend();
     await loadMonumentLookups();
     populateMonumentFilterLookups();
 
@@ -8112,6 +8329,15 @@ document.addEventListener("app:languageChanged", async () => {
         el.checked = !el.checked;
         return;
       }
+      if (
+        monumentUserIsGlobalCaal() &&
+        showWorkspaceRecords?.checked !== true &&
+        showAllCaalRecords?.checked !== true
+      ) {
+        if (showAllCaalRecords && !showAllCaalRecords.disabled) {
+          showAllCaalRecords.checked = true;
+        }
+      }
 
       monumentPageOffset = 0;
       monumentPendingNewRecord = null;
@@ -8167,14 +8393,14 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   setMonumentsLoading(false);
 
-  if (session.permissions?.can_view_all_caal && allCaalMonumentsToggleWrapper) {
-    allCaalMonumentsToggleWrapper.hidden = false;
-  }
-
-  renderMonumentEmptyState();
-
   const initialCaalId = getInitialCaalIdFromUrl();
   const initialScope = getInitialScopeFromUrl();
+
+  applyMonumentScopeUiForSession(session, {
+    setDefault: !initialCaalId && !initialScope
+  });
+
+  renderMonumentEmptyState();
 
   let directLinkedRecord = null;
 
@@ -8192,6 +8418,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   try {
     await loadMonumentLabels();
     applyMonumentStaticLabels();
+    applyMonumentScopeUiForSession(window.appSession);
+    renderMonumentLegend();
     await loadMonumentLookups();
     populateMonumentFilterLookups();
 
@@ -8201,7 +8429,10 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (resolved?.record_type === "monument" && resolved.record) {
         directLinkedRecord = resolved.record;
 
-        const resolvedScope = resolved.record.source?.scope || initialScope;
+        const resolvedScope = normaliseMonumentScopeForSession(
+          resolved.record.source?.scope || initialScope,
+          session
+        );
 
         if (resolvedScope) {
           if (showWorkspaceRecords) showWorkspaceRecords.checked = false;
@@ -8230,15 +8461,19 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (showNationalRecords) showNationalRecords.checked = false;
       if (showAllCaalRecords) showAllCaalRecords.checked = false;
 
-      if (initialScope === "workspace" && showWorkspaceRecords) {
+      const normalisedInitialScope = normaliseMonumentScopeForSession(
+        initialScope,
+        session
+      );
+      if (normalisedInitialScope === "workspace" && showWorkspaceRecords) {
         showWorkspaceRecords.checked = true;
       }
 
-      if (initialScope === "national_ref" && showNationalRecords) {
+      if (normalisedInitialScope === "national_ref" && showNationalRecords) {
         showNationalRecords.checked = true;
       }
 
-      if (initialScope === "all_caal" && showAllCaalRecords) {
+      if (normalisedInitialScope === "all_caal" && showAllCaalRecords) {
         showAllCaalRecords.checked = true;
       }
     }
@@ -8260,6 +8495,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
 
     map.addControl(new maplibregl.NavigationControl(), "top-right");
+    addMapOptionsControl();
     addMonumentLegendControl();
 
     map.on("click", (event) => {

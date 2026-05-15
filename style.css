@@ -662,8 +662,8 @@ body {
   top: 1rem;
   left: 1rem;
   right: auto;
-  width: min(320px, calc(100% - 2rem));
-  max-height: calc(100% - 2rem);
+  max-width: min(340px, calc(100% - 80px));
+  max-height: calc(100% - 24px);
   overflow-y: auto;
   z-index: 30;
   background: #ffffff;
@@ -2316,6 +2316,60 @@ Popup preview */
   cursor: not-allowed;
 }
 
+.map-pane-body {
+  position: relative;
+}
+
+.map-options-map-control {
+  margin-top: 8px;
+  pointer-events: auto;
+}
+
+.map-options-map-toggle {
+  width: 29px;
+  height: 29px;
+  border: 0;
+  padding: 0;
+  margin: 0;
+  background: #ffffff;
+  color: #1f2933;
+  font-size: 18px;
+  line-height: 29px;
+  text-align: center;
+  cursor: pointer;
+  border-radius: 4px;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.12);
+  display: block;
+}
+
+
+.map-options-map-toggle:hover,
+.map-options-map-toggle:focus {
+  background: #f3f4f6;
+  color: #111827;
+  outline: none;
+}
+
+.map-options-map-toggle.is-active,
+.map-options-map-toggle.is-active:hover,
+.map-options-map-toggle.is-active:focus {
+  background: #ffffff;
+  color: #111827;
+  box-shadow:
+    0 0 0 2px rgba(15, 59, 111, 0.45),
+    0 1px 4px rgba(0, 0, 0, 0.25);
+}
+
+.map-options-panel {
+  position: absolute;
+  top: 12px;
+  right: 56px;
+  z-index: 20;
+  max-width: 340px;
+  max-height: calc(100% - 24px);
+  overflow-y: auto;
+}
+
 .legend-related {
   width: 13px;
   height: 13px;
@@ -2407,6 +2461,60 @@ Popup preview */
   opacity: 0.6;
   cursor: wait;
 }
+
+/* Floating map options control under MapLibre zoom buttons */
+.maplibregl-ctrl-top-right .maplibregl-ctrl.map-options-map-control {
+  background: transparent !important;
+  box-shadow: none !important;
+  border: 0 !important;
+  margin-top: 8px;
+}
+
+.maplibregl-ctrl-top-right .maplibregl-ctrl.map-options-map-control button.map-options-map-toggle {
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
+
+  width: 29px !important;
+  height: 29px !important;
+  min-width: 29px !important;
+  min-height: 29px !important;
+
+  padding: 0 !important;
+  margin: 0 !important;
+  border: 0 !important;
+  border-radius: 4px !important;
+
+  background: rgba(255, 255, 255, 0.96) !important;
+  color: #1f2933 !important;
+
+  font-size: 18px !important;
+  font-weight: 700;
+  line-height: 1 !important;
+
+  cursor: pointer;
+  box-shadow:
+    0 0 0 1px rgba(0, 0, 0, 0.16),
+    0 1px 4px rgba(0, 0, 0, 0.22) !important;
+}
+
+.maplibregl-ctrl-top-right .maplibregl-ctrl.map-options-map-control button.map-options-map-toggle:hover,
+.maplibregl-ctrl-top-right .maplibregl-ctrl.map-options-map-control button.map-options-map-toggle:focus {
+  background: #f3f4f6 !important;
+  color: #111827 !important;
+  outline: none !important;
+}
+
+.maplibregl-ctrl-top-right .maplibregl-ctrl.map-options-map-control button.map-options-map-toggle.is-active,
+.maplibregl-ctrl-top-right .maplibregl-ctrl.map-options-map-control button.map-options-map-toggle.is-active:hover,
+.maplibregl-ctrl-top-right .maplibregl-ctrl.map-options-map-control button.map-options-map-toggle.is-active:focus {
+  background: #ffffff !important;
+  color: #111827 !important;
+  box-shadow:
+    0 0 0 2px rgba(15, 59, 111, 0.45),
+    0 1px 5px rgba(0, 0, 0, 0.28) !important;
+}
+
 /* =========================================================
     RESPONSIVE LAYOUT */
 @media (max-width: 900px) {
@@ -2428,3 +2536,4 @@ Popup preview */
     grid-template-columns: 1fr;
   }
 }
+
