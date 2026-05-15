@@ -199,6 +199,13 @@ let nationalClusterPointRecords = [];
 
 let centralAsiaBordersDebounceTimer = null;
 
+let monumentDateOverrideState = {
+  startEdited: false,
+  endEdited: false,
+  lastCalculatedStart: null,
+  lastCalculatedEnd: null
+};
+
 // --------------------------------------------------------
 // MapLibre map
 // --------------------------------------------------------
@@ -2612,6 +2619,87 @@ function mRenderLegacyMultiSelect({
   `;
 }
 
+function getCurrentSortLocale() {
+  const lang =
+    (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
+    window.appSession?.profile?.preferred_language ||
+    "en";
+
+  const localeByLang = {
+    en: "en",
+    ru: "ru",
+    zh: "zh-Hans",
+    kk: "kk",
+    ky: "ky",
+    tg: "tg",
+    tk: "tk",
+    uz: "uz"
+  };
+
+  return localeByLang[lang] || "en";
+}
+
+function treeItemDisplayLabel(item) {
+  return String(
+    item?.label ||
+    item?.chip_label ||
+    item?.value ||
+    item?.concept_id ||
+    ""
+  ).trim();
+}
+
+function treeItemSortNumber(item) {
+  const candidates = [
+    item?.sort_order,
+    item?.raw?.sort_order,
+    item?.date_from,
+    item?.raw?.date_from,
+    item?.start_date,
+    item?.raw?.start_date
+  ];
+
+  for (const value of candidates) {
+    const n = Number(value);
+    if (Number.isFinite(n)) return n;
+  }
+
+  return 999999;
+}
+
+function sortLegacyTreeItems(items, treeLookupName) {
+  const list = [...items];
+
+  if (treeLookupName === "cultural_period_tree") {
+    return list.sort((a, b) => {
+      const sortA = treeItemSortNumber(a);
+      const sortB = treeItemSortNumber(b);
+
+      if (sortA !== sortB) return sortA - sortB;
+
+      return treeItemDisplayLabel(a).localeCompare(
+        treeItemDisplayLabel(b),
+        getCurrentSortLocale(),
+        {
+          sensitivity: "base",
+          numeric: true
+        }
+      );
+    });
+  }
+
+  return list.sort((a, b) => {
+    return treeItemDisplayLabel(a).localeCompare(
+      treeItemDisplayLabel(b),
+      getCurrentSortLocale(),
+      {
+        sensitivity: "base",
+        numeric: true
+      }
+    );
+  });
+}
+
 function mRenderLegacyTreePicker({
   fieldBase,
   count,
@@ -2637,8 +2725,11 @@ function mRenderLegacyTreePicker({
     level: String(item.level || "").trim().toUpperCase()
   }));
 
-  const topItems = normalisedTreeItems.filter((item) =>
-    !item.parent_id || item.level === "L1" || item.level === "1"
+  const topItems = sortLegacyTreeItems(
+    normalisedTreeItems.filter((item) =>
+      !item.parent_id || item.level === "L1" || item.level === "1"
+    ),
+    treeLookupName
   );
 
   const childrenByParent = new Map();
@@ -2651,6 +2742,13 @@ function mRenderLegacyTreePicker({
     }
 
     childrenByParent.get(item.parent_id).push(item);
+  });
+
+  childrenByParent.forEach((children, parentId) => {
+    childrenByParent.set(
+      parentId,
+      sortLegacyTreeItems(children, treeLookupName)
+    );
   });
 
   const itemLabel = (item) => {
@@ -3146,10 +3244,8 @@ function mBuildSavePayload() {
   );
 
   /*
-  Recalculate Start Date and End Date after Cultural Period1-6
-  have been written into the save payload. This is necessary for
-  the tree picker, because the initial payload reads Start/End
-  before the tree values are applied.
+  Recalculate only where the date fields are blank or still system-generated.
+  User-edited Start Date and End Date must not be overwritten.
   */
   const dateScratchRecord = {
     raw: {
@@ -3160,8 +3256,8 @@ function mBuildSavePayload() {
 
   recalculateMonumentDates(dateScratchRecord);
 
-  payload["Start Date"] = dateScratchRecord.raw["Start Date"] ?? "";
-  payload["End Date"] = dateScratchRecord.raw["End Date"] ?? "";
+  payload["Start Date"] = normaliseDateValue(dateScratchRecord.raw["Start Date"]);
+  payload["End Date"] = normaliseDateValue(dateScratchRecord.raw["End Date"]);
 
   if (monumentSelectedRecord?.raw) {
     monumentSelectedRecord.raw["Start Date"] = payload["Start Date"];
@@ -3684,9 +3780,25 @@ function buildCulturalPeriodLookup() {
   });
 }
 
-function recalculateMonumentDates(record) {
-  if (!culturalPeriodLookup || !Object.keys(culturalPeriodLookup).length) return;
-  if (!record?.raw) return;
+function normaliseDateValue(value) {
+  if (value === null || value === undefined || value === "") return "";
+  return String(value).trim();
+}
+
+function calculateMonumentDateRange(record) {
+  if (!culturalPeriodLookup || !Object.keys(culturalPeriodLookup).length) {
+    return {
+      start: null,
+      end: null
+    };
+  }
+
+  if (!record?.raw) {
+    return {
+      start: null,
+      end: null
+    };
+  }
 
   const cpFields = [
     "Cultural Period1",
@@ -3710,19 +3822,113 @@ function recalculateMonumentDates(record) {
     const from = Number(row.date_from);
     const to = Number(row.date_to);
 
-    if (!Number.isNaN(from)) starts.push(from);
-    if (!Number.isNaN(to)) ends.push(to);
+    if (Number.isFinite(from)) starts.push(from);
+    if (Number.isFinite(to)) ends.push(to);
   });
 
-  record.raw["Start Date"] = starts.length ? Math.min(...starts) : null;
-  record.raw["End Date"] = ends.length ? Math.max(...ends) : null;
+  return {
+    start: starts.length ? Math.min(...starts) : null,
+    end: ends.length ? Math.max(...ends) : null
+  };
+}
 
-  // update display values in edit view
+function resetMonumentDateOverrideState(record) {
+  const calculated = calculateMonumentDateRange(record);
+
+  const currentStart = normaliseDateValue(mRaw(record, "Start Date"));
+  const currentEnd = normaliseDateValue(mRaw(record, "End Date"));
+
+  const calculatedStart = normaliseDateValue(calculated.start);
+  const calculatedEnd = normaliseDateValue(calculated.end);
+
+  monumentDateOverrideState = {
+    startEdited:
+      currentStart !== "" &&
+      calculatedStart !== "" &&
+      currentStart !== calculatedStart,
+
+    endEdited:
+      currentEnd !== "" &&
+      calculatedEnd !== "" &&
+      currentEnd !== calculatedEnd,
+
+    lastCalculatedStart: calculated.start,
+    lastCalculatedEnd: calculated.end
+  };
+}
+
+function wireMonumentDateOverrideInputs() {
   const startInput = document.getElementById(mInputId("Start Date"));
   const endInput = document.getElementById(mInputId("End Date"));
 
-  if (startInput) startInput.value = record.raw["Start Date"];
-  if (endInput) endInput.value = record.raw["End Date"];
+  if (startInput && startInput.dataset.dateOverrideWired !== "true") {
+    startInput.addEventListener("input", () => {
+      monumentDateOverrideState.startEdited = true;
+
+      if (monumentSelectedRecord?.raw) {
+        monumentSelectedRecord.raw["Start Date"] = startInput.value;
+      }
+
+      monumentIsDirty = true;
+    });
+
+    startInput.dataset.dateOverrideWired = "true";
+  }
+
+  if (endInput && endInput.dataset.dateOverrideWired !== "true") {
+    endInput.addEventListener("input", () => {
+      monumentDateOverrideState.endEdited = true;
+
+      if (monumentSelectedRecord?.raw) {
+        monumentSelectedRecord.raw["End Date"] = endInput.value;
+      }
+
+      monumentIsDirty = true;
+    });
+
+    endInput.dataset.dateOverrideWired = "true";
+  }
+}
+
+function recalculateMonumentDates(record, { force = false } = {}) {
+  if (!record?.raw) return;
+
+  const calculated = calculateMonumentDateRange(record);
+
+  const startInput = document.getElementById(mInputId("Start Date"));
+  const endInput = document.getElementById(mInputId("End Date"));
+
+  const currentStart = normaliseDateValue(record.raw["Start Date"]);
+  const currentEnd = normaliseDateValue(record.raw["End Date"]);
+
+  const previousCalculatedStart = normaliseDateValue(
+    monumentDateOverrideState.lastCalculatedStart
+  );
+
+  const previousCalculatedEnd = normaliseDateValue(
+    monumentDateOverrideState.lastCalculatedEnd
+  );
+
+  const startLooksSystemGenerated =
+    currentStart === "" ||
+    currentStart === previousCalculatedStart;
+
+  const endLooksSystemGenerated =
+    currentEnd === "" ||
+    currentEnd === previousCalculatedEnd;
+
+  if (force || (!monumentDateOverrideState.startEdited && startLooksSystemGenerated)) {
+    record.raw["Start Date"] = calculated.start ?? "";
+    if (startInput) startInput.value = record.raw["Start Date"];
+  }
+
+  if (force || (!monumentDateOverrideState.endEdited && endLooksSystemGenerated)) {
+    record.raw["End Date"] = calculated.end ?? "";
+    if (endInput) endInput.value = record.raw["End Date"];
+  }
+
+  monumentDateOverrideState.lastCalculatedStart = calculated.start;
+  monumentDateOverrideState.lastCalculatedEnd = calculated.end;
 }
 
 function wireMonumentCulturalPeriodDateRecalc() {
@@ -7855,12 +8061,6 @@ function renderMonumentEditMode(record) {
     </div>
   `;
 
-const startDateInput = document.getElementById(mInputId("Start Date"));
-const endDateInput = document.getElementById(mInputId("End Date"));
-
-if (startDateInput) startDateInput.readOnly = true;
-if (endDateInput) endDateInput.readOnly = true;
-
   function bindMonumentDirtyTracking() {
     Array.from(
       document.querySelectorAll(
@@ -7877,9 +8077,13 @@ if (endDateInput) endDateInput.readOnly = true;
     });
   }
   bindMonumentDirtyTracking();
+
+  resetMonumentDateOverrideState(record);
+  wireMonumentDateOverrideInputs();
   mWireEditMultiSelects();
   wireLegacyTreePickers();
-  recalculateMonumentDates(record);
+  wireMonumentCulturalPeriodDateRecalc();
+
   wireInlineLocationButtons();
   updateAddModeUI();
 }

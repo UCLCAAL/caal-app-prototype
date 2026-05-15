@@ -97,52 +97,6 @@ async function fetchLookupSet(viewName, requestedLanguage, { preferCanonical = f
   return items;
 }
 
-async function fetchLookupSet(viewName, requestedLanguage, { preferCanonical = false } = {}) {
-  const result = await pool.query(
-    `
-    SELECT *
-    FROM ${viewName}
-    `
-  );
-
-  const items = result.rows.map((row) => {
-    const value = preferCanonical
-    ? (
-        row.canonical_value ??
-        row.concept_id ??
-        row.id ??
-        row.label_name ??
-        null
-      )
-    : (
-        row.concept_id ??
-        row.canonical_value ??
-        row.id ??
-        row.label_name ??
-        null
-      );
-
-    return {
-      value,
-      label: resolveLabelWithFallback(row, requestedLanguage, value),
-      raw: row
-    };
-  });
-
-  items.sort((a, b) => {
-    const sortA = a.raw?.sort_order ?? Number.MAX_SAFE_INTEGER;
-    const sortB = b.raw?.sort_order ?? Number.MAX_SAFE_INTEGER;
-
-    if (sortA !== sortB) {
-      return sortA - sortB;
-    }
-
-    return String(a.label ?? "").localeCompare(String(b.label ?? ""));
-  });
-
-  return items;
-}
-
 function fallbackLookupLanguage(lang) {
   return ["kk", "ky", "tg", "tk", "uz"].includes(lang) ? "ru" : "en";
 }
@@ -192,8 +146,8 @@ async function fetchHierarchicalLookupTree({
       ${dateColumnsSql}
     FROM ${viewName}
     ORDER BY
+      parent_id NULLS FIRST,
       sort_order NULLS LAST,
-      label_en NULLS LAST,
       canonical_value
   `);
 
@@ -231,102 +185,6 @@ async function fetchHierarchicalLookupTree({
       raw: row
     };
   });
-}
-
-async function fetchMonumentTypeTree(requestedLanguage) {
-  const result = await pool.query(`
-    SELECT
-      concept_id,
-      canonical_value,
-      parent_id,
-      level,
-      sort_order,
-
-      label_en,
-      label_ru,
-      label_zh,
-      label_kk,
-      label_ky,
-      label_tg,
-      label_tk,
-      label_uz,
-
-      display_en,
-      display_ru,
-      display_zh,
-      display_kk,
-      display_ky,
-      display_tg,
-      display_tk,
-      display_uz
-    FROM ui.v_lkp_site_types_context
-    ORDER BY
-      sort_order NULLS LAST,
-      label_en NULLS LAST,
-      canonical_value
-  `);
-
-  const items = result.rows.map((row) => {
-    const value =
-      row.canonical_value ??
-      row.concept_id ??
-      null;
-
-    const safeLang = requestedLanguage;
-    const fallbackLang = ["kk", "ky", "tg", "tk", "uz"].includes(safeLang)
-      ? "ru"
-      : "en";
-
-    return {
-      value,
-      concept_id: row.concept_id,
-      parent_id: row.parent_id,
-      level: row.level,
-      sort_order: row.sort_order,
-
-      // Clean text for the visible tree rows.
-      label:
-        row[`label_${safeLang}`] ||
-        row[`label_${fallbackLang}`] ||
-        row.label_en ||
-        row.display_en ||
-        value,
-
-      // Context-rich text for selected chips.
-      chip_label:
-        row[`display_${safeLang}`] ||
-        row[`display_${fallbackLang}`] ||
-        row.display_en ||
-        row[`label_${safeLang}`] ||
-        row.label_en ||
-        value,
-
-      raw: row
-    };
-
-    return {
-      value,
-      concept_id: row.concept_id,
-      parent_id: row.parent_id,
-      level: row.level,
-      sort_order: row.sort_order,
-      label: resolveLabelWithFallback(row, requestedLanguage, value),
-      raw: row
-    };
-  });
-
-  items.sort((a, b) => {
-    const sortA = a.sort_order ?? Number.MAX_SAFE_INTEGER;
-    const sortB = b.sort_order ?? Number.MAX_SAFE_INTEGER;
-
-    if (sortA !== sortB) {
-      return sortA - sortB;
-    }
-
-    return String(a.label ?? "").localeCompare(String(b.label ?? ""));
-  });
-
-  return items;
 }
 
 router.get("/:page", async (req, res) => {
