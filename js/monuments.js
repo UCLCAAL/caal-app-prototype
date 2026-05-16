@@ -2347,6 +2347,21 @@ function setResultsCountLoading(message = null) {
   }
 }
 
+function setMonumentResultsError(message = null) {
+  const label = message || t(
+    "results_update_failed",
+    "Results could not be updated. Please try again."
+  );
+
+  if (resultsCount) {
+    resultsCount.textContent = label;
+  }
+
+  if (filterResultsCount) {
+    filterResultsCount.textContent = label;
+  }
+}
+
 function setMapStaleState(isStale, message = null) {
   monumentMapIsStale = isStale;
 
@@ -2368,6 +2383,30 @@ function setMapStaleState(isStale, message = null) {
   notice.innerHTML = isStale
     ? `<span class="mini-spinner"></span>${message || t("redrawing_map", "Redrawing map...")}`
     : "";
+}
+
+function renderNoScopeSelectedState() {
+  if (resultsList) {
+    resultsList.innerHTML = `
+      <div class="results-empty">
+        <p>${t(
+          "no_record_sources_selected",
+          "Tick one or more record sources to show results."
+        )}</p>
+      </div>
+    `;
+  }
+
+  setMonumentResultsCountText(
+    t("no_record_sources_selected_short", "No record sources selected")
+  );
+
+  if (mapStatusLine) {
+    mapStatusLine.textContent = t(
+      "no_record_scopes_selected_map",
+      "No record scopes are selected."
+    );
+  }
 }
 
 function scheduleMonumentSearchAndMapRedraw() {
@@ -5849,7 +5888,26 @@ function populateMonumentFilterLookups() {
   mPopulateMultiSelect(filterCulturalPeriod, mLookupOptions("cultural_period"));
   mPopulateMultiSelect(filterCountry, mLookupOptions("country"));
 
-  wireClickToggleMultiSelects();
+  renderAdvancedFilterTreePicker({
+    selectEl: filterMonumentType,
+    chipsId: "filterMonumentTypeChips",
+    treeLookupName: "monument_type_tree",
+    treeId: "filterMonumentTypeTree",
+    searchPlaceholder: t("search_site_types", "Search site types...")
+  });
+
+  renderAdvancedFilterTreePicker({
+    selectEl: filterCulturalPeriod,
+    chipsId: "filterCulturalPeriodChips",
+    treeLookupName: "cultural_period_tree",
+    treeId: "filterCulturalPeriodTree",
+    searchPlaceholder: t("search_cultural_periods", "Search cultural periods...")
+  });
+
+  wireClickToggleMultiSelects({
+    excludeSelects: [filterMonumentType, filterCulturalPeriod]
+  });
+
   renderAllFilterChips();
 }
 
@@ -6073,11 +6131,303 @@ function renderFilterChipsForSelect(selectEl, chipsId) {
         option.selected = false;
       }
 
+      const treeWrapper = document.querySelector(
+        `.advanced-filter-tree-picker[data-filter-tree-for="${CSS.escape(selectEl.id)}"]`
+      );
+
+      if (treeWrapper) {
+        const checkbox = treeWrapper.querySelector(
+          `.advanced-filter-tree-check[data-value="${CSS.escape(item.value)}"]`
+        );
+
+        if (checkbox) {
+          checkbox.checked = false;
+        }
+      }
+
       renderAllFilterChips();
-      await applyMonumentFilters({ includeMap: true, listFirst: true });
+
+      await applyMonumentFilters({
+        includeMap: true,
+        listFirst: true
+      });
     });
 
     chipsEl.appendChild(chip);
+  });
+}
+
+function renderAdvancedFilterTreePicker({
+  selectEl,
+  chipsId,
+  treeLookupName,
+  treeId,
+  searchPlaceholder
+}) {
+  if (!selectEl) return;
+
+  selectEl.hidden = true;
+  selectEl.classList.add("advanced-filter-hidden-select");
+
+  const existing = document.getElementById(treeId);
+  if (existing) existing.remove();
+
+  const treeItems = Array.isArray(monumentLookups?.[treeLookupName])
+    ? monumentLookups[treeLookupName]
+    : [];
+
+  const normalisedTreeItems = treeItems.map((item) => ({
+    ...item,
+    concept_id: String(item.concept_id || "").trim(),
+    parent_id: String(item.parent_id || "").trim(),
+    level: String(item.level || "").trim().toUpperCase()
+  }));
+
+  const selectedValues = new Set(
+    Array.from(selectEl.selectedOptions).map((option) => String(option.value))
+  );
+
+  const topItems = sortLegacyTreeItems(
+    normalisedTreeItems.filter((item) =>
+      !item.parent_id || item.level === "L1" || item.level === "1"
+    ),
+    treeLookupName
+  );
+
+  const childrenByParent = new Map();
+
+  normalisedTreeItems.forEach((item) => {
+    if (!item.parent_id || item.level === "L1" || item.level === "1") return;
+
+    if (!childrenByParent.has(item.parent_id)) {
+      childrenByParent.set(item.parent_id, []);
+    }
+
+    childrenByParent.get(item.parent_id).push(item);
+  });
+
+  childrenByParent.forEach((children, parentId) => {
+    childrenByParent.set(
+      parentId,
+      sortLegacyTreeItems(children, treeLookupName)
+    );
+  });
+
+  const itemLabel = (item) => {
+    const base = mSafeValue(item.label || item.value || "");
+    const date = item.date_range
+      ? ` <span class="legacy-tree-date">${mSafeValue(item.date_range)}</span>`
+      : "";
+
+    return `${base}${date}`;
+  };
+
+  const rowsHtml = topItems.length
+    ? topItems.map((parent) => {
+        const children = childrenByParent.get(parent.concept_id) || [];
+        const parentChecked = selectedValues.has(String(parent.value));
+
+        return `
+          <div class="legacy-tree-parent" data-concept-id="${parent.concept_id}">
+            <div class="legacy-tree-row legacy-tree-row-parent">
+              ${
+                children.length
+                  ? `
+                    <button
+                      type="button"
+                      class="legacy-tree-toggle"
+                      data-tree-toggle="${parent.concept_id}"
+                      aria-expanded="false"
+                    >
+                      ▸
+                    </button>
+                  `
+                  : `<span class="legacy-tree-toggle-spacer"></span>`
+              }
+
+              <label>
+                <input
+                  type="checkbox"
+                  class="advanced-filter-tree-check"
+                  data-value="${mSafeValue(parent.value)}"
+                  data-concept-id="${mSafeValue(parent.concept_id)}"
+                  data-parent-id=""
+                  data-chip-label="${mSafeValue(parent.chip_label || parent.label || parent.value)}"
+                  ${parentChecked ? "checked" : ""}
+                >
+                <span>${itemLabel(parent)}</span>
+              </label>
+            </div>
+
+            <div class="legacy-tree-children" data-tree-children="${parent.concept_id}" hidden>
+              ${children.map((child) => {
+                const childChecked = selectedValues.has(String(child.value));
+
+                return `
+                  <label class="legacy-tree-row legacy-tree-row-child">
+                    <input
+                      type="checkbox"
+                      class="advanced-filter-tree-check"
+                      data-value="${mSafeValue(child.value)}"
+                      data-concept-id="${mSafeValue(child.concept_id)}"
+                      data-parent-id="${mSafeValue(parent.concept_id)}"
+                      data-chip-label="${mSafeValue(child.chip_label || child.label || child.value)}"
+                      ${childChecked ? "checked" : ""}
+                    >
+                    <span>${itemLabel(child)}</span>
+                  </label>
+                `;
+              }).join("")}
+            </div>
+          </div>
+        `;
+      }).join("")
+    : `
+      <div class="section-empty">
+        ${t("no_tree_lookup_loaded", "No lookup values loaded. Please refresh the page or check the lookup response.")}
+      </div>
+    `;
+
+  const wrapper = document.createElement("div");
+  wrapper.id = treeId;
+  wrapper.className = "advanced-filter-tree-picker legacy-tree-picker";
+  wrapper.dataset.filterTreeFor = selectEl.id || "";
+  wrapper.innerHTML = `
+    <input
+      type="search"
+      class="form-control legacy-tree-search"
+      placeholder="${mSafeValue(searchPlaceholder)}"
+    >
+
+    <div class="legacy-tree">
+      ${rowsHtml}
+    </div>
+  `;
+
+  selectEl.insertAdjacentElement("afterend", wrapper);
+
+  wireAdvancedFilterTreePicker({
+    wrapper,
+    selectEl,
+    chipsId
+  });
+}
+
+function wireAdvancedFilterTreePicker({ wrapper, selectEl, chipsId }) {
+  if (!wrapper || !selectEl) return;
+
+  wrapper.querySelectorAll("[data-tree-toggle]").forEach((toggleBtn) => {
+    toggleBtn.addEventListener("click", () => {
+      const conceptId = toggleBtn.dataset.treeToggle;
+      const children = wrapper.querySelector(
+        `[data-tree-children="${CSS.escape(conceptId)}"]`
+      );
+
+      if (!children) return;
+
+      const isHidden = children.hidden;
+      children.hidden = !isHidden;
+      toggleBtn.textContent = isHidden ? "▾" : "▸";
+      toggleBtn.setAttribute("aria-expanded", String(isHidden));
+    });
+  });
+
+  wrapper.querySelectorAll(".advanced-filter-tree-check").forEach((checkbox) => {
+    checkbox.addEventListener("change", async () => {
+      enforceAdvancedFilterTreeSelectionRules(wrapper, checkbox);
+      syncAdvancedFilterTreeToSelect(wrapper, selectEl);
+      renderFilterChipsForSelect(selectEl, chipsId);
+
+      await applyMonumentFilters({
+        includeMap: true,
+        listFirst: true
+      });
+    });
+  });
+
+  const search = wrapper.querySelector(".legacy-tree-search");
+  if (search) {
+    search.addEventListener("input", () => {
+      filterAdvancedFilterTree(wrapper, search.value);
+    });
+  }
+}
+
+function syncAdvancedFilterTreeToSelect(wrapper, selectEl) {
+  const selectedValues = new Set(
+    Array.from(wrapper.querySelectorAll(".advanced-filter-tree-check:checked"))
+      .map((checkbox) => String(checkbox.dataset.value || ""))
+      .filter(Boolean)
+  );
+
+  Array.from(selectEl.options).forEach((option) => {
+    option.selected = selectedValues.has(String(option.value));
+  });
+
+  selectEl.dispatchEvent(
+    new Event("change", {
+      bubbles: true
+    })
+  );
+}
+
+function enforceAdvancedFilterTreeSelectionRules(wrapper, changedCheckbox) {
+  if (!changedCheckbox.checked) return;
+
+  const changedConceptId = changedCheckbox.dataset.conceptId;
+  const changedParentId = changedCheckbox.dataset.parentId;
+
+  if (changedParentId) {
+    const parentCheckbox = wrapper.querySelector(
+      `.advanced-filter-tree-check[data-concept-id="${CSS.escape(changedParentId)}"]`
+    );
+
+    if (parentCheckbox) {
+      parentCheckbox.checked = false;
+    }
+  } else {
+    wrapper
+      .querySelectorAll(
+        `.advanced-filter-tree-check[data-parent-id="${CSS.escape(changedConceptId)}"]`
+      )
+      .forEach((childCheckbox) => {
+        childCheckbox.checked = false;
+      });
+  }
+}
+
+function filterAdvancedFilterTree(wrapper, queryValue) {
+  const query = String(queryValue || "").trim().toLowerCase();
+
+  wrapper.querySelectorAll(".legacy-tree-parent").forEach((parentBlock) => {
+    const parentRow = parentBlock.querySelector(".legacy-tree-row-parent");
+    const childrenBlock = parentBlock.querySelector(".legacy-tree-children");
+    const toggleBtn = parentBlock.querySelector("[data-tree-toggle]");
+
+    const parentText = parentRow?.textContent?.toLowerCase() || "";
+    let anyChildMatch = false;
+
+    parentBlock.querySelectorAll(".legacy-tree-row-child").forEach((childRow) => {
+      const childText = childRow.textContent.toLowerCase();
+      const childMatches = !query || childText.includes(query);
+
+      childRow.hidden = !childMatches;
+      if (childMatches) anyChildMatch = true;
+    });
+
+    const parentMatches = !query || parentText.includes(query);
+    const blockMatches = parentMatches || anyChildMatch;
+
+    parentBlock.hidden = !blockMatches;
+
+    if (childrenBlock && query) {
+      childrenBlock.hidden = !anyChildMatch && !parentMatches;
+
+      if (toggleBtn) {
+        toggleBtn.textContent = childrenBlock.hidden ? "▸" : "▾";
+        toggleBtn.setAttribute("aria-expanded", String(!childrenBlock.hidden));
+      }
+    }
   });
 }
 
@@ -6087,9 +6437,10 @@ function renderAllFilterChips() {
   });
 }
 
-function wireClickToggleMultiSelects() {
+function wireClickToggleMultiSelects({ excludeSelects = [] } = {}) {
   monumentChipFilterConfigs.forEach(({ select, chipsId }) => {
-    if (!select || select.dataset.clickToggleWired === "true") return;
+    if (!select || excludeSelects.includes(select)) return;
+    if (select.dataset.clickToggleWired === "true") return;
 
     select.addEventListener("mousedown", (event) => {
       const option = event.target;
@@ -6436,33 +6787,60 @@ async function loadMonumentListRecords() {
 
   setResultsCountLoading();
 
-  const params = buildMonumentQueryParams({ includePaging: true });
+  try {
+    const params = buildMonumentQueryParams({ includePaging: true });
 
-  const response = await fetch(`/api/monuments?${params.toString()}`, {
-    method: "GET",
-    credentials: "include"
-  });
+    const response = await fetch(`/api/monuments?${params.toString()}`, {
+      method: "GET",
+      credentials: "include"
+    });
 
-  const data = await response.json();
+    const data = await response.json();
 
-  if (requestSeq !== monumentListRequestSeq) {
-    return;
+    if (requestSeq !== monumentListRequestSeq) {
+      return;
+    }
+
+    if (!response.ok || !data.ok) {
+      throw new Error(data.detail || data.error || "Failed to load monument list records");
+    }
+
+    monumentListRecords = data.records || [];
+    monumentTotalCount = data.total || 0;
+    monumentTotalIsExact = data.total_is_exact !== false;
+
+    renderMonumentResultsList(monumentListRecords);
+    updateShowResultsOnMapButton();
+    renderLiveMapLabels();
+    updateMapOptionsState();
+    renderMonumentPageInfo();
+    updateMapStatusLine();
+  } catch (error) {
+    if (requestSeq !== monumentListRequestSeq) {
+      return;
+    }
+
+    console.error("Failed to load monument list records:", error);
+
+    monumentListRecords = [];
+    monumentTotalCount = 0;
+    monumentTotalIsExact = true;
+
+    if (resultsList) {
+      resultsList.innerHTML = `
+        <div class="results-empty">
+          <p>${t("could_not_load_results", "Could not load results.")}</p>
+        </div>
+      `;
+    }
+
+    setMonumentResultsError();
+    updateShowResultsOnMapButton();
+    updateMapOptionsState();
+    updateMapStatusLine();
+
+    throw error;
   }
-
-  if (!response.ok || !data.ok) {
-    throw new Error(data.detail || data.error || "Failed to load monument list records");
-  }
-
-  monumentListRecords = data.records || [];
-  monumentTotalCount = data.total || 0;
-  monumentTotalIsExact = data.total_is_exact !== false;
-
-  renderMonumentResultsList(monumentListRecords);
-  updateShowResultsOnMapButton();
-  renderLiveMapLabels();
-  updateMapOptionsState();
-  renderMonumentPageInfo();
-  updateMapStatusLine();
 }
 
 async function loadFullMonumentRecord(record) {
@@ -8899,8 +9277,8 @@ document.addEventListener("app:languageChanged", async () => {
     await loadMonumentLookups();
     populateMonumentFilterLookups();
 
-    await loadMonumentMapRecords();
     await loadMonumentListRecords();
+    await loadMonumentMapRecords();
 
     // Preserve an unsaved brand-new local record
     if (pendingNew && selectedCaalId === null) {
@@ -8961,59 +9339,87 @@ document.addEventListener("app:languageChanged", async () => {
 });
 
 [showWorkspaceRecords, showNationalRecords, showAllCaalRecords].forEach((el) => {
-  if (el) {
-    el.addEventListener("change", async () => {
-      if (!monumentConfirmLoseChanges()) {
-        el.checked = !el.checked;
-        return;
-      }
-      if (
-        monumentUserIsGlobalCaal() &&
-        showWorkspaceRecords?.checked !== true &&
-        showAllCaalRecords?.checked !== true
-      ) {
-        if (showAllCaalRecords && !showAllCaalRecords.disabled) {
-          showAllCaalRecords.checked = true;
-        }
-      }
+  if (!el) return;
 
-      monumentPageOffset = 0;
-      monumentPendingNewRecord = null;
-      monumentIsEditMode = false;
-      monumentIsDirty = false;
-      monumentIsAddMode = false;
-      monumentSyncModeVisualState();
-      updateAddModeUI();
-      monumentSelectedRecord = null;
+  el.addEventListener("change", async () => {
+    if (!monumentConfirmLoseChanges()) {
+      el.checked = !el.checked;
+      return;
+    }
 
-      if (map) {
-        if (map.getLayer("monument-selected-ring")) {
-          map.removeLayer("monument-selected-ring");
-        }
-        if (map.getSource("monument-selected")) {
-          map.removeSource("monument-selected");
-        }
+    const scopes = getMonumentEnabledScopes();
+
+    monumentPageOffset = 0;
+    monumentPendingNewRecord = null;
+    monumentIsEditMode = false;
+    monumentIsDirty = false;
+    monumentIsAddMode = false;
+    monumentSyncModeVisualState();
+    updateAddModeUI();
+    monumentSelectedRecord = null;
+
+    if (map) {
+      if (map.getLayer("monument-selected-ring")) {
+        map.removeLayer("monument-selected-ring");
       }
 
-      clearRelatedMonumentsMap();
+      if (map.getSource("monument-selected")) {
+        map.removeSource("monument-selected");
+      }
+    }
+
+    clearRelatedMonumentsMap();
+    updateMapOptionsState();
+
+    if (!scopes.length) {
+      setMonumentsLoading(false);
+      setMapStaleState(false);
+
+      monumentListRecords = [];
+      monumentMapRecords = [];
+      monumentTotalCount = 0;
+      monumentTotalIsExact = true;
+      nationalClusterPointRecords = [];
+
+      clearNationalClustersLayer();
+      drawMonumentRecords([]);
+      renderNoScopeSelectedState();
+      renderMonumentEmptyState();
+      updateShowResultsOnMapButton();
+      renderLiveMapLabels();
       updateMapOptionsState();
+      updateMapStatusLine();
 
-      setMonumentsLoading(true, t("updating_scope", "Updating scope..."));
+      return;
+    }
 
-      try {
-        await loadMonumentListRecords();
+    setMonumentsLoading(true, t("updating_scope", "Updating scope..."));
+    setMapStaleState(true, t("redrawing_map", "Redrawing map..."));
 
-        setMonumentsLoading(true, t("redrawing_map", "Redrawing map..."));
-        await loadMonumentMapRecords();
+    try {
+      await loadMonumentListRecords();
+      await loadMonumentMapRecords();
+      renderMonumentEmptyState();
+    } catch (error) {
+      console.error("Failed to reload monuments after scope change:", error);
 
-        renderMonumentEmptyState();
-      } catch (error) {
-        console.error("Failed to reload monuments after scope change:", error);
-      } finally {
-        setMonumentsLoading(false);
+      if (typeof setMonumentResultsError === "function") {
+        setMonumentResultsError(
+          t("scope_update_failed", "Scope update failed. Please try again.")
+        );
+      } else {
+        setMonumentResultsCountText(
+          t("scope_update_failed", "Scope update failed. Please try again.")
+        );
       }
-    });
-  }
+    } finally {
+      setMonumentsLoading(false);
+      setMapStaleState(false);
+      updateShowResultsOnMapButton();
+      updateMapOptionsState();
+      updateMapStatusLine();
+    }
+  });
 });
 
 // --------------------------------------------------------

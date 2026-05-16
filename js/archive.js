@@ -47,6 +47,7 @@ const archiveSaveBtn = document.getElementById("archiveSaveBtn");
 const archiveCancelEditBtn = document.getElementById("archiveCancelEditBtn");
 const archiveEditBtn = document.getElementById("archiveEditBtn");
 const archiveDeleteBtn = document.getElementById("archiveDeleteBtn");
+const archiveCloseRecordBtn = document.getElementById("archiveCloseRecordBtn");
 
 // API base
 // --------------------------------------------------------
@@ -198,6 +199,7 @@ async function archiveReloadFromFilters() {
     await loadArchiveRecords(archiveLimit, 0);
   } catch (error) {
     console.error("Archive filter reload failed:", error);
+    setArchiveResultsError();
   } finally {
     setArchiveLoading(false);
   }
@@ -249,15 +251,22 @@ function archiveBoolLabel(value) {
 }
 
 function archiveScopeLabel(scope) {
-  switch (scope) {
+  const normalisedScope = normaliseArchiveScopeForSession(scope);
+
+  switch (normalisedScope) {
     case "workspace":
       return t("workspace", "Workspace");
+
     case "national_ref":
-      return t("archives_national_records", "National CAAL records");
+      return t("archive_national_records", "National CAAL records");
+
     case "all_caal":
-      return t("other_caal_records", "Other CAAL records");
+      return archiveUserIsGlobalCaal()
+        ? t("archive_all_records", "All CAAL records")
+        : t("archive_other_records", "Other CAAL records");
+
     default:
-      return scope || t("unknown", "Unknown");
+      return normalisedScope || t("unknown", "Unknown");
   }
 }
 
@@ -332,6 +341,29 @@ function archiveGetInvalidAssociatedIds(value) {
   return archiveParseAssociatedCaalIds(value).filter(
     (id) => !archiveIsLikelyCaalId(id)
   );
+}
+
+function normaliseArchiveAssociatedIdList(value) {
+  return Array.from(new Set(archiveParseAssociatedCaalIds(value)))
+    .join(", ");
+}
+
+function validateArchiveAssociatedIdsBeforeSave() {
+  const value = archiveGetInputValue("Associated CAAL_ID");
+  const invalid = archiveGetInvalidAssociatedIds(value);
+
+  if (invalid.length) {
+    alert(
+      t("invalid_associated_ids_intro", "Some Associated CAAL_ID values do not look valid:") +
+      "\n\n" +
+      invalid.join("\n") +
+      "\n\n" +
+      t("invalid_associated_ids_instruction", "Please use comma-separated CAAL IDs.")
+    );
+    return false;
+  }
+
+  return true;
 }
 
 function archiveArrayValue(value) {
@@ -529,7 +561,9 @@ function archiveBuildQueryParams({ limit = archiveLimit, offset = archiveOffset 
   const lang = archiveCurrentLanguageCode();
 
   const params = new URLSearchParams();
-  params.set("scopes", scopes.join(","));
+  if (scopes.length) {
+    params.set("scopes", scopes.join(","));
+  }
   params.set("lang", lang);
   params.set("limit", String(limit));
   params.set("offset", String(offset));
@@ -847,7 +881,9 @@ function archiveBuildSavePayload() {
   return {
     "Level": archiveGetInputValue("Level"),
     "Original Reference": archiveGetInputValue("Original Reference"),
-    "Associated CAAL_ID": archiveGetInputValue("Associated CAAL_ID"),
+    "Associated CAAL_ID": normaliseArchiveAssociatedIdList(
+      archiveGetInputValue("Associated CAAL_ID")
+    ),
     "Original Title": archiveGetInputValue("Original Title"),
     "English Title": archiveGetInputValue("English Title"),
     "Content Type": archiveGetInputValue("Content Type"),
@@ -998,8 +1034,33 @@ function archiveRenderDetailItem(label, value, fullWidth = false) {
   `;
 }
 
+function archiveRelationGroupLabel(rel) {
+  if (rel.relation_direction === "reverse") {
+    return t("referenced_by_resources", "Referenced by resources");
+  }
+
+  return rel.relation_type || t("related_resources", "Related resources");
+}
+
+function groupArchiveRelationsByDisplayLabel(record) {
+  const relations = getRecordRelations(record);
+  const groups = {};
+
+  relations.forEach((rel) => {
+    const key = archiveRelationGroupLabel(rel);
+
+    if (!groups[key]) {
+      groups[key] = [];
+    }
+
+    groups[key].push(rel);
+  });
+
+  return groups;
+}
+
 function archiveRenderResourceRelations(record) {
-  const groups = groupRecordRelationsByType(record);
+  const groups = groupArchiveRelationsByDisplayLabel(record);
   const entries = Object.entries(groups);
 
   if (!entries.length) {
@@ -1635,6 +1696,10 @@ function archiveRenderActionBar({ hasRecord = false, canEdit = false } = {}) {
   if (archiveCancelEditBtn) archiveCancelEditBtn.hidden = !isEditing;
   if (archiveDeleteBtn) archiveDeleteBtn.hidden = !canDelete;
 
+  if (archiveCloseRecordBtn) {
+    archiveCloseRecordBtn.hidden = isEditing || !hasRecord;
+  }
+
   if (archiveEditBtn) {
     archiveEditBtn.disabled = false;
     archiveEditBtn.title = "";
@@ -1678,8 +1743,145 @@ async function loadArchiveLabels(langOverride = null) {
 }
 
 
+
 // Records API
 // --------------------------------------------------------
+function getArchiveSessionWorkspaceCode(session = window.appSession) {
+  return String(
+    session?.user?.workspace_code ??
+    session?.profile?.workspace_code ??
+    session?.permissions?.workspace_code ??
+    session?.workspace_code ??
+    ""
+  ).trim().toLowerCase();
+}
+
+function archiveUserIsGlobalCaal(session = window.appSession) {
+  return getArchiveSessionWorkspaceCode(session) === "caal";
+}
+
+function archiveUserCanViewAllCaal(session = window.appSession) {
+  return session?.permissions?.can_view_all_caal === true || archiveUserIsGlobalCaal(session);
+}
+
+function normaliseArchiveScopeForSession(scope, session = window.appSession) {
+  if (archiveUserIsGlobalCaal(session) && scope === "national_ref") {
+    return "all_caal";
+  }
+
+  return scope;
+}
+
+function renderArchiveNoScopeSelectedState() {
+  archiveAllRecords = [];
+  archiveVisibleRecords = [];
+  archiveTotalCount = 0;
+  archiveOffset = 0;
+
+  if (archiveResultsList) {
+    archiveResultsList.innerHTML = `
+      <div class="results-empty">
+        <p>${t(
+          "no_archive_sources_selected",
+          "No archive record sources are selected. Tick one or more sources to show results."
+        )}</p>
+      </div>
+    `;
+  }
+
+  setArchiveResultsCountText(
+    t("no_record_scopes_sources_short", "No record scopes selected")
+  );
+
+  renderArchivePageInfo();
+}
+
+function setArchiveScopeLabelForInput(inputEl, key, fallback) {
+  const labelEl = inputEl?.closest("label");
+  const span = labelEl?.querySelector("[data-i18n]");
+
+  if (!span) return;
+
+  span.dataset.i18n = key;
+  span.textContent = t(key, fallback);
+}
+
+function applyArchiveScopeUiForSession(
+  session = window.appSession,
+  { setDefault = false } = {}
+) {
+  const isGlobalCaalUser = archiveUserIsGlobalCaal(session);
+  const canViewAllCaal = archiveUserCanViewAllCaal(session);
+
+  const nationalWrapper = showArchiveNationalRef?.closest("label");
+  const workspaceWrapper = showArchiveWorkspace?.closest("label");
+
+  if (isGlobalCaalUser) {
+    if (nationalWrapper) {
+      nationalWrapper.hidden = true;
+    }
+
+    if (showArchiveNationalRef) {
+      showArchiveNationalRef.checked = false;
+      showArchiveNationalRef.disabled = true;
+    }
+
+    if (allCaalArchiveToggleWrapper) {
+      allCaalArchiveToggleWrapper.hidden = !canViewAllCaal;
+    }
+
+    if (showArchiveAllCaal) {
+      showArchiveAllCaal.disabled = !canViewAllCaal;
+    }
+
+    setArchiveScopeLabelForInput(
+      showArchiveAllCaal,
+      "archive_all_records",
+      t("archive_all_records", "All CAAL records")
+    );
+
+    if (setDefault && canViewAllCaal) {
+      if (showArchiveWorkspace) showArchiveWorkspace.checked = true;
+      if (showArchiveAllCaal) showArchiveAllCaal.checked = true;
+    }
+
+    if (workspaceWrapper) {
+      workspaceWrapper.title = t(
+        "global_workspace_scope_help",
+        "Records directly editable through this account, if any."
+      );
+    }
+
+    return;
+  }
+
+  if (nationalWrapper) {
+    nationalWrapper.hidden = false;
+  }
+
+  if (showArchiveNationalRef) {
+    showArchiveNationalRef.disabled = false;
+  }
+
+  if (allCaalArchiveToggleWrapper) {
+    allCaalArchiveToggleWrapper.hidden = !canViewAllCaal;
+  }
+
+  if (showArchiveAllCaal) {
+    showArchiveAllCaal.disabled = !canViewAllCaal;
+  }
+
+  setArchiveScopeLabelForInput(
+    showArchiveAllCaal,
+    "archive_other_records",
+    t("archive_other_records", "Other CAAL records")
+  );
+
+  if (workspaceWrapper) {
+    workspaceWrapper.title = "";
+  }
+}
+
 function getArchiveEnabledScopes() {
   const scopes = [];
 
@@ -1705,8 +1907,12 @@ async function loadArchiveRecords(limit = 100, offset = 0, options = {}) {
   }
 
   if (scopes.length === 0) {
-    renderArchiveResultsList([]);
-    renderArchiveEmptyState();
+    renderArchiveNoScopeSelectedState();
+
+    if (!preserveSelection) {
+      renderArchiveEmptyState();
+    }
+
     return;
   }
 
@@ -1737,149 +1943,9 @@ async function loadArchiveRecords(limit = 100, offset = 0, options = {}) {
   renderArchivePageInfo();
 }
 
-// Search text
-// --------------------------------------------------------
-function archiveBuildSearchText_old(record) {
-  const s = record.summary || {};
-
-  const fields = [
-    archiveIdentity(record, "caal_id"),
-    archiveIdentity(record, "associated_caal_id"),
-
-    s.original_title,
-    s.english_title,
-    s.original_reference,
-    s.content_type,
-    s.country,
-    s.level,
-    s.archive_recorder,
-    s.date_of_recording,
-
-    archiveRaw(record, "Description"),
-    archiveRaw(record, "Description - alternative language"),
-    archiveRaw(record, "Number and Type of Original Material"),
-    archiveRaw(record, "Size and Dimensions of Original Material"),
-    archiveRaw(record, "Condition of Original Material"),
-    archiveRaw(record, "Related Towns and Cities"),
-    archiveRaw(record, "Other Subjects"),
-    archiveRaw(record, "Dates of Original Material"),
-    archiveRaw(record, "Author of the Original Material"),
-    archiveRaw(record, "Publisher of the Original Material"),
-    archiveRaw(record, "Editor of the Original Material"),
-    archiveRaw(record, "Volume and Issue Number"),
-    archiveRaw(record, "Script of Material"),
-    archiveRaw(record, "Writing System"),
-    archiveRaw(record, "Copyright Holder Name"),
-    archiveRaw(record, "Copyright Attribution"),
-    archiveRaw(record, "Digital Folder Name"),
-    archiveRaw(record, "Digital Files Name"),
-    archiveRaw(record, "Creation Date of Digital Files"),
-    archiveRaw(record, "Format of Digital Files"),
-    archiveRaw(record, "Number of Digital Files"),
-    archiveRaw(record, "Colour"),
-    archiveRaw(record, "Resolution"),
-    archiveRaw(record, "Resource"),
-
-    ...archiveArrayValue(archiveRaw(record, "Related Countries")),
-    ...archiveArrayValue(archiveRaw(record, "Related Religions")),
-    ...archiveArrayValue(archiveRaw(record, "Related Subjects")),
-    ...archiveArrayValue(archiveRaw(record, "Languages of Material"))
-  ];
-
-  return fields.map(archiveNormalizeSearchText).join(" ");
-}
-
-// Filter option collection
-// --------------------------------------------------------
-function archiveCollectFilterOptions_old(records) {
-  const relatedCountries = [];
-  const relatedReligions = [];
-  const relatedSubjects = [];
-  const contentTypes = [];
-  const languages = [];
-
-  records.forEach((record) => {
-    relatedCountries.push(...archiveArrayValue(archiveRaw(record, "Related Countries")));
-    relatedReligions.push(...archiveArrayValue(archiveRaw(record, "Related Religions")));
-    relatedSubjects.push(...archiveArrayValue(archiveRaw(record, "Related Subjects")));
-    contentTypes.push(record?.summary?.content_type);
-    languages.push(...archiveArrayValue(archiveRaw(record, "Languages of Material")));
-  });
-
-  return {
-    caalId: archiveFilterCaalId ? archiveFilterCaalId.value.trim() : "",
-    relatedCountries: archiveUniqueSorted(relatedCountries),
-    relatedReligions: archiveUniqueSorted(relatedReligions),
-    relatedSubjects: archiveUniqueSorted(relatedSubjects),
-    contentTypes: archiveUniqueSorted(contentTypes),
-    languages: archiveUniqueSorted(languages)
-  };
-}
 
 // Filter logic
 // --------------------------------------------------------
-function archiveMatchesFilters_old(record, filters) {
-  const fv = record.filter_values || {};
-
-  const matchesText =
-    !filters.text ||
-    archiveBuildSearchText(record).includes(filters.text.toLowerCase());
-
-  const matchesCaalId =
-    !filters.caalId ||
-    String(archiveIdentity(record, "caal_id") || "")
-      .toLowerCase()
-      .includes(filters.caalId.toLowerCase());  
-
-  const matchesRelatedCountries =
-    filters.relatedCountries.length === 0 ||
-    (fv.related_countries || []).some((value) => filters.relatedCountries.includes(value));
-
-  const matchesRelatedReligions =
-    filters.relatedReligions.length === 0 ||
-    (fv.related_religions || []).some((value) => filters.relatedReligions.includes(value));
-
-  const matchesRelatedSubjects =
-    filters.relatedSubjects.length === 0 ||
-    (fv.related_subjects || []).some((value) => filters.relatedSubjects.includes(value));
-
-  const matchesContentType =
-    filters.contentTypes.length === 0 ||
-    filters.contentTypes.includes(fv.content_type);
-
-  const matchesLanguages =
-    filters.languages.length === 0 ||
-    (fv.languages || []).some((value) => filters.languages.includes(value));
-
-  return (
-    matchesText &&
-    matchesCaalId &&
-    matchesRelatedCountries &&
-    matchesRelatedReligions &&
-    matchesRelatedSubjects &&
-    matchesContentType &&
-    matchesLanguages
-  );
-}
-
-function archiveApplyFilters_old() {
-  const filters = {
-    text: archiveSearch ? archiveSearch.value.trim() : "",
-    caalId: archiveFilterCaalId ? archiveFilterCaalId.value.trim() : "",
-    relatedCountries: archiveSelectedValues(filterArchiveRelatedCountries),
-    relatedReligions: archiveSelectedValues(filterArchiveRelatedReligions),
-    relatedSubjects: archiveSelectedValues(filterArchiveRelatedSubjects),
-    contentTypes: archiveSelectedValues(filterArchiveContentType),
-    languages: archiveSelectedValues(filterArchiveLanguages)
-  };
-
-  archiveVisibleRecords = archiveAllRecords.filter((record) =>
-    archiveMatchesFilters(record, filters)
-  );
-
-  renderArchiveResultsList(archiveVisibleRecords);
-}
-
 async function archiveClearFilters() {
   if (archiveSearch) archiveSearch.value = "";
   if (archiveFilterCaalId) archiveFilterCaalId.value = "";
@@ -1910,8 +1976,26 @@ async function archiveClearFilters() {
     await loadArchiveRecords(archiveLimit, 0);
   } catch (error) {
     console.error("Archive clear filters failed:", error);
+    setArchiveResultsError();
   } finally {
     setArchiveLoading(false);
+  }
+}
+
+function setArchiveResultsError(message = null) {
+  const label = message || t(
+    "archive_results_update_failed",
+    "Archive results could not be updated. Please try again."
+  );
+
+  setArchiveResultsCountText(label);
+
+  if (archiveResultsList) {
+    archiveResultsList.innerHTML = `
+      <div class="results-empty">
+        <p>${label}</p>
+      </div>
+    `;
   }
 }
 
@@ -2047,6 +2131,20 @@ function renderArchiveEmptyState() {
   `;
 
   archiveRenderActionBar();
+}
+
+function clearSelectedArchiveRecord() {
+  if (!archiveConfirmLoseChanges()) return;
+
+  archiveSelectedRecord = null;
+  archivePendingNewRecord = null;
+  archiveIsEditMode = false;
+  archiveIsDirty = false;
+
+  archiveClosePreview();
+  archiveSyncModeVisualState();
+  archiveUpdateSelectedResultCard();
+  renderArchiveEmptyState();
 }
 
 function archiveUpdateSelectedResultCard() {
@@ -2427,6 +2525,7 @@ if (archiveCancelEditBtn) {
 if (archiveSaveBtn) {
   archiveSaveBtn.onclick = async () => {
     try {
+      if (!validateArchiveAssociatedIdsBeforeSave()) return;
       const payload = archiveBuildSavePayload();
       const lang =
         (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
@@ -2629,27 +2728,47 @@ if (archiveFilterCaalId) {
 });
 
 [showArchiveWorkspace, showArchiveNationalRef, showArchiveAllCaal].forEach((el) => {
-  if (el) {
-    el.addEventListener("change", () => {
-      if (!archiveConfirmLoseChanges()) {
-        el.checked = !el.checked;
-        return;
-      }
+  if (!el) return;
 
-      archiveOffset = 0;
-      archivePendingNewRecord = null;
-      archiveIsEditMode = false;
-      setArchiveLoading(true, t("updating_records", "Updating records..."));
+  el.addEventListener("change", async () => {
+    if (!archiveConfirmLoseChanges()) {
+      el.checked = !el.checked;
+      return;
+    }
 
-      loadArchiveRecords(archiveLimit, 0)
-        .catch((error) => {
-          console.error("Archive scope reload failed:", error);
-        })
-        .finally(() => {
-          setArchiveLoading(false);
-        });
-    });
-  }
+    archiveOffset = 0;
+    archivePendingNewRecord = null;
+    archiveSelectedRecord = null;
+    archiveIsEditMode = false;
+    archiveIsDirty = false;
+    archiveClosePreview();
+    archiveSyncModeVisualState();
+
+    const scopes = getArchiveEnabledScopes();
+
+    if (!scopes.length) {
+      setArchiveLoading(false);
+      renderArchiveNoScopeSelectedState();
+      renderArchiveEmptyState();
+      archiveRenderActionBar();
+      return;
+    }
+
+    setArchiveLoading(true, t("updating_records", "Updating records..."));
+    setArchiveResultsCountLoading();
+
+    try {
+      await loadArchiveRecords(archiveLimit, 0);
+      renderArchiveEmptyState();
+    } catch (error) {
+      console.error("Archive scope reload failed:", error);
+      setArchiveResultsError(
+        t("archive_scope_update_failed", "Archive scope update failed. Please try again.")
+      );
+    } finally {
+      setArchiveLoading(false);
+    }
+  });
 });
 
 document.addEventListener("app:languageChanged", async (event) => {
@@ -2738,6 +2857,10 @@ if (addArchiveBtn) {
   });
 }
 
+if (archiveCloseRecordBtn) {
+  archiveCloseRecordBtn.addEventListener("click", clearSelectedArchiveRecord);
+}
+
 // Pagination
 if (archivePrevBtn) {
   archivePrevBtn.addEventListener("click", async () => {
@@ -2754,6 +2877,9 @@ if (archivePrevBtn) {
       await loadArchiveRecords(archiveLimit, newOffset);
     } catch (error) {
       console.error("Archive page load failed:", error);
+      setArchiveResultsError(
+        t("archive_page_load_failed", "Archive page could not be loaded. Please try again.")
+      );
     } finally {
       setArchiveLoading(false);
     }
@@ -2775,6 +2901,9 @@ if (archiveNextBtn) {
       await loadArchiveRecords(archiveLimit, newOffset);
     } catch (error) {
       console.error("Archive page load failed:", error);
+      setArchiveResultsError(
+        t("archive_page_load_failed", "Archive page could not be loaded. Please try again.")
+      );
     } finally {
       setArchiveLoading(false);
     }
@@ -2787,12 +2916,13 @@ document.addEventListener("DOMContentLoaded", async () => {
   const session = await requireSession();
   if (!session) return;
 
-  if (session.permissions?.can_view_all_caal && allCaalArchiveToggleWrapper) {
-    allCaalArchiveToggleWrapper.hidden = false;
-  }
-
   const initialCaalId = getInitialCaalIdFromUrl();
   const initialScope = getInitialScopeFromUrl();
+  const normalisedInitialScope = normaliseArchiveScopeForSession(initialScope, session);
+
+  applyArchiveScopeUiForSession(session, {
+    setDefault: !initialCaalId && !normalisedInitialScope
+  });
 
   let directLinkedRecord = null;
 
@@ -2822,7 +2952,10 @@ document.addEventListener("DOMContentLoaded", async () => {
       if (resolved?.record_type === "archive" && resolved.record) {
         directLinkedRecord = resolved.record;
 
-        const resolvedScope = resolved.record.source?.scope || initialScope;
+        const resolvedScope = normaliseArchiveScopeForSession(
+          resolved.record.source?.scope || initialScope,
+          session
+        );
 
         if (resolvedScope) {
           if (showArchiveWorkspace) showArchiveWorkspace.checked = false;
@@ -2846,23 +2979,23 @@ document.addEventListener("DOMContentLoaded", async () => {
         archiveRenderRecordDetails(directLinkedRecord);
         archiveUpdateSelectedResultCard();
       }
-    } else if (initialScope) {
-      if (showArchiveWorkspace) showArchiveWorkspace.checked = false;
-      if (showArchiveNationalRef) showArchiveNationalRef.checked = false;
-      if (showArchiveAllCaal) showArchiveAllCaal.checked = false;
+      } else if (normalisedInitialScope) {
+        if (showArchiveWorkspace) showArchiveWorkspace.checked = false;
+        if (showArchiveNationalRef) showArchiveNationalRef.checked = false;
+        if (showArchiveAllCaal) showArchiveAllCaal.checked = false;
 
-      if (initialScope === "workspace" && showArchiveWorkspace) {
-        showArchiveWorkspace.checked = true;
-      }
+        if (normalisedInitialScope === "workspace" && showArchiveWorkspace) {
+          showArchiveWorkspace.checked = true;
+        }
 
-      if (initialScope === "national_ref" && showArchiveNationalRef) {
-        showArchiveNationalRef.checked = true;
-      }
+        if (normalisedInitialScope === "national_ref" && showArchiveNationalRef) {
+          showArchiveNationalRef.checked = true;
+        }
 
-      if (initialScope === "all_caal" && showArchiveAllCaal) {
-        showArchiveAllCaal.checked = true;
+        if (normalisedInitialScope === "all_caal" && showArchiveAllCaal) {
+          showArchiveAllCaal.checked = true;
+        }
       }
-    }
 
     await loadArchiveRecords(archiveLimit, 0);
 

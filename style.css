@@ -781,6 +781,27 @@ body {
 .map-options-panel .map-options-subsection .form-control {
   margin-bottom: 0.15rem;
 }
+
+.advanced-filter-hidden-select {
+  display: none;
+}
+
+.advanced-filter-tree-picker {
+  margin-top: 0.4rem;
+}
+
+.advanced-filter-tree-picker .legacy-tree {
+  max-height: 18rem;
+  overflow-y: auto;
+  border: 1px solid #d6dee6;
+  border-radius: 0.75rem;
+  padding: 0.45rem;
+  background: #ffffff;
+}
+
+.advanced-filter-tree-picker .legacy-tree-search {
+  margin-bottom: 0.5rem;
+}
 /* --------------------------------------------------------
    Legacy hierarchy tree pickers
    Used for Monument Type and Cultural Period edit fields

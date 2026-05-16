@@ -1,6 +1,10 @@
 const express = require("express");
 const pool = require("./db");
-const { getResourceRelations } = require("./resourceRelations");
+const {
+  getResourceRelations,
+  syncResourceRelationsForMonument,
+  deactivateResourceRelationsForDeletedRecord
+} = require("./resourceRelations");
 
 const router = express.Router();
 
@@ -2716,6 +2720,62 @@ async function logPublicCaalMonumentEdit({
   );
 }
 
+async function logResourceRelationEdit(db, {
+  edgeId = null,
+  parentId,
+  childId,
+  relationType,
+  action,
+  currentSession = null,
+  sourceTable = null,
+  sourceField = null,
+  sourceRowId = null,
+  oldValues = null,
+  newValues = null,
+  note = null
+}) {
+  await db.query(
+    `
+    INSERT INTO public."CAAL_Resource_Relations_web_edit_log" (
+      edge_id,
+      parent_id,
+      child_id,
+      relation_type,
+      action,
+      edited_by_app_user_id,
+      edited_by_username,
+      source_table,
+      source_field,
+      source_row_id,
+      old_values,
+      new_values,
+      note
+    )
+    VALUES (
+      $1, $2, $3, $4, $5,
+      $6, $7,
+      $8, $9, $10,
+      $11::jsonb, $12::jsonb, $13
+    )
+    `,
+    [
+      edgeId,
+      parentId,
+      childId,
+      relationType,
+      action,
+      currentSession?.user?.user_id ?? null,
+      currentSession?.user?.username ?? null,
+      sourceTable,
+      sourceField,
+      sourceRowId,
+      oldValues ? JSON.stringify(oldValues) : null,
+      newValues ? JSON.stringify(newValues) : null,
+      note
+    ]
+  );
+}
+
 // ========================================================
 // SAVE HELPERS
 // ========================================================
@@ -2972,6 +3032,14 @@ router.post("/monuments", async (req, res) => {
     const newId = insertResult.rows[0].id;
 
     const freshRow = await fetchMonumentRowById(newId);
+
+    await syncResourceRelationsForMonument(pool, {
+      caalId: freshRow["CAAL_ID"],
+      sourceRowId: freshRow.id,
+      payload,
+      currentSession
+    });
+
     const lang = req.query.lang || currentSession.profile?.preferred_language || "en";
 
     const record = buildMonumentRecord(
@@ -3200,6 +3268,13 @@ router.patch("/monuments/:id", async (req, res) => {
       });
     }
 
+    await syncResourceRelationsForMonument(pool, {
+      caalId: freshRow["CAAL_ID"],
+      sourceRowId: freshRow.id,
+      payload,
+      currentSession
+    });
+
     if (updatedScope !== "workspace" && oldPublicCaalRow) {
       await logPublicCaalMonumentEdit({
         oldRow: oldPublicCaalRow,
@@ -3391,6 +3466,12 @@ router.delete("/monuments/:id", async (req, res) => {
       });
     }
     
+    await deactivateResourceRelationsForDeletedRecord(pool, {
+      caalId: result.rows[0]["CAAL_ID"],
+      currentSession,
+      note: "Deactivated because monument record was deleted through CAAL web app."
+    });
+
     return res.json({
       ok: true,
       deleted: result.rows[0]

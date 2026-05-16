@@ -1,6 +1,10 @@
 const express = require("express");
 const pool = require("./db");
-const { getResourceRelations } = require("./resourceRelations");
+const {
+  getResourceRelations,
+  syncResourceRelationsForMonument,
+  deactivateResourceRelationsForDeletedRecord
+} = require("./resourceRelations");
 
 const router = express.Router();
 
@@ -934,6 +938,13 @@ router.patch("/:id", async (req, res) => {
       lang
     );
 
+    await syncResourceRelationsForArchive(pool, {
+      caalId: result.rows[0]["CAAL_ID"],
+      sourceRowId: result.rows[0].id,
+      payload,
+      currentSession
+    });
+
     record.relations = await getResourceRelations(pool, record.identity?.caal_id);
 
     return res.json({
@@ -1073,6 +1084,12 @@ router.delete("/:id", async (req, res) => {
       });
     }
     
+    await deactivateResourceRelationsForDeletedRecord(pool, {
+      caalId: result.rows[0]["CAAL_ID"],
+      currentSession,
+      note: "Deactivated because monument record was deleted through CAAL web app."
+    });
+
     return res.json({
       ok: true,
       deleted: result.rows[0]
@@ -1154,6 +1171,13 @@ router.post("/", async (req, res) => {
       },
       lang
     );
+
+    await syncResourceRelationsForArchive(pool, {
+      caalId: result.rows[0]["CAAL_ID"],
+      sourceRowId: result.rows[0].id,
+      payload,
+      currentSession
+    });
 
     record.relations = await getResourceRelations(pool, record.identity?.caal_id);
 
