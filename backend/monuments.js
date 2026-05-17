@@ -998,6 +998,50 @@ function parseBboxParam(bboxParam) {
   return { minLng, minLat, maxLng, maxLat };
 }
 
+function appendBboxFilter({
+  sql,
+  values,
+  tableAlias = "",
+  bboxParam
+}) {
+  const bbox = parseBboxParam(bboxParam);
+
+  if (!bbox) {
+    return {
+      sql,
+      values: [...values]
+    };
+  }
+
+  const p = tableAlias ? `${tableAlias}.` : "";
+  const nextIndex = values.length + 1;
+
+  const bboxClause = `
+    ${p}"Longitude" BETWEEN $${nextIndex} AND $${nextIndex + 1}
+    AND ${p}"Latitude" BETWEEN $${nextIndex + 2} AND $${nextIndex + 3}
+  `;
+
+  const nextValues = [
+    ...values,
+    bbox.minLng,
+    bbox.maxLng,
+    bbox.minLat,
+    bbox.maxLat
+  ];
+
+  if (sql) {
+    return {
+      sql: `${sql} AND ${bboxClause}`,
+      values: nextValues
+    };
+  }
+
+  return {
+    sql: `WHERE ${bboxClause}`,
+    values: nextValues
+  };
+}
+
 async function applyCulturalPeriodDatesToPayload(payload) {
   const periodValues = [
     payload["Cultural Period1"],
@@ -1896,6 +1940,24 @@ router.get("/monuments/map-national-clusters", async (req, res) => {
   );
   nextIndex += 4;
 
+  const filterBbox = parseBboxParam(req.query.filterBbox);
+
+  if (filterBbox) {
+    extraClauses.push(`
+      m."Longitude" BETWEEN $${nextIndex} AND $${nextIndex + 1}
+      AND m."Latitude" BETWEEN $${nextIndex + 2} AND $${nextIndex + 3}
+    `);
+
+    values.push(
+      filterBbox.minLng,
+      filterBbox.maxLng,
+      filterBbox.minLat,
+      filterBbox.maxLat
+    );
+
+    nextIndex += 4;
+  }
+
   const adminBoundaryId = parseAdminBoundaryId(req.query.adminBoundaryId);
 
   if (adminBoundaryId) {
@@ -2200,8 +2262,15 @@ router.get("/monuments/map", async (req, res) => {
     boundaryId: adminBoundaryId
   });
 
-  combinedWhere = boundaryFiltered.sql;
-  const finalMapValues = boundaryFiltered.values;
+  const bboxFiltered = appendBboxFilter({
+    sql: boundaryFiltered.sql,
+    values: boundaryFiltered.values,
+    tableAlias: "combined",
+    bboxParam: req.query.filterBbox
+  });
+
+  combinedWhere = bboxFiltered.sql;
+  const finalMapValues = bboxFiltered.values;
 
   // --- final query ---
   try {
@@ -2429,8 +2498,15 @@ router.get("/monuments", async (req, res) => {
       boundaryId: adminBoundaryId
     });
 
-    const finalWhereSql = boundaryFiltered.sql;
-    const finalValues = boundaryFiltered.values;
+    const bboxFiltered = appendBboxFilter({
+      sql: boundaryFiltered.sql,
+      values: boundaryFiltered.values,
+      tableAlias: "combined",
+      bboxParam: req.query.filterBbox
+    });
+
+    const finalWhereSql = bboxFiltered.sql;
+    const finalValues = bboxFiltered.values;
 
     const safeLang = safeMonumentLang(lang);
 

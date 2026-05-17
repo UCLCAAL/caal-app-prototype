@@ -25,6 +25,10 @@ const filterCountry = document.getElementById("filterCountry");
 const resultsList = document.getElementById("resultsList");
 const resultsCount = document.getElementById("resultsCount");
 const filterResultsCount = document.getElementById("filterResultsCount");
+
+const activeFilterStrip = document.getElementById("activeFilterStrip");
+const activeFilterChips = document.getElementById("activeFilterChips");
+
 //map controls
 let downloadMapBtn = document.getElementById("downloadMapBtn");
 let resetMapBtn = document.getElementById("resetMapBtn");
@@ -48,6 +52,8 @@ const mapLabelScopeHelp = document.getElementById("mapLabelScopeHelp");
 const mapStatusLine = document.getElementById("mapStatusLine");
 const mapLabelWarning = document.getElementById("mapLabelWarning");
 const showRelatedFromMapOptionsBtn = document.getElementById("showRelatedFromMapOptionsBtn");
+
+const filterToMapViewBtn = document.getElementById("filterToMapViewBtn");
 
 const relationshipMapOptions = document.getElementById("relationshipMapOptions");
 const showRelatedPointsCheckbox = document.getElementById("showRelatedPointsCheckbox");
@@ -190,6 +196,8 @@ let monumentRelatedSelectionGeojson = null;
 let centralAsiaBordersVisible = false;
 let centralAsiaBorderStyle = "subtle";
 let centralAsiaBordersRequestSeq = 0;
+
+let activeMapViewFilterBbox = null;
 
 let selectedAdminBoundary = null;
 let adminBoundarySummaryClickEnabled = false;
@@ -440,6 +448,7 @@ function clearPendingPickPoint() {
 }
 
 let monumentLegendEl = null;
+let monumentLegendCollapsed = false;
 
 function addMonumentLegendControl() {
   if (!map) return;
@@ -788,10 +797,55 @@ function renderMonumentLegend() {
 
   monumentLegendEl.hidden = rows.length === 0;
 
+if (monumentLegendCollapsed) {
+  monumentLegendEl.classList.add("legend-collapsed");
   monumentLegendEl.innerHTML = `
-    <div class="legend-title">${t("map_key", "Map key")}</div>
+    <button
+      type="button"
+      class="legend-toggle-btn legend-show-btn"
+      id="showMapLegendBtn"
+      title="${t("show_map_key", "Show map key")}"
+      aria-label="${t("show_map_key", "Show map key")}"
+    >
+      ${t("map_key_short", "Key")}
+    </button>
+  `;
+
+  const showBtn = document.getElementById("showMapLegendBtn");
+  if (showBtn) {
+    showBtn.addEventListener("click", () => {
+      monumentLegendCollapsed = false;
+      renderMonumentLegend();
+    });
+  }
+
+  return;
+}
+
+  monumentLegendEl.classList.remove("legend-collapsed");
+  monumentLegendEl.innerHTML = `
+    <div class="legend-header">
+      <div class="legend-title">${t("map_key", "Map key")}</div>
+      <button
+        type="button"
+        class="legend-toggle-btn legend-hide-btn"
+        id="hideMapLegendBtn"
+        title="${t("hide_map_key", "Hide map key")}"
+        aria-label="${t("hide_map_key", "Hide map key")}"
+      >
+        ×
+      </button>
+    </div>
     ${rows.join("")}
   `;
+
+  const hideBtn = document.getElementById("hideMapLegendBtn");
+  if (hideBtn) {
+    hideBtn.addEventListener("click", () => {
+      monumentLegendCollapsed = true;
+      renderMonumentLegend();
+    });
+  }
 }
 
 // Older/simple export: raw MapLibre canvas only.
@@ -1468,6 +1522,93 @@ function boxesOverlap(a, b) {
 // Helpers
 // --------------------------------------------------------
 //map helpers
+function getCurrentMapViewBbox() {
+  if (!map) return null;
+
+  const bounds = map.getBounds();
+
+  return [
+    bounds.getWest(),
+    bounds.getSouth(),
+    bounds.getEast(),
+    bounds.getNorth()
+  ]
+    .map((value) => Number(value).toFixed(6))
+    .join(",");
+}
+
+function updateFilterToMapViewButton() {
+  if (!filterToMapViewBtn) return;
+
+  filterToMapViewBtn.textContent = activeMapViewFilterBbox
+    ? t("update_map_view_filter", "Update map-view filter")
+    : t("filter_to_map_view", "Filter results to map view");
+}
+
+async function applyMapViewFilterFromCurrentMap() {
+  if (!map) return;
+
+  const bbox = getCurrentMapViewBbox();
+  if (!bbox) return;
+
+  activeMapViewFilterBbox = bbox;
+  monumentPageOffset = 0;
+
+  updateFilterToMapViewButton();
+  renderActiveFilterChips();
+
+  setMonumentsLoading(true, t("updating_results", "Updating results..."));
+
+  try {
+    await loadMonumentListRecords();
+
+    setMonumentsLoading(true, t("redrawing_map", "Redrawing map..."));
+    await loadMonumentMapRecords();
+
+    renderMonumentEmptyState();
+  } catch (error) {
+    console.error("Failed to apply map-view filter:", error);
+    alert(error.message || t("could_not_apply_map_view_filter", "Could not apply map-view filter"));
+  } finally {
+    setMonumentsLoading(false);
+  }
+}
+
+function parseBboxString(bboxString) {
+  if (!bboxString) return null;
+
+  const parts = String(bboxString)
+    .split(",")
+    .map((value) => Number(value.trim()));
+
+  if (parts.length !== 4 || parts.some((value) => !Number.isFinite(value))) {
+    return null;
+  }
+
+  const [west, south, east, north] = parts;
+  return { west, south, east, north };
+}
+
+function fitMapToSavedMapViewFilter() {
+  if (!map || !activeMapViewFilterBbox) return false;
+
+  const bbox = parseBboxString(activeMapViewFilterBbox);
+  if (!bbox) return false;
+
+  map.fitBounds(
+    [
+      [bbox.west, bbox.south],
+      [bbox.east, bbox.north]
+    ],
+    {
+      padding: 36,
+      duration: 600
+    }
+  );
+
+  return true;
+}
+
 async function fetchNationalMapClusters() {
   if (!map) return { clusters: [], points: [], mode: "clusters" };
 
@@ -1790,6 +1931,11 @@ function updateMapStatusLine() {
 }
 
 async function showCurrentMonumentResultsOnMap() {
+  if (activeMapViewFilterBbox) {
+    fitMapToSavedMapViewFilter();
+    return;
+  }
+
   if (!map || !Array.isArray(monumentListRecords) || monumentListRecords.length === 0) {
     return;
   }
@@ -2362,6 +2508,166 @@ function setMonumentResultsError(message = null) {
   }
 }
 
+function getSelectedOptionLabels(selectEl) {
+  if (!selectEl) return [];
+
+  return Array.from(selectEl.selectedOptions || [])
+    .map((option) => option.textContent?.trim() || option.value?.trim())
+    .filter(Boolean);
+}
+
+function clearSelectedOptionByValue(selectEl, value) {
+  if (!selectEl) return;
+
+  Array.from(selectEl.options || []).forEach((option) => {
+    if (option.value === value) {
+      option.selected = false;
+    }
+  });
+}
+
+function getSelectedOptionsForChip(selectEl, kind) {
+  if (!selectEl) return [];
+
+  return Array.from(selectEl.selectedOptions || [])
+    .map((option) => ({
+      kind,
+      value: option.value,
+      label: option.textContent?.trim() || option.value
+    }))
+    .filter((chip) => chip.value && chip.label);
+}
+
+function getActiveFilterChips() {
+  const chips = [];
+
+  const text = siteSearch?.value?.trim();
+  if (text) {
+    chips.push({
+      kind: "text",
+      label: text,
+      title: t("text_search", "Text search")
+    });
+  }
+
+  const caalId = filterCaalId?.value?.trim();
+  if (caalId) {
+    chips.push({
+      kind: "caal_id",
+      label: caalId,
+      title: "CAAL_ID"
+    });
+  }
+
+  chips.push(...getSelectedOptionsForChip(filterMonumentType, "monument_type"));
+  chips.push(...getSelectedOptionsForChip(filterClassification, "classification"));
+  chips.push(...getSelectedOptionsForChip(filterDesignation, "designation"));
+  chips.push(...getSelectedOptionsForChip(filterReligion, "religion"));
+  chips.push(...getSelectedOptionsForChip(filterCulturalPeriod, "cultural_period"));
+  chips.push(...getSelectedOptionsForChip(filterCountry, "country"));
+
+  if (activeMapViewFilterBbox) {
+    chips.push({
+      kind: "map_view",
+      label: t("map_view", "Map view"),
+      title: t("map_view_filter", "Map-view filter"),
+      className: "active-filter-chip-map"
+    });
+  }
+
+  return chips;
+}
+
+// chip removal filter
+function renderActiveFilterChips() {
+  if (!activeFilterStrip || !activeFilterChips) return;
+
+  const chips = getActiveFilterChips();
+
+  activeFilterStrip.hidden = chips.length === 0;
+  activeFilterChips.innerHTML = "";
+
+  chips.forEach((chip) => {
+    const chipEl = document.createElement("span");
+    chipEl.className = `active-filter-chip ${chip.className || ""}`.trim();
+    chipEl.title = chip.title || "";
+
+    const textEl = document.createElement("span");
+    textEl.className = "active-filter-chip-text";
+    textEl.textContent = chip.label;
+
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "active-filter-chip-remove";
+    removeBtn.textContent = "×";
+    removeBtn.setAttribute("aria-label", `${t("remove_filter", "Remove filter")}: ${chip.label}`);
+
+    removeBtn.addEventListener("click", async () => {
+      await removeActiveFilterChip(chip);
+    });
+
+    chipEl.appendChild(textEl);
+    chipEl.appendChild(removeBtn);
+    activeFilterChips.appendChild(chipEl);
+  });
+}
+
+async function removeActiveFilterChip(chip) {
+  if (!chip) return;
+
+  switch (chip.kind) {
+    case "text":
+      if (siteSearch) siteSearch.value = "";
+      break;
+
+    case "caal_id":
+      if (filterCaalId) filterCaalId.value = "";
+      break;
+
+    case "monument_type":
+      clearSelectedOptionByValue(filterMonumentType, chip.value);
+      break;
+
+    case "classification":
+      clearSelectedOptionByValue(filterClassification, chip.value);
+      break;
+
+    case "designation":
+      clearSelectedOptionByValue(filterDesignation, chip.value);
+      break;
+
+    case "religion":
+      clearSelectedOptionByValue(filterReligion, chip.value);
+      break;
+
+    case "cultural_period":
+      clearSelectedOptionByValue(filterCulturalPeriod, chip.value);
+      break;
+
+    case "country":
+      clearSelectedOptionByValue(filterCountry, chip.value);
+      break;
+
+    case "map_view":
+      activeMapViewFilterBbox = null;
+      updateFilterToMapViewButton();
+      break;
+
+    default:
+      return;
+  }
+
+  syncAllAdvancedFilterTreesFromSelects();
+  renderAllFilterChips();
+  renderActiveFilterChips();
+
+  await applyMonumentFilters({
+    includeMap: true,
+    listFirst: true
+  });
+}
+
+//
 function setMapStaleState(isStale, message = null) {
   monumentMapIsStale = isStale;
 
@@ -3814,6 +4120,10 @@ function buildMonumentQueryParams({ includePaging = true } = {}) {
 
   if (selectedAdminBoundary?.boundary_id) {
     params.set("adminBoundaryId", String(selectedAdminBoundary.boundary_id));
+  }
+
+  if (activeMapViewFilterBbox) {
+    params.set("filterBbox", activeMapViewFilterBbox);
   }
 
   return params;
@@ -6142,6 +6452,31 @@ function renderFilterChipsForSelect(selectEl, chipsId) {
 
         if (checkbox) {
           checkbox.checked = false;
+          checkbox.indeterminate = false;
+
+          const conceptId = checkbox.dataset.conceptId;
+          const parentId = checkbox.dataset.parentId;
+
+          /*
+            If the removed chip is a parent value, clear its children too.
+            This matters because selecting a parent now selects the branch.
+          */
+          if (!parentId) {
+            getAdvancedFilterTreeChildCheckboxes(treeWrapper, conceptId).forEach((childCheckbox) => {
+              childCheckbox.checked = false;
+              childCheckbox.indeterminate = false;
+
+              const childOption = Array.from(selectEl.options).find(
+                (opt) => String(opt.value) === String(childCheckbox.dataset.value)
+              );
+
+              if (childOption) {
+                childOption.selected = false;
+              }
+            });
+          }
+
+          updateAdvancedFilterTreeParentStates(treeWrapper);
         }
       }
 
@@ -6337,6 +6672,7 @@ function wireAdvancedFilterTreePicker({ wrapper, selectEl, chipsId }) {
       enforceAdvancedFilterTreeSelectionRules(wrapper, checkbox);
       syncAdvancedFilterTreeToSelect(wrapper, selectEl);
       renderFilterChipsForSelect(selectEl, chipsId);
+      renderActiveFilterChips();
 
       await applyMonumentFilters({
         includeMap: true,
@@ -6351,6 +6687,7 @@ function wireAdvancedFilterTreePicker({ wrapper, selectEl, chipsId }) {
       filterAdvancedFilterTree(wrapper, search.value);
     });
   }
+  updateAdvancedFilterTreeParentStates(wrapper);
 }
 
 function syncAdvancedFilterTreeToSelect(wrapper, selectEl) {
@@ -6371,29 +6708,131 @@ function syncAdvancedFilterTreeToSelect(wrapper, selectEl) {
   );
 }
 
+function getAdvancedFilterTreeWrapperForSelect(selectEl) {
+  if (!selectEl?.id) return null;
+
+  return document.querySelector(
+    `.advanced-filter-tree-picker[data-filter-tree-for="${CSS.escape(selectEl.id)}"]`
+  );
+}
+
+function syncAdvancedFilterTreeFromSelect(selectEl) {
+  const wrapper = getAdvancedFilterTreeWrapperForSelect(selectEl);
+  if (!wrapper || !selectEl) return;
+
+  const selectedValues = new Set(
+    Array.from(selectEl.selectedOptions || [])
+      .map((option) => String(option.value || ""))
+      .filter(Boolean)
+  );
+
+  wrapper.querySelectorAll(".advanced-filter-tree-check").forEach((checkbox) => {
+    checkbox.checked = selectedValues.has(String(checkbox.dataset.value || ""));
+    checkbox.indeterminate = false;
+  });
+
+  if (typeof updateAdvancedFilterTreeParentStates === "function") {
+    updateAdvancedFilterTreeParentStates(wrapper);
+  }
+}
+
+function syncAllAdvancedFilterTreesFromSelects() {
+  [
+    filterMonumentType,
+    filterCulturalPeriod
+  ].forEach(syncAdvancedFilterTreeFromSelect);
+}
+
+function getAdvancedFilterTreeChildCheckboxes(wrapper, parentConceptId) {
+  if (!wrapper || !parentConceptId) return [];
+
+  return Array.from(
+    wrapper.querySelectorAll(
+      `.advanced-filter-tree-check[data-parent-id="${CSS.escape(parentConceptId)}"]`
+    )
+  );
+}
+
+function getAdvancedFilterTreeParentCheckbox(wrapper, childCheckbox) {
+  if (!wrapper || !childCheckbox?.dataset?.parentId) return null;
+
+  return wrapper.querySelector(
+    `.advanced-filter-tree-check[data-concept-id="${CSS.escape(childCheckbox.dataset.parentId)}"]`
+  );
+}
+
+function updateAdvancedFilterTreeParentStates(wrapper) {
+  if (!wrapper) return;
+
+  wrapper
+    .querySelectorAll('.advanced-filter-tree-check[data-parent-id=""]')
+    .forEach((parentCheckbox) => {
+      const parentConceptId = parentCheckbox.dataset.conceptId;
+      const children = getAdvancedFilterTreeChildCheckboxes(wrapper, parentConceptId);
+
+      if (!children.length) {
+        parentCheckbox.indeterminate = false;
+        return;
+      }
+
+      const parentValueIsSelected = parentCheckbox.checked;
+      const checkedChildren = children.filter((child) => child.checked);
+      const allChildrenSelected =
+        children.length > 0 && checkedChildren.length === children.length;
+      const someChildrenSelected = checkedChildren.length > 0;
+
+      if (parentValueIsSelected && allChildrenSelected) {
+        parentCheckbox.checked = true;
+        parentCheckbox.indeterminate = false;
+        return;
+      }
+
+      if (parentValueIsSelected || someChildrenSelected) {
+        parentCheckbox.checked = false;
+        parentCheckbox.indeterminate = true;
+        return;
+      }
+
+      parentCheckbox.checked = false;
+      parentCheckbox.indeterminate = false;
+    });
+}
+
 function enforceAdvancedFilterTreeSelectionRules(wrapper, changedCheckbox) {
-  if (!changedCheckbox.checked) return;
+  if (!wrapper || !changedCheckbox) return;
 
   const changedConceptId = changedCheckbox.dataset.conceptId;
   const changedParentId = changedCheckbox.dataset.parentId;
+  const isParent = !changedParentId;
 
-  if (changedParentId) {
-    const parentCheckbox = wrapper.querySelector(
-      `.advanced-filter-tree-check[data-concept-id="${CSS.escape(changedParentId)}"]`
-    );
+  if (isParent) {
+    const children = getAdvancedFilterTreeChildCheckboxes(wrapper, changedConceptId);
 
-    if (parentCheckbox) {
-      parentCheckbox.checked = false;
+    if (children.length) {
+      /*
+        If the parent was unchecked or indeterminate and the user clicks it,
+        the browser sets checked=true before this handler runs.
+        So checked=true means select the whole branch.
+        checked=false means clear the whole branch.
+      */
+      const shouldSelectBranch = changedCheckbox.checked;
+
+      changedCheckbox.indeterminate = false;
+
+      children.forEach((childCheckbox) => {
+        childCheckbox.checked = shouldSelectBranch;
+        childCheckbox.indeterminate = false;
+      });
     }
   } else {
-    wrapper
-      .querySelectorAll(
-        `.advanced-filter-tree-check[data-parent-id="${CSS.escape(changedConceptId)}"]`
-      )
-      .forEach((childCheckbox) => {
-        childCheckbox.checked = false;
-      });
+    const parentCheckbox = getAdvancedFilterTreeParentCheckbox(wrapper, changedCheckbox);
+
+    if (parentCheckbox) {
+      parentCheckbox.indeterminate = false;
+    }
   }
+
+  updateAdvancedFilterTreeParentStates(wrapper);
 }
 
 function filterAdvancedFilterTree(wrapper, queryValue) {
@@ -6981,6 +7420,7 @@ async function applyMonumentFilters({ includeMap = true, listFirst = true } = {}
         setMonumentsLoading(true, t("redrawing_map", "Redrawing map..."));
         await loadMonumentMapRecords();
       }
+      renderActiveFilterChips();
     } else {
       if (includeMap) {
         await loadMonumentMapRecords();
@@ -7015,7 +7455,17 @@ async function clearMonumentFilters() {
     });
   });
 
-  await applyMonumentFilters({ includeMap: true, listFirst: true });
+  activeMapViewFilterBbox = null;
+  updateFilterToMapViewButton();
+
+  syncAllAdvancedFilterTreesFromSelects();
+  renderAllFilterChips();
+  renderActiveFilterChips();
+
+  await applyMonumentFilters({
+    includeMap: true,
+    listFirst: true
+  });
 }
 
 // --------------------------------------------------------
@@ -9054,6 +9504,14 @@ if (showResultsOnMapBtn) {
   });
 }
 
+if (filterToMapViewBtn) {
+  filterToMapViewBtn.addEventListener("click", async () => {
+    await applyMapViewFilterFromCurrentMap();
+  });
+
+  updateFilterToMapViewButton();
+}
+
 if (toggleFiltersBtn && filtersPanel) {
   toggleFiltersBtn.addEventListener("click", () => {
     const isHidden = filtersPanel.hidden;
@@ -9604,6 +10062,10 @@ document.addEventListener("DOMContentLoaded", async () => {
         await loadMonumentMapRecords();
         await loadMonumentListRecords();
 
+        renderActiveFilterChips();
+        updateShowResultsOnMapButton();
+        updateFilterToMapViewButton();
+
         if (directLinkedRecord) {
           monumentSelectedRecord = directLinkedRecord;
           renderMonumentRecordDetails(directLinkedRecord);
@@ -9694,6 +10156,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     try {
       await loadMonumentMapRecords();
       await loadMonumentListRecords();
+
+      renderActiveFilterChips();
+      updateShowResultsOnMapButton();
+      updateFilterToMapViewButton();
 
       if (directLinkedRecord) {
         monumentSelectedRecord = directLinkedRecord;

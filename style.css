@@ -570,10 +570,11 @@ body {
 
 .filter-live-results-summary {
   display: flex;
-  align-items: baseline;
-  gap: 0.45rem;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
   margin: 0.75rem 0 0.85rem;
-  padding: 0.65rem 0.85rem;
+  padding: 0.65rem 0.75rem 0.65rem 0.85rem;
   border: 1px solid #d6dde3;
   border-radius: 12px;
   background: #f8fafc;
@@ -581,9 +582,86 @@ body {
   font-size: 0.95rem;
 }
 
+.filter-live-results-text {
+  display: flex;
+  align-items: baseline;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
 .filter-live-results-summary strong {
   color: #1f2933;
   font-weight: 700;
+}
+
+.active-filter-strip {
+  margin: 0.65rem 0 0.75rem;
+  padding: 0.55rem 0.6rem;
+  border: 1px solid #d6dde3;
+  border-radius: 12px;
+  background: #f8fafc;
+}
+
+.active-filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  align-items: center;
+}
+
+.active-filter-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  max-width: 100%;
+  border: 1px solid #b8c4cf;
+  border-radius: 999px;
+  padding: 0.22rem 0.55rem;
+  background: #ffffff;
+  color: #1f2933;
+  font-size: 0.82rem;
+  line-height: 1.2;
+  white-space: nowrap;
+}
+
+.active-filter-chip-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 13rem;
+}
+
+.active-filter-chip-remove {
+  border: 0;
+  background: transparent;
+  color: #475569;
+  font-weight: 700;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+}
+
+.active-filter-chip-remove:hover,
+.active-filter-chip-remove:focus {
+  color: #991b1b;
+  outline: none;
+}
+
+.active-filter-chip-map {
+  border-color: #9dbdad;
+  background: #eef7f3;
+  color: #29564d;
+}
+
+.results-map-icon-btn {
+  flex: 0 0 auto;
+  width: 30px;
+  height: 30px;
+}
+
+.results-map-icon-btn:disabled,
+.results-map-icon-btn.is-disabled {
+  opacity: 0.42;
+  cursor: not-allowed;
 }
 
 .results-list {
@@ -1116,6 +1194,18 @@ body {
   margin: 0.75rem 0 0.9rem;
 }
 
+.filter-action-row .filters-toggle,
+.filter-action-row .clear-filters-btn {
+  width: 100%;
+  min-height: 2.35rem;
+  height: auto;
+  padding: 0.45rem 0.85rem;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1.15;
+}
+
 .filter-action-row .show-results-map-btn {
   grid-column: 1 / -1;
   width: 100%;
@@ -1397,6 +1487,83 @@ body {
   background: #1D4ED8;
   border: 3px solid #ffffff;
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
+}
+
+.monument-map-legend {
+  pointer-events: auto;
+}
+
+.legend-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 8px;
+}
+
+.legend-header .legend-title {
+  margin-bottom: 0;
+}
+
+.legend-toggle-btn {
+  border: 1px solid rgba(148, 163, 184, 0.5);
+  background: rgba(255, 255, 255, 0.92);
+  color: #334155;
+  border-radius: 999px;
+  cursor: pointer;
+  font-size: 0.82rem;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.legend-hide-btn {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  font-size: 1rem;
+  font-weight: 700;
+}
+
+.legend-show-btn {
+  min-width: 44px;
+  min-height: 28px;
+  padding: 0.35rem 0.65rem;
+  font-weight: 700;
+}
+
+.legend-toggle-btn:hover,
+.legend-toggle-btn:focus {
+  background: #ffffff;
+  color: #0f172a;
+  border-color: rgba(71, 85, 105, 0.6);
+  outline: none;
+}
+
+.monument-map-legend.legend-collapsed {
+  min-width: 0;
+  padding: 6px;
+}
+
+.monument-map-legend.legend-collapsed {
+  min-width: 0;
+  padding: 0;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.monument-map-legend.legend-collapsed .legend-show-btn {
+  min-width: 58px;
+  min-height: 34px;
+  padding: 0.45rem 0.85rem;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.94);
+  border: 1px solid rgba(148, 163, 184, 0.55);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.18);
+  color: #334155;
+  font-weight: 700;
 }
 
 .workspace-shell {
@@ -2457,6 +2624,33 @@ Popup preview */
   overflow-y: auto;
 }
 
+.map-options-secondary-btn {
+  width: 100%;
+  min-height: 2.35rem;
+  padding: 0.45rem 0.75rem;
+  border-radius: 0.75rem;
+  background: #ffffff;
+  border-color: #d6dde3;
+  color: #1f2a30;
+  font-size: 0.92rem;
+  font-weight: 500;
+}
+
+.map-options-secondary-btn:hover:not(:disabled) {
+  background: #f8fafc;
+  border-color: #c6d0d7;
+}
+
+.map-options-secondary-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.map-options-related-section {
+  padding-top: 0.65rem;
+  border-top: 1px solid #e5eaee;
+}
+
 .legend-related {
   width: 13px;
   height: 13px;
@@ -2871,3 +3065,12 @@ Popup preview */
   }
 }
 
+
+/* Advanced filters now use the global active-filter strip */
+.filters-panel .selected-filter-chips {
+  display: none !important;
+}
+
+.filters-panel .filter-help {
+  display: none;
+}

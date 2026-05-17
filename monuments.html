@@ -178,10 +178,6 @@
         </div>
     
         <div class="filter-action-row">
-          <button type="button" class="action-btn show-results-map-btn" id="showResultsOnMapBtn" data-i18n="show_results_on_map">
-            Show results on map
-          </button>
-
           <button type="button" class="action-btn filters-toggle" id="toggleFiltersBtn" data-i18n="advanced_filters">
             Advanced filters
           </button>
@@ -191,9 +187,32 @@
           </button>
         </div>
 
+        <div class="active-filter-strip" id="activeFilterStrip" hidden>
+          <div class="active-filter-chips" id="activeFilterChips"></div>
+        </div>
+
         <div class="filter-live-results-summary">
-          <span data-i18n="current_results">Current results:</span>
-          <strong id="filterResultsCount">0 records</strong>
+          <div class="filter-live-results-text">
+            <span data-i18n="current_results">Current results:</span>
+            <strong id="filterResultsCount">0 records</strong>
+          </div>
+
+          <button
+            type="button"
+            class="icon-action-btn results-map-icon-btn"
+            id="showResultsOnMapBtn"
+            title="Show current results on map"
+            aria-label="Show current results on map"
+            data-i18n-title="show_results_on_map"
+            data-i18n-aria-label="show_results_on_map"
+          >
+            <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16">
+              <path
+                d="M12 2a1 1 0 0 1 1 1v1.1a8 8 0 0 1 6.9 6.9H21a1 1 0 1 1 0 2h-1.1a8 8 0 0 1-6.9 6.9V21a1 1 0 1 1-2 0v-1.1A8 8 0 0 1 4.1 13H3a1 1 0 1 1 0-2h1.1A8 8 0 0 1 11 4.1V3a1 1 0 0 1 1-1Zm0 4a6 6 0 1 0 0 12 6 6 0 0 0 0-12Zm0 3.2a2.8 2.8 0 1 1 0 5.6 2.8 2.8 0 0 1 0-5.6Z"
+                fill="currentColor"
+              />
+            </svg>
+          </button>
         </div>
 
         <div class="filters-panel" id="filtersPanel" hidden>
@@ -385,14 +404,33 @@
       </div>
 
       <div class="map-options-section">
+        <div class="map-options-section-title" data-i18n="search_area">Search area</div>
+
         <button
           type="button"
-          class="action-btn"
+          class="action-btn map-options-secondary-btn"
+          id="filterToMapViewBtn"
+          data-i18n="filter_to_map_view"
+        >
+          Filter results to map view
+        </button>
+
+        <p class="map-options-help" data-i18n="filter_to_map_view_help">
+          Restrict the results list to records inside the current map view.
+        </p>
+      </div>
+
+      <div class="map-options-section map-options-related-section">
+        <div class="map-options-section-title" data-i18n="related_records">Related records</div>
+
+        <button
+          type="button"
+          class="action-btn map-options-secondary-btn"
           id="showRelatedFromMapOptionsBtn"
-          data-i18n="show_related_records_on_map"
+          data-i18n="show_related_records"
           disabled
         >
-          Show related records on map
+          Show related records
         </button>
 
         <p class="map-options-help" data-i18n="related_records_available_help">
