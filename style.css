@@ -582,6 +582,12 @@ body {
   font-size: 0.95rem;
 }
 
+.archive-filter-live-results-summary {
+  justify-content: flex-start;
+}
+
+
+
 .filter-live-results-text {
   display: flex;
   align-items: baseline;
@@ -3068,7 +3074,7 @@ Popup preview */
 
 
 /* Advanced filters now use the global active-filter strip */
-.filters-panel .selected-filter-chips {
+.filters-panel > .filters-grid .selected-filter-chips {
   display: none !important;
 }
 

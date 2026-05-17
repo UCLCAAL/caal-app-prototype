@@ -7,7 +7,7 @@
 
   <link rel="stylesheet" href="style.css" />
 </head>
-<body>
+<body data-page="archive">
   <header class="app-header">
     <div class="app-brand">
       <img
@@ -102,9 +102,15 @@
         </div>
 
         
-        <div class="filter-live-results-summary">
-          <span data-i18n="current_results">Current results:</span>
-          <strong id="archiveFilterResultsCount">0 records</strong>
+        <div class="active-filter-strip" id="archiveActiveFilterStrip" hidden>
+          <div class="active-filter-chips" id="archiveActiveFilterChips"></div>
+        </div>
+
+        <div class="filter-live-results-summary archive-filter-live-results-summary">
+          <div class="filter-live-results-text">
+            <span data-i18n="current_results">Current results:</span>
+            <strong id="archiveFilterResultsCount">0 records</strong>
+          </div>
         </div>
 
         <div class="filters-panel" id="archiveFiltersPanel" hidden>

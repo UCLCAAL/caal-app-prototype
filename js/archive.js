@@ -25,6 +25,10 @@ const archiveLoadingIndicator = document.getElementById("archiveLoadingIndicator
 const archiveResultsList = document.getElementById("archiveResultsList");
 const archiveResultsCount = document.getElementById("archiveResultsCount");
 const archiveFilterResultsCount = document.getElementById("archiveFilterResultsCount");
+
+const archiveActiveFilterStrip = document.getElementById("archiveActiveFilterStrip");
+const archiveActiveFilterChips = document.getElementById("archiveActiveFilterChips");
+
 const archiveRecordDetails = document.getElementById("archiveRecordDetails");
 
 const showArchiveWorkspace = document.getElementById("showArchiveWorkspace");
@@ -193,6 +197,8 @@ function showArchiveToast(message, variant = "success", durationMs = 3000) {
 async function archiveReloadFromFilters() {
   archiveOffset = 0;
 
+  archiveRenderActiveFilterChips();
+
   setArchiveLoading(true, t("updating_records", "Updating records..."));
 
   try {
@@ -210,6 +216,7 @@ function archiveScheduleFilterReload() {
     clearTimeout(archiveFilterDebounceTimer);
   }
 
+  archiveRenderActiveFilterChips();
   setArchiveResultsCountLoading();
 
   archiveFilterDebounceTimer = setTimeout(() => {
@@ -525,6 +532,165 @@ function archiveRenderAllFilterChips() {
   });
 }
 
+function archiveGetSelectedOptionsForGlobalChip(selectEl, kind) {
+  if (!selectEl) return [];
+
+  return Array.from(selectEl.selectedOptions || [])
+    .map((option) => ({
+      kind,
+      value: option.value,
+      label: option.textContent?.trim() || option.value
+    }))
+    .filter((chip) => chip.value && chip.label);
+}
+
+function archiveClearSelectedOptionByValue(selectEl, value) {
+  if (!selectEl) return;
+
+  Array.from(selectEl.options || []).forEach((option) => {
+    if (String(option.value) === String(value)) {
+      option.selected = false;
+    }
+  });
+}
+
+function archiveGetActiveFilterChips() {
+  const chips = [];
+
+  const text = archiveSearch?.value?.trim();
+  if (text) {
+    chips.push({
+      kind: "text",
+      label: text,
+      title: t("text_search", "Text search")
+    });
+  }
+
+  const caalId = archiveFilterCaalId?.value?.trim();
+  if (caalId) {
+    chips.push({
+      kind: "caal_id",
+      label: caalId,
+      title: "CAAL_ID"
+    });
+  }
+
+  chips.push(
+    ...archiveGetSelectedOptionsForGlobalChip(
+      filterArchiveRelatedCountries,
+      "related_countries"
+    )
+  );
+
+  chips.push(
+    ...archiveGetSelectedOptionsForGlobalChip(
+      filterArchiveRelatedReligions,
+      "related_religions"
+    )
+  );
+
+  chips.push(
+    ...archiveGetSelectedOptionsForGlobalChip(
+      filterArchiveRelatedSubjects,
+      "related_subjects"
+    )
+  );
+
+  chips.push(
+    ...archiveGetSelectedOptionsForGlobalChip(
+      filterArchiveContentType,
+      "content_type"
+    )
+  );
+
+  chips.push(
+    ...archiveGetSelectedOptionsForGlobalChip(
+      filterArchiveLanguages,
+      "languages"
+    )
+  );
+
+  return chips;
+}
+
+function archiveRenderActiveFilterChips() {
+  if (!archiveActiveFilterStrip || !archiveActiveFilterChips) return;
+
+  const chips = archiveGetActiveFilterChips();
+
+  archiveActiveFilterStrip.hidden = chips.length === 0;
+  archiveActiveFilterChips.innerHTML = "";
+
+  chips.forEach((chip) => {
+    const chipEl = document.createElement("span");
+    chipEl.className = "active-filter-chip";
+    chipEl.title = chip.title || "";
+
+    const textEl = document.createElement("span");
+    textEl.className = "active-filter-chip-text";
+    textEl.textContent = chip.label;
+
+    const removeBtn = document.createElement("button");
+    removeBtn.type = "button";
+    removeBtn.className = "active-filter-chip-remove";
+    removeBtn.textContent = "×";
+    removeBtn.setAttribute(
+      "aria-label",
+      `${t("remove_filter", "Remove filter")}: ${chip.label}`
+    );
+
+    removeBtn.addEventListener("click", async () => {
+      await archiveRemoveActiveFilterChip(chip);
+    });
+
+    chipEl.appendChild(textEl);
+    chipEl.appendChild(removeBtn);
+    archiveActiveFilterChips.appendChild(chipEl);
+  });
+}
+
+async function archiveRemoveActiveFilterChip(chip) {
+  if (!chip) return;
+
+  switch (chip.kind) {
+    case "text":
+      if (archiveSearch) archiveSearch.value = "";
+      break;
+
+    case "caal_id":
+      if (archiveFilterCaalId) archiveFilterCaalId.value = "";
+      break;
+
+    case "related_countries":
+      archiveClearSelectedOptionByValue(filterArchiveRelatedCountries, chip.value);
+      break;
+
+    case "related_religions":
+      archiveClearSelectedOptionByValue(filterArchiveRelatedReligions, chip.value);
+      break;
+
+    case "related_subjects":
+      archiveClearSelectedOptionByValue(filterArchiveRelatedSubjects, chip.value);
+      break;
+
+    case "content_type":
+      archiveClearSelectedOptionByValue(filterArchiveContentType, chip.value);
+      break;
+
+    case "languages":
+      archiveClearSelectedOptionByValue(filterArchiveLanguages, chip.value);
+      break;
+
+    default:
+      return;
+  }
+
+  archiveRenderAllFilterChips();
+  archiveRenderActiveFilterChips();
+
+  await archiveReloadFromFilters();
+}
+
 function archiveWireClickToggleMultiSelects() {
   archiveChipFilterConfigs.forEach(({ select, chipsId }) => {
     if (!select || select.dataset.clickToggleWired === "true") return;
@@ -547,6 +713,7 @@ function archiveWireClickToggleMultiSelects() {
 
     select.addEventListener("change", () => {
       archiveRenderFilterChipsForSelect(select, chipsId);
+      archiveRenderActiveFilterChips();
     });
 
     select.dataset.clickToggleWired = "true";
@@ -1972,6 +2139,8 @@ async function archiveClearFilters() {
   setArchiveLoading(true, t("updating_records", "Updating records..."));
 
   archiveRenderAllFilterChips();
+  archiveRenderActiveFilterChips();
+
   try {
     await loadArchiveRecords(archiveLimit, 0);
   } catch (error) {
@@ -2050,68 +2219,46 @@ function renderArchiveResultsList(records) {
 
           <div class="result-card-meta">${safeArchiveValue(record.identity?.caal_id)}</div>
           <div class="result-card-meta">${safeArchiveValue(s.content_type)}</div>
-
-          <div class="result-card-actions">
-            <button type="button" class="action-btn archive-preview-btn" data-archive-preview-index="${index}">
-              ${archiveLabel(t("preview", "Preview"))}
-            </button>
-          </div>
         </div>
       `;
     })
     .join("");
 
     Array.from(archiveResultsList.querySelectorAll(".result-card")).forEach((card) => {
-    card.addEventListener("click", async () => {
-      const idx = Number(card.dataset.archiveResultIndex);
-      const lightRecord = records[idx];
-      if (!lightRecord) return;
+      card.addEventListener("click", async () => {
+        const idx = Number(card.dataset.archiveResultIndex);
+        const lightRecord = records[idx];
+        if (!lightRecord) return;
 
-      if (!archiveConfirmLoseChanges()) {
-        return;
-      }
+        setArchiveLoading(
+          true,
+          archiveIsEditMode
+            ? t("loading_preview", "Loading preview...")
+            : t("loading_full_record", "Loading full record...")
+        );
 
-      archiveIsEditMode = false;
-      archivePendingNewRecord = null;
+        try {
+          const fullRecord = await loadFullArchiveRecord(lightRecord);
 
-      setArchiveLoading(true, t("loading_full_record", "Loading full record..."));
+          if (archiveIsEditMode) {
+            archiveOpenPreview(fullRecord);
+            return;
+          }
 
-      try {
-        const fullRecord = await loadFullArchiveRecord(lightRecord);
+          archivePendingNewRecord = null;
+          archiveSelectedRecord = fullRecord;
+          archiveIsEditMode = false;
 
-        archiveSelectedRecord = fullRecord;
-        archiveRenderRecordDetails(fullRecord);
-        archiveUpdateSelectedResultCard();
-      } catch (error) {
-        console.error("Failed to load full archive record:", error);
-        alert(error.message || t("could_not_load_full_archive_record", "Could not load full archive record"));
-      } finally {
-        setArchiveLoading(false);
-      }
+          archiveRenderRecordDetails(fullRecord);
+          archiveUpdateSelectedResultCard();
+        } catch (error) {
+          console.error("Failed to load full archive record:", error);
+          alert(error.message || t("could_not_load_full_archive_record", "Could not load full archive record"));
+        } finally {
+          setArchiveLoading(false);
+        }
+      });
     });
-  });
-
-  Array.from(archiveResultsList.querySelectorAll(".archive-preview-btn")).forEach((btn) => {
-    btn.addEventListener("click", async (event) => {
-      event.stopPropagation();
-
-      const idx = Number(btn.dataset.archivePreviewIndex);
-      const lightRecord = records[idx];
-      if (!lightRecord) return;
-
-      setArchiveLoading(true, t("loading_preview", "Loading preview..."));
-
-      try {
-        const fullRecord = await loadFullArchiveRecord(lightRecord);
-        archiveOpenPreview(fullRecord);
-      } catch (error) {
-        console.error("Failed to load archive preview:", error);
-        alert(error.message || t("could_not_load_full_archive_record", "Could not load full archive record"));
-      } finally {
-        setArchiveLoading(false);
-      }
-    });
-  });
 
   archiveUpdateSelectedResultCard();
   renderArchivePageInfo();
@@ -2722,6 +2869,7 @@ if (archiveFilterCaalId) {
   if (selectEl) {
     selectEl.addEventListener("change", () => {
       archiveRenderAllFilterChips();
+      archiveRenderActiveFilterChips();
       archiveReloadFromFilters();
     });
   }
@@ -2998,6 +3146,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
 
     await loadArchiveRecords(archiveLimit, 0);
+    archiveRenderActiveFilterChips();
 
     if (directLinkedRecord) {
       archiveSelectedRecord = directLinkedRecord;

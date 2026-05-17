@@ -223,6 +223,89 @@ function getWorkspaceCode() {
   return appSession?.profile?.workspace_code || null;
 }
 
+function getWorkspaceCountryName(session = window.appSession) {
+  return (
+    session?.profile?.country_display ||
+    session?.profile?.country ||
+    session?.user?.country_display ||
+    session?.user?.country ||
+    ""
+  );
+}
+
+function getSessionWorkspaceCodeForDisplay(session = window.appSession) {
+  return String(
+    session?.user?.workspace_code ||
+    session?.profile?.workspace_code ||
+    ""
+  ).trim().toLowerCase();
+}
+
+function getWorkspacePageSubtitle(page, session = window.appSession) {
+  const workspaceCode = getSessionWorkspaceCodeForDisplay(session);
+  const countryName = getWorkspaceCountryName(session);
+
+  if (workspaceCode === "caal") {
+    if (page === "archive") {
+      return t("shared_caal_archive_workspace", "Shared CAAL Archive workspace");
+    }
+
+    if (page === "monuments") {
+      return t("shared_caal_monuments_workspace", "Shared CAAL Monuments workspace");
+    }
+
+    return t("shared_caal_records_workspace", "Shared CAAL records workspace");
+  }
+
+  if (page === "archive") {
+    return countryName
+      ? t("country_archive_workspace", "{country} archive workspace")
+          .replace("{country}", countryName)
+      : t("national_archive_workspace", "National archive workspace");
+  }
+
+  if (page === "monuments") {
+    return countryName
+      ? t("country_monuments_workspace", "{country} monuments workspace")
+          .replace("{country}", countryName)
+      : t("national_monuments_workspace", "National monuments workspace");
+  }
+
+  return countryName
+    ? t("caal_country", "CAAL {country}").replace("{country}", countryName)
+    : t("caal_national_workspace", "CAAL national workspace");
+}
+
+function getCurrentPageName() {
+  const page = document.body?.dataset?.page;
+  if (page) return page;
+
+  const path = window.location.pathname.toLowerCase();
+
+  if (path.includes("archive")) return "archive";
+  if (path.includes("monuments")) return "monuments";
+
+  return "home";
+}
+
+function applyWorkspaceHeaderText(page = getCurrentPageName(), session = window.appSession) {
+  const titleEls = document.querySelectorAll(
+    "#workspaceTitle, [data-workspace-title]"
+  );
+
+  const subtitleEls = document.querySelectorAll(
+    "#workspaceSubtitle, [data-workspace-subtitle], [data-i18n='home_app_subtitle'], [data-i18n='monuments_workspace_subtitle'], [data-i18n='archive_workspace_subtitle']"
+  );
+
+  titleEls.forEach((el) => {
+    el.textContent = t("app_title", "CAAL Workspace");
+  });
+
+  subtitleEls.forEach((el) => {
+    el.textContent = getWorkspacePageSubtitle(page, session);
+  });
+}
+
 function getPreferredLanguageFromSession() {
   return appSession?.profile?.preferred_language || null;
 }
@@ -234,6 +317,9 @@ window.canViewCaal = canViewCaal;
 window.canEditCaal = canEditCaal;
 window.getWorkspaceCode = getWorkspaceCode;
 window.getPreferredLanguageFromSession = getPreferredLanguageFromSession;
+
+window.getWorkspacePageSubtitle = getWorkspacePageSubtitle;
+window.applyWorkspaceHeaderText = applyWorkspaceHeaderText;
 
 // lang persistence
 function markLanguageUserSelected() {
@@ -878,6 +964,8 @@ async function applyLanguage({ notify = true } = {}) {
   } else if (fresh) {
     setCachedUiTranslations(currentLang, fresh);
   }
+
+  applyWorkspaceHeaderText(getCurrentPageName(), window.appSession);
 
   if (notify) {
     document.dispatchEvent(new CustomEvent("app:languageChanged"));
