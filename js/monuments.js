@@ -537,7 +537,7 @@ function closeMapOptionsPanel() {
   if (mapOptionsBtn) {
     mapOptionsBtn.classList.remove("is-active");
     mapOptionsBtn.setAttribute("aria-expanded", "false");
-    mapOptionsBtn.innerHTML = `<span aria-hidden="true">☰</span>`;
+    mapOptionsBtn.innerHTML = svgMapOptionsIcon();
   }
 }
 
@@ -555,7 +555,7 @@ function addMapOptionsControl() {
         id: "mapOptionsBtn",
         title: t("map_options", "Map options"),
         className: "map-options-map-toggle",
-        html: `<span aria-hidden="true">☰</span>`,
+        html: svgMapOptionsIcon(),
         onClick: toggleMapOptionsPanel
       });
 
@@ -1932,6 +1932,14 @@ function updateMapStatusLine() {
 
 async function showCurrentMonumentResultsOnMap() {
   if (activeMapViewFilterBbox) {
+    if (selectedAdminBoundary?.boundary_id) {
+      chips.push({
+        kind: "admin_boundary",
+        label: selectedAdminBoundary.admin_name || t("selected_region", "Selected region"),
+        title: t("region_filter", "Region filter"),
+        className: "active-filter-chip-region"
+    });
+  }
     fitMapToSavedMapViewFilter();
     return;
   }
@@ -2566,6 +2574,15 @@ function getActiveFilterChips() {
   chips.push(...getSelectedOptionsForChip(filterCulturalPeriod, "cultural_period"));
   chips.push(...getSelectedOptionsForChip(filterCountry, "country"));
 
+  if (selectedAdminBoundary?.boundary_id) {
+    chips.push({
+      kind: "admin_boundary",
+      label: selectedAdminBoundary.admin_name || t("selected_region", "Selected region"),
+      title: t("region_filter", "Region filter"),
+      className: "active-filter-chip-region"
+    });
+  }
+
   if (activeMapViewFilterBbox) {
     chips.push({
       kind: "map_view",
@@ -2652,11 +2669,17 @@ async function removeActiveFilterChip(chip) {
       activeMapViewFilterBbox = null;
       updateFilterToMapViewButton();
       break;
+    
+    case "admin_boundary":
+      selectedAdminBoundary = null;
+      break;
 
     default:
       return;
   }
 
+
+  
   syncAllAdvancedFilterTreesFromSelects();
   renderAllFilterChips();
   renderActiveFilterChips();
@@ -5183,28 +5206,53 @@ function openAdminBoundaryMiniPopup(feature, lngLat) {
   const totalCount = Number(props.count_all_caal || 0);
 
   const popupId = `openRegionSummaryBtn-${boundaryId}`;
+  const filterPopupId = `filterRegionBtn-${boundaryId}`;
+  const zoomPopupId = `zoomRegionBtn-${boundaryId}`;
 
   const html = `
     <div class="region-mini-popup">
-      <h3>${mSafeValue(regionName)}</h3>
+      <div class="region-mini-popup-header">
+        <div>
+          <h3>${mSafeValue(regionName)}</h3>
 
-      <p class="region-mini-popup-meta">
-        ${mSafeValue(props.country_iso3 || "")}
-      </p>
+          <p class="region-mini-popup-meta">
+            ${mSafeValue(props.country_iso3 || "")}
+          </p>
+        </div>
+
+        <button
+          type="button"
+          class="icon-action-btn region-zoom-btn"
+          id="${zoomPopupId}"
+          title="${t("zoom_to_region", "Zoom to region")}"
+          aria-label="${t("zoom_to_region", "Zoom to region")}"
+        >
+          ${svgTargetIcon()}
+        </button>
+      </div>
 
       <p>
         ${t("total_caal_records", "Total CAAL records")}:
         <strong>${formatCount(totalCount)}</strong>
       </p>
 
-      <button
-        type="button"
-        class="action-btn primary"
-        id="${popupId}"
-      >
-        ${t("open_regional_summary", "Open regional summary")}
-      </button>
-    </div>
+      <div class="region-mini-popup-actions">
+        <button
+          type="button"
+          class="action-btn primary"
+          id="${filterPopupId}"
+        >
+          ${t("filter_to_this_region", "Filter to this region")}
+        </button>
+
+        <button
+          type="button"
+          class="action-btn"
+          id="${popupId}"
+        >
+          ${t("open_regional_summary", "Open regional summary")}
+        </button>
+      </div>
   `;
 
   const popup = new maplibregl.Popup({
@@ -5218,10 +5266,28 @@ function openAdminBoundaryMiniPopup(feature, lngLat) {
     .addTo(map);
 
   setTimeout(() => {
-    const btn = document.getElementById(popupId);
+    const zoomBtn = document.getElementById(zoomPopupId);
 
-    if (btn) {
-      btn.addEventListener("click", async () => {
+    if (zoomBtn) {
+      zoomBtn.addEventListener("click", () => {
+        popup.remove();
+        zoomToAdminBoundaryFeature(feature);
+      });
+    }
+
+    const filterBtn = document.getElementById(filterPopupId);
+
+    if (filterBtn) {
+      filterBtn.addEventListener("click", async () => {
+        popup.remove();
+        await applyAdminBoundaryFilter(boundaryId, regionName);
+      });
+    }
+
+    const summaryBtn = document.getElementById(popupId);
+
+    if (summaryBtn) {
+      summaryBtn.addEventListener("click", async () => {
         popup.remove();
         await openAdminBoundarySummary(feature, lngLat);
       });
@@ -5375,6 +5441,53 @@ async function openAdminBoundarySummary(feature, lngLat) {
   }
 }
 
+function getFeatureGeometryBounds(geometry) {
+  if (!geometry) return null;
+
+  const bounds = new maplibregl.LngLatBounds();
+  let hasCoordinate = false;
+
+  function walk(coords) {
+    if (!Array.isArray(coords)) return;
+
+    if (
+      coords.length >= 2 &&
+      Number.isFinite(Number(coords[0])) &&
+      Number.isFinite(Number(coords[1]))
+    ) {
+      bounds.extend([Number(coords[0]), Number(coords[1])]);
+      hasCoordinate = true;
+      return;
+    }
+
+    coords.forEach(walk);
+  }
+
+  walk(geometry.coordinates);
+
+  return hasCoordinate ? bounds : null;
+}
+
+function zoomToAdminBoundaryFeature(feature) {
+  if (!map || !feature?.geometry) return;
+
+  const bounds = getFeatureGeometryBounds(feature.geometry);
+  if (!bounds) return;
+
+  removeAdminBoundarySummaryPanel();
+
+  map.fitBounds(bounds, {
+    padding: {
+      top: 80,
+      right: 80,
+      bottom: 80,
+      left: 80
+    },
+    maxZoom: 8.5,
+    duration: 700
+  });
+}
+
 function removeAdminBoundarySummaryPanel() {
   const existing = document.getElementById("adminBoundarySummaryPanel");
   if (existing) existing.remove();
@@ -5409,7 +5522,17 @@ async function applyAdminBoundaryFilter(boundaryId, boundaryName = "") {
     admin_name: boundaryName
   };
 
+  /*
+    A named region filter supersedes the saved map-view bbox filter.
+    Keeping both active would silently mean "region AND old map view",
+    which is likely to confuse users.
+  */
+  activeMapViewFilterBbox = null;
+  updateFilterToMapViewButton();
+
   monumentPageOffset = 0;
+
+  renderActiveFilterChips();
 
   setMapStaleState(
     true,
@@ -5428,6 +5551,8 @@ async function clearAdminBoundaryFilter() {
   selectedAdminBoundary = null;
 
   monumentPageOffset = 0;
+
+  renderActiveFilterChips();
 
   await applyMonumentFilters({
     includeMap: true,
@@ -7456,6 +7581,8 @@ async function clearMonumentFilters() {
   });
 
   activeMapViewFilterBbox = null;
+  selectedAdminBoundary = null;
+  renderActiveFilterChips();
   updateFilterToMapViewButton();
 
   syncAllAdvancedFilterTreesFromSelects();
@@ -8050,6 +8177,23 @@ function svgCloseIcon() {
         d="M6.4 5 12 10.6 17.6 5 19 6.4 13.4 12 19 17.6 17.6 19 12 13.4 6.4 19 5 17.6 10.6 12 5 6.4 6.4 5Z"
         fill="currentColor"
       />
+    </svg>
+  `;
+}
+
+function svgMapOptionsIcon() {
+  return `
+    <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18">
+      <path
+        d="M5 7h8m3 0h3M5 12h3m3 0h8M5 17h10m3 0h1"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2.2"
+        stroke-linecap="round"
+      />
+      <circle cx="15" cy="7" r="2" fill="currentColor" />
+      <circle cx="10" cy="12" r="2" fill="currentColor" />
+      <circle cx="17" cy="17" r="2" fill="currentColor" />
     </svg>
   `;
 }
@@ -10016,6 +10160,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
 
     map.addControl(new maplibregl.NavigationControl(), "top-right");
+
     map.addControl(
       new maplibregl.FullscreenControl({
         container: document.querySelector(".map-pane-body")
@@ -10023,9 +10168,9 @@ document.addEventListener("DOMContentLoaded", async () => {
       "top-right"
     );
 
-    addMapOptionsControl();
-    addMapResetControl();
-    addMapDownloadControl();
+  addMapResetControl();
+  addMapDownloadControl();
+  addMapOptionsControl();
 
     addMonumentLegendControl();
 
