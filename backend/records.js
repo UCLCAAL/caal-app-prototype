@@ -244,6 +244,164 @@ async function sendResolvedRecord(res, recordType, record) {
   });
 }
 
+router.get("/check", async (req, res) => {
+  const currentSession = req.session?.appSession || null;
+
+  if (!currentSession) {
+    return res.status(401).json({
+      ok: false,
+      error: "No active session"
+    });
+  }
+
+  const caalId = String(req.query.caal_id || "").trim();
+
+  if (!caalId) {
+    return res.status(400).json({
+      ok: false,
+      error: "Missing caal_id"
+    });
+  }
+
+  const scopes = getAllowedScopes(currentSession);
+
+  try {
+    // 1. Workspace monument
+    if (scopes.includes("workspace")) {
+      const result = await pool.query(
+        `
+        SELECT
+          "CAAL_ID" AS caal_id,
+          'monument'::text AS record_type,
+          'workspace'::text AS source_scope
+        FROM kz.v_monuments_grid_base
+        WHERE lower(trim("CAAL_ID")) = lower(trim($1))
+        LIMIT 1
+        `,
+        [caalId]
+      );
+
+      if (result.rows.length) {
+        return res.json({
+          ok: true,
+          exists: true,
+          ...result.rows[0]
+        });
+      }
+    }
+
+    // 2. Public CAAL monument
+    if (scopes.includes("national_ref") || scopes.includes("all_caal")) {
+      const result = await pool.query(
+        `
+        SELECT
+          "CAAL_ID" AS caal_id,
+          'monument'::text AS record_type,
+          CASE
+            WHEN (
+              "CAAL_ID" LIKE 'Mon_KZ_%'
+              OR btrim(coalesce("Country", '')) IN ('Kazakhstan', 'Казахстан')
+            )
+            THEN 'national_ref'
+            ELSE 'all_caal'
+          END AS source_scope
+        FROM ui.mv_monuments_caal
+        WHERE lower(trim("CAAL_ID")) = lower(trim($1))
+        LIMIT 1
+        `,
+        [caalId]
+      );
+
+      if (result.rows.length) {
+        const row = result.rows[0];
+
+        if (
+          row.source_scope === "national_ref" ||
+          scopes.includes("all_caal")
+        ) {
+          return res.json({
+            ok: true,
+            exists: true,
+            ...row
+          });
+        }
+      }
+    }
+
+    // 3. Workspace archive
+    if (scopes.includes("workspace")) {
+      const result = await pool.query(
+        `
+        SELECT
+          "CAAL_ID" AS caal_id,
+          'archive'::text AS record_type,
+          'workspace'::text AS source_scope
+        FROM kz.v_archive_grid_base
+        WHERE lower(trim("CAAL_ID")) = lower(trim($1))
+        LIMIT 1
+        `,
+        [caalId]
+      );
+
+      if (result.rows.length) {
+        return res.json({
+          ok: true,
+          exists: true,
+          ...result.rows[0]
+        });
+      }
+    }
+
+    // 4. Public CAAL archive
+    if (scopes.includes("national_ref") || scopes.includes("all_caal")) {
+      const result = await pool.query(
+        `
+        SELECT
+          "CAAL_ID" AS caal_id,
+          'archive'::text AS record_type,
+          source_scope
+        FROM kz.mv_archive_combined
+        WHERE lower(trim("CAAL_ID")) = lower(trim($1))
+          AND source_scope = ANY($2)
+        ORDER BY
+          CASE source_scope
+            WHEN 'workspace' THEN 1
+            WHEN 'national_ref' THEN 2
+            WHEN 'all_caal' THEN 3
+            ELSE 99
+          END
+        LIMIT 1
+        `,
+        [caalId, scopes]
+      );
+
+      if (result.rows.length) {
+        return res.json({
+          ok: true,
+          exists: true,
+          ...result.rows[0]
+        });
+      }
+    }
+
+    return res.json({
+      ok: true,
+      exists: false,
+      caal_id: caalId,
+      record_type: null,
+      source_scope: null
+    });
+  } catch (error) {
+    console.error("CAAL_ID check failed:", error);
+
+    return res.status(500).json({
+      ok: false,
+      error: "CAAL_ID check failed",
+      detail: error.message
+    });
+  }
+});
+
 router.get("/resolve", async (req, res) => {
   const currentSession = req.session?.appSession || null;
 

@@ -3137,10 +3137,28 @@ function mRenderLegacyTreePicker({
     );
   });
 
+    function treeChipLabel(item) {
+    const base = item.chip_label || item.label || item.value || "";
+
+    if (!item.disambiguation_label) {
+      return base;
+    }
+
+    return `${base} (${item.disambiguation_label})`;
+  }
+
   const itemLabel = (item) => {
     const base = mSafeValue(item.label || item.value || "");
-    const date = item.date_range ? ` <span class="legacy-tree-date">${mSafeValue(item.date_range)}</span>` : "";
-    return `${base}${date}`;
+
+    const disambiguation = item.disambiguation_label
+      ? ` <span class="legacy-tree-disambiguator">(${mSafeValue(item.disambiguation_label)})</span>`
+      : "";
+
+    const date = item.date_range
+      ? ` <span class="legacy-tree-date">${mSafeValue(item.date_range)}</span>`
+      : "";
+
+    return `${base}${disambiguation}${date}`;
   };
 
   const rowsHtml = topItems.length
@@ -3173,7 +3191,7 @@ function mRenderLegacyTreePicker({
                   data-value="${mSafeValue(parent.value)}"
                   data-concept-id="${mSafeValue(parent.concept_id)}"
                   data-parent-id=""
-                  data-chip-label="${mSafeValue(parent.chip_label || parent.label || parent.value)}"
+                  data-chip-label="${mSafeValue(treeChipLabel(parent))}"
                   ${parentChecked ? "checked" : ""}
                 >
                 <span>${itemLabel(parent)}</span>
@@ -3192,7 +3210,7 @@ function mRenderLegacyTreePicker({
                       data-value="${mSafeValue(child.value)}"
                       data-concept-id="${mSafeValue(child.concept_id)}"
                       data-parent-id="${mSafeValue(parent.concept_id)}"
-                      data-chip-label="${mSafeValue(child.chip_label || child.label || child.value)}"
+                      data-chip-label="${mSafeValue(treeChipLabel(child))}"
                       ${childChecked ? "checked" : ""}
                     >
                     <span>${itemLabel(child)}</span>
@@ -4393,6 +4411,313 @@ function parseRelatedIds(text) {
     .split(/[,\n;]+/)
     .map((v) => v.trim())
     .filter(Boolean);
+}
+
+function mRenderRelatedCaalIdChipInput(fieldName, label, value, fullWidth = true) {
+  const inputId = mInputId(fieldName);
+  const chipInputId = `${inputId}_chip_input`;
+  const chipListId = `${inputId}_chip_list`;
+  const ids = parseRelatedIds(value);
+
+  return `
+    <div
+      class="detail-item${fullWidth ? " full-width" : ""} monument-caal-chip-field"
+      data-field-name="${fieldName}"
+    >
+      <label class="detail-label" for="${chipInputId}">${label}</label>
+
+      <div class="caal-chip-input-box" id="${chipListId}">
+        ${ids.map((id) => mRenderEditableRelatedCaalIdChip(id, "pending")).join("")}
+
+        <input
+          type="text"
+          id="${chipInputId}"
+          class="caal-chip-input"
+          placeholder="${t("type_caal_id_press_enter", "Type a CAAL ID and press Enter")}"
+          autocomplete="off"
+          spellcheck="false"
+        >
+      </div>
+
+      <input
+        type="hidden"
+        id="${inputId}"
+        value="${ids.join(", ")}"
+      >
+
+      <p class="filter-help">
+        ${t(
+          "related_resource_chip_help",
+          "Type one related CAAL ID at a time. Press Enter, comma, semicolon, or Tab to add it."
+        )}
+      </p>
+    </div>
+  `;
+}
+
+function mRenderEditableRelatedCaalIdChip(id, status = "pending") {
+  const safeId = String(id || "").trim();
+  if (!safeId) return "";
+
+  return `
+    <span
+      class="related-id-chip monument-edit-related-chip related-id-chip-${status}"
+      data-caal-id="${safeId}"
+      title="${t("checking_related_id", "Checking related ID")}"
+    >
+      <span class="related-id-chip-spinner" aria-hidden="true"></span>
+      <span class="related-id-chip-text">${safeId}</span>
+      <button
+        type="button"
+        class="related-id-chip-remove"
+        aria-label="${t("remove_related_id", "Remove related ID")}"
+      >
+        ×
+      </button>
+    </span>
+  `;
+}
+
+function mNormaliseTypedCaalId(value) {
+  return String(value || "")
+    .trim()
+    .replace(/\s+/g, "");
+}
+
+function mEditableRelatedChipIds(fieldEl) {
+  return Array.from(fieldEl.querySelectorAll(".monument-edit-related-chip"))
+    .map((chip) => String(chip.dataset.caalId || "").trim())
+    .filter(Boolean);
+}
+
+function mSyncRelatedChipHiddenInput(fieldEl, { markDirty = true } = {}) {
+  const fieldName = fieldEl.dataset.fieldName;
+  const hiddenInput = document.getElementById(mInputId(fieldName));
+
+  if (!hiddenInput) return;
+
+  hiddenInput.value = Array.from(new Set(mEditableRelatedChipIds(fieldEl))).join(", ");
+
+  if (markDirty) {
+    monumentIsDirty = true;
+  }
+}
+
+function mFindRelatedCaalChip(fieldEl, caalId) {
+  const wanted = String(caalId || "").trim().toLowerCase();
+
+  return Array.from(fieldEl.querySelectorAll(".monument-edit-related-chip")).find(
+    (chip) => String(chip.dataset.caalId || "").trim().toLowerCase() === wanted
+  );
+}
+
+function mSetEditableRelatedChipStatus(chip, status, metadata = {}) {
+  if (!chip) return;
+
+  const spinner = chip.querySelector(".related-id-chip-spinner");
+  if (spinner) {
+    spinner.hidden = status !== "pending";
+  }
+
+  chip.classList.remove(
+    "related-id-chip-pending",
+    "related-id-chip-found",
+    "related-id-chip-missing",
+    "related-id-chip-unresolved",
+    "related-id-chip-invalid"
+  );
+
+  if (status === "found") {
+    chip.classList.add("related-id-chip-found");
+    chip.title = metadata.record_type
+      ? `${t("related_id_found", "Related ID found")} (${metadata.record_type})`
+      : t("related_id_found", "Related ID found");
+    return;
+  }
+
+  if (status === "invalid") {
+    chip.classList.add("related-id-chip-invalid");
+    chip.title = t("invalid_related_id_format", "Invalid related ID format");
+    return;
+  }
+
+  if (status === "missing") {
+    chip.classList.add("related-id-chip-missing", "related-id-chip-unresolved");
+    chip.title = t("related_id_not_found", "Related ID not found in current resource tables");
+    return;
+  }
+
+  chip.classList.add("related-id-chip-pending");
+  chip.title = t("checking_related_id", "Checking related ID");
+}
+
+const monumentCaalIdCheckCache = new Map();
+
+async function mCheckRelatedCaalId(caalId) {
+  const key = String(caalId || "").trim().toLowerCase();
+
+  if (monumentCaalIdCheckCache.has(key)) {
+    return monumentCaalIdCheckCache.get(key);
+  }
+
+  const response = await fetch(
+    `/api/records/check?caal_id=${encodeURIComponent(caalId)}`,
+    {
+      method: "GET",
+      credentials: "include"
+    }
+  );
+
+  const data = await response.json();
+
+  const result = response.ok && data.ok
+    ? data
+    : {
+        ok: false,
+        exists: false,
+        error: data.error || "CAAL_ID check failed"
+      };
+
+  monumentCaalIdCheckCache.set(key, result);
+  return result;
+}
+
+async function mAddRelatedCaalIdChip(fieldEl, rawValue) {
+  const parts = String(rawValue || "")
+    .split(/[,;\n\t]+/)
+    .map(mNormaliseTypedCaalId)
+    .filter(Boolean);
+
+  for (const id of parts) {
+    if (mFindRelatedCaalChip(fieldEl, id)) {
+      continue;
+    }
+
+    const input = fieldEl.querySelector(".caal-chip-input");
+    if (!input) return;
+
+    input.insertAdjacentHTML("beforebegin", mRenderEditableRelatedCaalIdChip(id, "pending"));
+
+    const chip = mFindRelatedCaalChip(fieldEl, id);
+    mSyncRelatedChipHiddenInput(fieldEl);
+
+    if (!looksLikeRelatedIdList(id)) {
+      mSetEditableRelatedChipStatus(chip, "invalid");
+      continue;
+    }
+
+    try {
+      const check = await mCheckRelatedCaalId(id);
+
+      mSetEditableRelatedChipStatus(
+        chip,
+        check.exists ? "found" : "missing",
+        check
+      );
+    } catch (error) {
+      console.warn("CAAL_ID check failed:", id, error);
+      mSetEditableRelatedChipStatus(chip, "missing");
+    }
+  }
+
+  mSyncRelatedChipHiddenInput(fieldEl);
+}
+
+function mWireRelatedCaalIdChipInputs() {
+  if (!recordDetails) return;
+
+  const fields = Array.from(
+    recordDetails.querySelectorAll(".monument-caal-chip-field")
+  );
+
+  fields.forEach((fieldEl) => {
+    if (fieldEl.dataset.caalChipWired === "true") return;
+
+    const input = fieldEl.querySelector(".caal-chip-input");
+    if (!input) return;
+
+    fieldEl.addEventListener("click", (event) => {
+      const removeBtn = event.target.closest(".related-id-chip-remove");
+
+      if (removeBtn) {
+        const chip = removeBtn.closest(".monument-edit-related-chip");
+        if (chip) {
+          chip.remove();
+          mSyncRelatedChipHiddenInput(fieldEl);
+        }
+        return;
+      }
+
+      input.focus();
+    });
+
+    input.addEventListener("keydown", async (event) => {
+      const shouldCommit =
+        event.key === "Enter" ||
+        event.key === "Tab" ||
+        event.key === "," ||
+        event.key === ";" ||
+        event.key === " ";
+
+      if (!shouldCommit) return;
+
+      if (input.value.trim()) {
+        event.preventDefault();
+
+        const rawValue = input.value;
+        input.value = "";
+
+        await mAddRelatedCaalIdChip(fieldEl, rawValue);
+      }
+    });
+
+    input.addEventListener("paste", async (event) => {
+      const text = event.clipboardData?.getData("text") || "";
+
+      if (/[,\n;\t]/.test(text)) {
+        event.preventDefault();
+        input.value = "";
+
+        await mAddRelatedCaalIdChip(fieldEl, text);
+      }
+    });
+
+    input.addEventListener("blur", async () => {
+      if (input.value.trim()) {
+        const rawValue = input.value;
+        input.value = "";
+
+        await mAddRelatedCaalIdChip(fieldEl, rawValue);
+      }
+    });
+
+    fieldEl.dataset.caalChipWired = "true";
+
+    Array.from(fieldEl.querySelectorAll(".monument-edit-related-chip")).forEach(async (chip) => {
+      const id = String(chip.dataset.caalId || "").trim();
+
+      if (!id) return;
+
+      if (!looksLikeRelatedIdList(id)) {
+        mSetEditableRelatedChipStatus(chip, "invalid");
+        return;
+      }
+
+      try {
+        const check = await mCheckRelatedCaalId(id);
+
+        mSetEditableRelatedChipStatus(
+          chip,
+          check.exists ? "found" : "missing",
+          check
+        );
+      } catch (error) {
+        mSetEditableRelatedChipStatus(chip, "missing");
+      }
+    });
+
+    mSyncRelatedChipHiddenInput(fieldEl, { markDirty: false });
+  });
 }
 
 function looksLikeRelatedIdList(text) {
@@ -5732,7 +6057,7 @@ function renderMonumentPreviewModal(record) {
     { label: mLabel("Country", "Country"), value: mSummary(record, "country") },
     { label: mLabel("Region", "Region"), value: mSummary(record, "region") },
     { label: mLabel("Classification", "Classification"), value: mSummary(record, "classification") },
-    { label: mLabel("CAAL_ID", "CAAL_ID"), value: mIdentity(record, "caal_id") },
+    //{ label: mLabel("CAAL_ID", "CAAL_ID"), value: mIdentity(record, "caal_id") },
     { label: mLabel("Internal Reference", "Internal Reference"), value: mRaw(record, "Internal Reference") },
     { label: mLabel("External Reference", "External Reference"), value: mRaw(record, "External Reference") },
     { label: mLabel("Designation", "Designation"), value: mSummary(record, "designation") },
@@ -5749,11 +6074,21 @@ function renderMonumentPreviewModal(record) {
     "Cultural Period4", "Cultural Period5", "Cultural Period6"
   ], "cultural_period");
 
-  titleEl.textContent = mSafeValue(mSummary(record, "primary_name"));
+  const previewTitle =
+    mSummary(record, "primary_name") ||
+    mSummary(record, "primary_name_english") ||
+    mIdentity(record, "caal_id") ||
+    t("record_preview", "Record preview");
+
+  titleEl.textContent = previewTitle;
 
   bodyEl.innerHTML = `
     <div class="record-title">
-      <h3>${mSafeValue(mSummary(record, "primary_name"))}</h3>
+      <h3>${mSafeValue(
+        mSummary(record, "primary_name") ||
+        mSummary(record, "primary_name_english") ||
+        mIdentity(record, "caal_id")
+      )}</h3>
       <p>${mSafeValue(mIdentity(record, "caal_id"))}</p>
 
       <div class="preview-action-row">
@@ -5778,6 +6113,7 @@ function renderMonumentPreviewModal(record) {
             <span class="detail-section-title">${mLabel("Basic", "Basic")}</span>
           </div>
           ${renderPreviewRows(basicFields)}
+          ${copyablePreviewValue(mLabel("CAAL_ID", "CAAL_ID"), mIdentity(record, "caal_id"))}
         </div>
       </div>
 
@@ -5817,6 +6153,7 @@ function renderMonumentPreviewModal(record) {
   `;
 
   modal.hidden = false;
+  wireCopyFieldButtons(modal);
 
   const previewOpenBtn = document.getElementById("previewOpenInDetailsBtn");
 
@@ -6673,14 +7010,29 @@ function renderAdvancedFilterTreePicker({
     );
   });
 
-  const itemLabel = (item) => {
-    const base = mSafeValue(item.label || item.value || "");
-    const date = item.date_range
-      ? ` <span class="legacy-tree-date">${mSafeValue(item.date_range)}</span>`
-      : "";
+    function advancedTreeChipLabel(item) {
+      const base = item.chip_label || item.label || item.value || "";
 
-    return `${base}${date}`;
-  };
+      if (!item.disambiguation_label) {
+        return base;
+      }
+
+      return `${base} (${item.disambiguation_label})`;
+    }
+
+    const itemLabel = (item) => {
+      const base = mSafeValue(item.label || item.value || "");
+
+      const disambiguation = item.disambiguation_label
+        ? ` <span class="legacy-tree-disambiguator">(${mSafeValue(item.disambiguation_label)})</span>`
+        : "";
+
+      const date = item.date_range
+        ? ` <span class="legacy-tree-date">${mSafeValue(item.date_range)}</span>`
+        : "";
+
+      return `${base}${disambiguation}${date}`;
+    };
 
   const rowsHtml = topItems.length
     ? topItems.map((parent) => {
@@ -6712,7 +7064,7 @@ function renderAdvancedFilterTreePicker({
                   data-value="${mSafeValue(parent.value)}"
                   data-concept-id="${mSafeValue(parent.concept_id)}"
                   data-parent-id=""
-                  data-chip-label="${mSafeValue(parent.chip_label || parent.label || parent.value)}"
+                  data-chip-label="${mSafeValue(advancedTreeChipLabel(parent))}"
                   ${parentChecked ? "checked" : ""}
                 >
                 <span>${itemLabel(parent)}</span>
@@ -6731,7 +7083,7 @@ function renderAdvancedFilterTreePicker({
                       data-value="${mSafeValue(child.value)}"
                       data-concept-id="${mSafeValue(child.concept_id)}"
                       data-parent-id="${mSafeValue(parent.concept_id)}"
-                      data-chip-label="${mSafeValue(child.chip_label || child.label || child.value)}"
+                      data-chip-label="${mSafeValue(advancedTreeChipLabel(child))}"
                       ${childChecked ? "checked" : ""}
                     >
                     <span>${itemLabel(child)}</span>
@@ -8198,6 +8550,98 @@ function svgMapOptionsIcon() {
   `;
 }
 
+function svgCopyIcon() {
+  return `
+    <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16">
+      <path
+        d="M8 7a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-8a2 2 0 0 1-2-2V7Z"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.8"
+      />
+      <path
+        d="M6 15H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.8"
+        stroke-linecap="round"
+      />
+    </svg>
+  `;
+}
+
+function copyablePreviewValue(label, value) {
+  const cleanValue = String(value || "").trim();
+
+  if (!cleanValue) {
+    return mRenderDetailItem(label, mSafeValue(""));
+  }
+
+  return `
+    <div class="detail-item">
+      <span class="detail-label">${label}</span>
+      <div class="detail-value copyable-field">
+        <span class="copyable-field-text">${mSafeValue(cleanValue)}</span>
+        <button
+          type="button"
+          class="copy-field-btn"
+          data-copy-value="${mSafeValue(cleanValue)}"
+          title="${t("copy_to_clipboard", "Copy to clipboard")}"
+          aria-label="${t("copy_to_clipboard", "Copy to clipboard")}: ${cleanValue}"
+        >
+          ${svgCopyIcon()}
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+function wireCopyFieldButtons(root = document) {
+  root.querySelectorAll(".copy-field-btn").forEach((btn) => {
+    if (btn.dataset.copyWired === "true") return;
+
+    btn.dataset.copyWired = "true";
+
+    btn.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const value = btn.dataset.copyValue || "";
+      if (!value) return;
+
+      try {
+        await navigator.clipboard.writeText(value);
+
+        btn.classList.remove("copied", "copy-pulse");
+
+        // Force animation restart if clicked repeatedly
+        void btn.offsetWidth;
+
+        btn.classList.add("copied", "copy-pulse");
+        btn.title = t("copied", "Copied");
+
+        const oldLabel = btn.querySelector(".copy-confirm-label");
+        if (oldLabel) oldLabel.remove();
+
+        const label = document.createElement("span");
+        label.className = "copy-confirm-label";
+        label.textContent = t("copied", "Copied");
+        btn.appendChild(label);
+
+        setTimeout(() => {
+          btn.classList.remove("copied", "copy-pulse");
+          btn.title = t("copy_to_clipboard", "Copy to clipboard");
+
+          const currentLabel = btn.querySelector(".copy-confirm-label");
+          if (currentLabel) currentLabel.remove();
+        }, 1200);
+      } catch (error) {
+        console.warn("Clipboard copy failed:", error);
+      }
+    });
+  });
+}
+
 async function previewMonumentFromLightRecord(lightRecord) {
   if (!lightRecord) return;
 
@@ -8676,11 +9120,11 @@ function renderMonumentDisplayMode(record) {
     </div>
 
     <div class="group-stack">
-      ${mRenderGroupBlock(t("location", "Location"), locationHtml, true)}
       ${mRenderGroupBlock(t("basic", "Basic"), basicHtml, true)}
       ${mRenderGroupBlock(t("nav_monuments", "Monuments"), monumentHtml, true)}
       ${mRenderGroupBlock(t("administration", "Administration"), adminHtml, true)}
       ${mRenderGroupBlock(t("measurements", "Measurements"), measurementsHtml, measurementsHasValues)}
+      ${mRenderGroupBlock(t("location", "Location"), locationHtml, true)}
       ${mRenderGroupBlock(t("related_resources", "Related Resources"), relatedHtml, true)}
       ${mRenderGroupBlock(t("metadata", "Metadata"), metadataHtml, true)}
     </div>
@@ -9022,9 +9466,26 @@ function renderMonumentEditMode(record) {
             <span class="detail-section-title">${t("related_resources", "Related resources")}</span>
           </div>
 
-          ${mRenderTextInput("Monument is part of", mLabel("Monument is part of", "Monument is part of"), mRaw(record, "Monument is part of"), true)}
-          ${mRenderTextInput("Monument contains", mLabel("Monument contains", "Monument contains"), mRaw(record, "Monument contains"), true)}
-          ${mRenderTextInput("Monument is associated with", mLabel("Monument is associated with", "Monument is associated with"), mRaw(record, "Monument is associated with"), true)}
+          ${mRenderRelatedCaalIdChipInput(
+            "Monument is part of",
+            mLabel("Monument is part of", "Monument is part of"),
+            mRaw(record, "Monument is part of"),
+            true
+          )}
+
+          ${mRenderRelatedCaalIdChipInput(
+            "Monument contains",
+            mLabel("Monument contains", "Monument contains"),
+            mRaw(record, "Monument contains"),
+            true
+          )}
+
+          ${mRenderRelatedCaalIdChipInput(
+            "Monument is associated with",
+            mLabel("Monument is associated with", "Monument is associated with"),
+            mRaw(record, "Monument is associated with"),
+            true
+          )}
         </div>
       </div>
 
@@ -9073,6 +9534,7 @@ function renderMonumentEditMode(record) {
   mWireEditMultiSelects();
   wireLegacyTreePickers();
   wireMonumentCulturalPeriodDateRecalc();
+  mWireRelatedCaalIdChipInputs();
 
   wireInlineLocationButtons();
   updateAddModeUI();
@@ -10027,6 +10489,17 @@ document.addEventListener("app:languageChanged", async () => {
 // --------------------------------------------------------
 // Initial load
 // --------------------------------------------------------
+window.addEventListener("beforeunload", (event) => {
+  if (!monumentIsEditMode || !monumentIsDirty) {
+    return;
+  }
+
+  event.preventDefault();
+
+  // Required for Chrome/Edge/Firefox. Browser controls the actual text shown.
+  event.returnValue = "";
+});
+
 document.addEventListener("DOMContentLoaded", async () => {
   const session = await requireSession();
   if (!session) return;

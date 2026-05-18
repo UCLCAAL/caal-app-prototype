@@ -3070,6 +3070,7 @@ router.post("/monuments", async (req, res) => {
   payload["Preferred Language"] = preferredLanguage;
   payload["Date of Recording"] = new Date().toISOString().slice(0, 10);
   payload.created_by_app_user_id = appUserId;
+  payload.workspace_code = getSessionWorkspaceCode(currentSession);
 
   const lng = locationCheck.lng;
   const lat = locationCheck.lat;

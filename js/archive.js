@@ -373,6 +373,323 @@ function validateArchiveAssociatedIdsBeforeSave() {
   return true;
 }
 
+const archiveCaalIdCheckCache = new Map();
+
+function archiveGetEditableAssociatedIds(record) {
+  const relationIds = archiveGetAssociatedRelations(record)
+    .map((rel) => String(rel.related_caal_id || "").trim())
+    .filter(Boolean);
+
+  if (relationIds.length) {
+    return Array.from(new Set(relationIds)).join(", ");
+  }
+
+  return archiveIdentity(record, "associated_caal_id") ||
+    archiveRaw(record, "Associated CAAL_ID") ||
+    "";
+}
+
+function archiveRenderCaalIdChipInput(fieldName, label, value, fullWidth = true) {
+  const inputId = archiveInputId(fieldName);
+  const chipInputId = `${inputId}_chip_input`;
+  const chipListId = `${inputId}_chip_list`;
+  const ids = archiveParseAssociatedCaalIds(value);
+
+  return `
+    <div class="detail-item${fullWidth ? " full-width" : ""} archive-caal-chip-field" data-field-name="${fieldName}">
+      <label class="detail-label" for="${chipInputId}">${label}</label>
+
+      <div class="caal-chip-input-box" id="${chipListId}">
+        ${ids.map((id) => archiveRenderEditableCaalIdChip(id, "pending")).join("")}
+
+        <input
+          type="text"
+          id="${chipInputId}"
+          class="caal-chip-input"
+          placeholder="${t("type_caal_id_press_enter", "Type a CAAL ID and press Enter")}"
+          autocomplete="off"
+          spellcheck="false"
+        >
+      </div>
+
+      <input
+        type="hidden"
+        id="${inputId}"
+        value="${ids.join(", ")}"
+      >
+
+      <p class="filter-help">
+        ${t(
+          "related_resource_chip_help",
+          "Type one related CAAL ID at a time. Press Enter, comma, semicolon, or Tab to add it."
+        )}
+      </p>
+    </div>
+  `;
+}
+
+function archiveRenderEditableCaalIdChip(id, status = "pending") {
+  const safeId = String(id || "").trim();
+  if (!safeId) return "";
+
+  return `
+    <span
+      class="related-id-chip archive-edit-related-chip related-id-chip-${status}"
+      data-caal-id="${safeId}"
+      title="${t("checking_related_id", "Checking related ID")}"
+    >
+      <span class="related-id-chip-spinner" aria-hidden="true"></span>
+      <span class="related-id-chip-text">${safeId}</span>
+      <button
+        type="button"
+        class="related-id-chip-remove"
+        aria-label="${t("remove_related_id", "Remove related ID")}"
+      >
+        ×
+      </button>
+    </span>
+  `;
+}
+
+function archiveNormaliseTypedCaalId(value) {
+  return String(value || "")
+    .trim()
+    .replace(/\s+/g, "");
+}
+
+function archiveChipIds(fieldEl) {
+  return Array.from(fieldEl.querySelectorAll(".archive-edit-related-chip"))
+    .map((chip) => String(chip.dataset.caalId || "").trim())
+    .filter(Boolean);
+}
+
+function archiveSyncCaalChipHiddenInput(fieldEl, { markDirty = true } = {}) {
+  const fieldName = fieldEl.dataset.fieldName;
+  const hiddenInput = document.getElementById(archiveInputId(fieldName));
+
+  if (!hiddenInput) return;
+
+  hiddenInput.value = Array.from(new Set(archiveChipIds(fieldEl))).join(", ");
+
+  if (markDirty) {
+    archiveIsDirty = true;
+  }
+}
+
+function archiveFindCaalChip(fieldEl, caalId) {
+  const wanted = String(caalId || "").trim().toLowerCase();
+
+  return Array.from(fieldEl.querySelectorAll(".archive-edit-related-chip")).find(
+    (chip) => String(chip.dataset.caalId || "").trim().toLowerCase() === wanted
+  );
+}
+
+function archiveSetEditableChipStatus(chip, status, metadata = {}) {
+  if (!chip) return;
+
+  const spinner = chip.querySelector(".related-id-chip-spinner");
+  if (spinner) {
+    spinner.hidden = status !== "pending";
+  }
+
+  chip.classList.remove(
+    "related-id-chip-pending",
+    "related-id-chip-found",
+    "related-id-chip-missing",
+    "related-id-chip-unresolved",
+    "related-id-chip-invalid"
+  );
+
+  if (status === "found") {
+    chip.classList.add("related-id-chip-found");
+    chip.title = metadata.record_type
+      ? `${t("related_id_found", "Related ID found")} (${metadata.record_type})`
+      : t("related_id_found", "Related ID found");
+    return;
+  }
+
+  if (status === "invalid") {
+    chip.classList.add("related-id-chip-invalid");
+    chip.title = t("invalid_related_id_format", "Invalid related ID format");
+    return;
+  }
+
+  if (status === "missing") {
+    chip.classList.add("related-id-chip-missing", "related-id-chip-unresolved");
+    chip.title = t("related_id_not_found", "Related ID not found in current resource tables");
+    return;
+  }
+
+  chip.classList.add("related-id-chip-pending");
+  chip.title = t("checking_related_id", "Checking related ID");
+}
+
+async function archiveCheckCaalId(caalId) {
+  const key = String(caalId || "").trim().toLowerCase();
+
+  if (archiveCaalIdCheckCache.has(key)) {
+    return archiveCaalIdCheckCache.get(key);
+  }
+
+  const response = await fetch(
+    `/api/records/check?caal_id=${encodeURIComponent(caalId)}`,
+    {
+      method: "GET",
+      credentials: "include"
+    }
+  );
+
+  const data = await response.json();
+
+  const result = response.ok && data.ok
+    ? data
+    : {
+        ok: false,
+        exists: false,
+        error: data.error || "CAAL_ID check failed"
+      };
+
+  archiveCaalIdCheckCache.set(key, result);
+  return result;
+}
+
+async function archiveAddCaalIdChip(fieldEl, rawValue) {
+  const parts = String(rawValue || "")
+    .split(/[,;\n\t]+/)
+    .map(archiveNormaliseTypedCaalId)
+    .filter(Boolean);
+
+  for (const id of parts) {
+    if (archiveFindCaalChip(fieldEl, id)) {
+      continue;
+    }
+
+    const input = fieldEl.querySelector(".caal-chip-input");
+    if (!input) return;
+
+    input.insertAdjacentHTML("beforebegin", archiveRenderEditableCaalIdChip(id, "pending"));
+
+    const chip = archiveFindCaalChip(fieldEl, id);
+    archiveSyncCaalChipHiddenInput(fieldEl);
+
+    if (!archiveIsLikelyCaalId(id)) {
+      archiveSetEditableChipStatus(chip, "invalid");
+      continue;
+    }
+
+    try {
+      const check = await archiveCheckCaalId(id);
+
+      archiveSetEditableChipStatus(
+        chip,
+        check.exists ? "found" : "missing",
+        check
+      );
+    } catch (error) {
+      console.warn("CAAL_ID check failed:", id, error);
+      archiveSetEditableChipStatus(chip, "missing");
+    }
+  }
+
+  archiveSyncCaalChipHiddenInput(fieldEl);
+}
+
+function archiveWireCaalIdChipInputs() {
+  if (!archiveRecordDetails) return;
+
+  const fields = Array.from(
+    archiveRecordDetails.querySelectorAll(".archive-caal-chip-field")
+  );
+
+  fields.forEach((fieldEl) => {
+    if (fieldEl.dataset.caalChipWired === "true") return;
+
+    const input = fieldEl.querySelector(".caal-chip-input");
+    if (!input) return;
+
+    fieldEl.addEventListener("click", (event) => {
+      const removeBtn = event.target.closest(".related-id-chip-remove");
+
+      if (removeBtn) {
+        const chip = removeBtn.closest(".archive-edit-related-chip");
+        if (chip) {
+          chip.remove();
+          archiveSyncCaalChipHiddenInput(fieldEl);
+        }
+        return;
+      }
+      input.focus();
+    });
+
+    input.addEventListener("keydown", async (event) => {
+      const shouldCommit =
+        event.key === "Enter" ||
+        event.key === "Tab" ||
+        event.key === "," ||
+        event.key === ";" ||
+        event.key === " ";
+
+      if (!shouldCommit) return;
+
+      if (input.value.trim()) {
+        event.preventDefault();
+
+        const rawValue = input.value;
+        input.value = "";
+
+        await archiveAddCaalIdChip(fieldEl, rawValue);
+      }
+    });
+
+    input.addEventListener("paste", async (event) => {
+      const text = event.clipboardData?.getData("text") || "";
+
+      if (/[,\n;\t]/.test(text)) {
+        event.preventDefault();
+        input.value = "";
+
+        await archiveAddCaalIdChip(fieldEl, text);
+      }
+    });
+
+    input.addEventListener("blur", async () => {
+      if (input.value.trim()) {
+        const rawValue = input.value;
+        input.value = "";
+
+        await archiveAddCaalIdChip(fieldEl, rawValue);
+      }
+    });
+
+    fieldEl.dataset.caalChipWired = "true";
+
+    Array.from(fieldEl.querySelectorAll(".archive-edit-related-chip")).forEach(async (chip) => {
+      const id = String(chip.dataset.caalId || "").trim();
+
+      if (!id) return;
+
+      if (!archiveIsLikelyCaalId(id)) {
+        archiveSetEditableChipStatus(chip, "invalid");
+        return;
+      }
+
+      try {
+        const check = await archiveCheckCaalId(id);
+
+        archiveSetEditableChipStatus(
+          chip,
+          check.exists ? "found" : "missing",
+          check
+        );
+      } catch (error) {
+        archiveSetEditableChipStatus(chip, "missing");
+      }
+    });
+
+    archiveSyncCaalChipHiddenInput(fieldEl);
+  });
+}
+
 function archiveArrayValue(value) {
   if (Array.isArray(value)) return value.filter(archiveHasRealValue);
 
@@ -1201,6 +1518,98 @@ function archiveRenderDetailItem(label, value, fullWidth = false) {
   `;
 }
 
+function archiveSvgCopyIcon() {
+  return `
+    <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16">
+      <path
+        d="M8 7a2 2 0 0 1 2-2h8a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2h-8a2 2 0 0 1-2-2V7Z"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.8"
+      />
+      <path
+        d="M6 15H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.8"
+        stroke-linecap="round"
+      />
+    </svg>
+  `;
+}
+
+function archiveCopyableDetailItem(label, value, fullWidth = false) {
+  const cleanValue = String(value || "").trim();
+
+  if (!cleanValue) {
+    return archiveRenderDetailItem(label, safeArchiveValue(""), fullWidth);
+  }
+
+  return `
+    <div class="detail-item${fullWidth ? " full-width" : ""}">
+      <span class="detail-label">${label}</span>
+      <div class="detail-value copyable-field">
+        <span class="copyable-field-text">${safeArchiveValue(cleanValue)}</span>
+        <button
+          type="button"
+          class="copy-field-btn"
+          data-copy-value="${safeArchiveValue(cleanValue)}"
+          title="${t("copy_to_clipboard", "Copy to clipboard")}"
+          aria-label="${t("copy_to_clipboard", "Copy to clipboard")}: ${cleanValue}"
+        >
+          ${archiveSvgCopyIcon()}
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+function archiveWireCopyFieldButtons(root = document) {
+  root.querySelectorAll(".copy-field-btn").forEach((btn) => {
+    if (btn.dataset.copyWired === "true") return;
+
+    btn.dataset.copyWired = "true";
+
+    btn.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const value = btn.dataset.copyValue || "";
+      if (!value) return;
+
+      try {
+        await navigator.clipboard.writeText(value);
+
+        btn.classList.remove("copied", "copy-pulse");
+
+        // Restart animation if clicked repeatedly.
+        void btn.offsetWidth;
+
+        btn.classList.add("copied", "copy-pulse");
+        btn.title = t("copied", "Copied");
+
+        const oldLabel = btn.querySelector(".copy-confirm-label");
+        if (oldLabel) oldLabel.remove();
+
+        const label = document.createElement("span");
+        label.className = "copy-confirm-label";
+        label.textContent = t("copied", "Copied");
+        btn.appendChild(label);
+
+        setTimeout(() => {
+          btn.classList.remove("copied", "copy-pulse");
+          btn.title = t("copy_to_clipboard", "Copy to clipboard");
+
+          const currentLabel = btn.querySelector(".copy-confirm-label");
+          if (currentLabel) currentLabel.remove();
+        }, 1200);
+      } catch (error) {
+        console.warn("Clipboard copy failed:", error);
+      }
+    });
+  });
+}
+
 function archiveRelationGroupLabel(rel) {
   if (rel.relation_direction === "reverse") {
     return t("referenced_by_resources", "Referenced by resources");
@@ -1751,7 +2160,10 @@ function archiveOpenPreview(record) {
             <span class="detail-section-title">${t("material_details", "Material Details")}</span>
           </div>
 
-          ${archiveRenderDetailItem(archiveLabel("CAAL_ID", "CAAL_ID"), archiveIdentity(record, "caal_id"))}
+          ${archiveCopyableDetailItem(
+            archiveLabel("CAAL_ID", "CAAL_ID"),
+            archiveIdentity(record, "caal_id") || archiveRaw(record, "CAAL_ID")
+          )}
           ${archiveRenderAssociatedCaalIdChips(
             archiveLabel("Associated CAAL_ID", "Associated CAAL_ID"),
             archiveIdentity(record, "associated_caal_id") || archiveRaw(record, "Associated CAAL_ID"),
@@ -1791,6 +2203,7 @@ function archiveOpenPreview(record) {
   archivePreviewModal.hidden = false;
 
   wireArchiveAssociatedCaalIdChips();
+  archiveWireCopyFieldButtons(archivePreviewModal);
 }
 
 function archiveClosePreview() {
@@ -2492,6 +2905,7 @@ function archiveRenderDisplayMode(record) {
   }
 
   wireArchiveAssociatedCaalIdChips();
+  archiveWireCopyFieldButtons(archiveRecordDetails);
 
   archiveRenderActionBar({
     hasRecord: true,
@@ -2507,8 +2921,12 @@ function archiveRenderEditMode(record) {
   const r = record.raw || {};
 
   let materialHtml = "";
-  //materialHtml += archiveRenderTextInput("Level", archiveLabel("Level", "Level"), archiveRaw(record, "Level"));
-   materialHtml += archiveRenderSelect(
+  materialHtml += archiveCopyableDetailItem(
+    archiveLabel("CAAL_ID", "CAAL_ID"),
+    archiveIdentity(record, "caal_id") || archiveRaw(record, "CAAL_ID"),
+    true
+  );
+  materialHtml += archiveRenderSelect(
     "Level",
     archiveLabel("Level", "Level"),
     "level",
@@ -2516,7 +2934,13 @@ function archiveRenderEditMode(record) {
   );
   materialHtml += archiveRenderTextInput("Original Reference", archiveLabel("Original Reference", "Original Reference"), archiveRaw(record, "Original Reference"));
   materialHtml += archiveRenderReadOnlyItem(archiveLabel("CAAL_ID", "CAAL_ID"), archiveIdentity(record, "caal_id"));
-  materialHtml += archiveRenderTextInput("Associated CAAL_ID", archiveLabel("Associated CAAL_ID", "Associated CAAL_ID"), archiveRaw(record, "Associated CAAL_ID"));
+  let relatedHtml = "";
+  relatedHtml += archiveRenderCaalIdChipInput(
+    "Associated CAAL_ID",
+    archiveLabel("Associated CAAL_ID", "Associated CAAL_ID"),
+    archiveGetEditableAssociatedIds(record),
+    true
+  );
   materialHtml += archiveRenderTextarea("Original Title", archiveLabel("Original Title", "Original Title"), archiveRaw(record, "Original Title"), true);
   materialHtml += archiveRenderTextarea("English Title", archiveLabel("English Title", "English Title"), archiveRaw(record, "English Title"), true);
   materialHtml += archiveRenderSelect("Content Type", archiveLabel("Content Type", "Content Type"),   "content_type", archiveRaw(record, "Content Type") );
@@ -2628,14 +3052,11 @@ function archiveRenderEditMode(record) {
     <div class="${archiveRecordTitleClass(record)}">
       <h3>${safeArchiveValue(record?.summary?.original_title || record?.summary?.english_title)}</h3>
       <p>${safeArchiveValue(archiveIdentity(record, "caal_id") || archiveLabel("Assigned on save", "Assigned on save"))}</p>
-      <p>
-        <strong>${archiveLabel("Associated CAAL_ID", "Associated CAAL_ID")}:</strong>
-        ${safeArchiveValue(archiveIdentity(record, "associated_caal_id") || archiveRaw(record, "Associated CAAL_ID"))}
-      </p>
     </div>
 
     <div class="group-stack">
       ${archiveRenderGroupBlock(t("material_details", "Material Details"), materialHtml, true)}
+      ${archiveRenderGroupBlock(t("related_resources", "Related resources"), relatedHtml, true)}
       ${archiveRenderGroupBlock(t("publication_details", "Publication Details"), publicationHtml, true)}
       ${archiveRenderGroupBlock(t("content", "Content"), contentHtml, true)}
       ${archiveRenderGroupBlock(t("digital_files", "Digital Files"), digitalHtml, true)}
@@ -2820,6 +3241,7 @@ if (archiveDeleteBtn) {
 }
 
   archiveWireEditMultiSelects();
+  archiveWireCaalIdChipInputs();
 
   Array.from(archiveRecordDetails.querySelectorAll("input, textarea, select")).forEach((el) => {
     el.addEventListener("input", () => {
@@ -3060,6 +3482,17 @@ if (archiveNextBtn) {
 
 // Initial load
 // --------------------------------------------------------
+window.addEventListener("beforeunload", (event) => {
+  if (!archiveIsEditMode || !archiveIsDirty) {
+    return;
+  }
+
+  event.preventDefault();
+
+  // Required for Chrome/Edge/Firefox. Browser controls the actual text shown.
+  event.returnValue = "";
+});
+
 document.addEventListener("DOMContentLoaded", async () => {
   const session = await requireSession();
   if (!session) return;

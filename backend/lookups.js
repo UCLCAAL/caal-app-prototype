@@ -104,46 +104,73 @@ function fallbackLookupLanguage(lang) {
 async function fetchHierarchicalLookupTree({
   viewName,
   requestedLanguage,
-  includeDates = false
+  includeDates = false,
+  includeDisambiguation = false
 }) {
   const safeLang = normaliseLanguage(requestedLanguage || "en");
   const fallbackLang = fallbackLookupLanguage(safeLang);
 
-  const dateColumnsSql = includeDates
-    ? `,
-      date_range,
-      date_from,
-      date_to
-    `
-    : "";
+  const columns = [
+    "concept_id",
+    "canonical_value",
+    "parent_id",
+    "level",
+    "sort_order",
+
+    "label_en",
+    "label_ru",
+    "label_zh",
+    "label_kk",
+    "label_ky",
+    "label_tg",
+    "label_tk",
+    "label_uz",
+
+    "display_en",
+    "display_ru",
+    "display_zh",
+    "display_kk",
+    "display_ky",
+    "display_tg",
+    "display_tk",
+    "display_uz"
+  ];
+
+  if (includeDisambiguation) {
+    columns.push(
+      "disambiguation_en",
+      "disambiguation_ru",
+      "disambiguation_zh",
+      "disambiguation_kk",
+      "disambiguation_ky",
+      "disambiguation_tg",
+      "disambiguation_tk",
+      "disambiguation_uz"
+    );
+  } else {
+    columns.push(
+      "NULL::text AS disambiguation_en",
+      "NULL::text AS disambiguation_ru",
+      "NULL::text AS disambiguation_zh",
+      "NULL::text AS disambiguation_kk",
+      "NULL::text AS disambiguation_ky",
+      "NULL::text AS disambiguation_tg",
+      "NULL::text AS disambiguation_tk",
+      "NULL::text AS disambiguation_uz"
+    );
+  }
+
+  if (includeDates) {
+    columns.push(
+      "date_range",
+      "date_from",
+      "date_to"
+    );
+  }
 
   const result = await pool.query(`
     SELECT
-      concept_id,
-      canonical_value,
-      parent_id,
-      level,
-      sort_order,
-
-      label_en,
-      label_ru,
-      label_zh,
-      label_kk,
-      label_ky,
-      label_tg,
-      label_tk,
-      label_uz,
-
-      display_en,
-      display_ru,
-      display_zh,
-      display_kk,
-      display_ky,
-      display_tg,
-      display_tk,
-      display_uz
-
-      ${dateColumnsSql}
+      ${columns.join(",\n      ")}
     FROM ${viewName}
     ORDER BY
       parent_id NULLS FIRST,
@@ -179,6 +206,8 @@ async function fetchHierarchicalLookupTree({
       sort_order: row.sort_order,
       label,
       chip_label: chipLabel,
+      disambiguation_label:
+        row[`disambiguation_${safeLang}`] || null,
       date_range: includeDates ? row.date_range : null,
       date_from: includeDates ? row.date_from : null,
       date_to: includeDates ? row.date_to : null,
@@ -217,13 +246,15 @@ router.get("/:page", async (req, res) => {
         payload.monument_type_tree = await fetchHierarchicalLookupTree({
           viewName: "ui.v_lkp_site_types_context",
           requestedLanguage,
-          includeDates: false
+          includeDates: false,
+          includeDisambiguation: true
         });
 
         payload.cultural_period_tree = await fetchHierarchicalLookupTree({
           viewName: "ui.v_lkp_cultural_periods_context",
           requestedLanguage,
-          includeDates: true
+          includeDates: true,
+          includeDisambiguation: false
         });
       }
 

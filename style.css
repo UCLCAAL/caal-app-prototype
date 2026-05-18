@@ -586,7 +586,203 @@ body {
   justify-content: flex-start;
 }
 
+.archive-caal-chip-field .caal-chip-input-box,
+.monument-caal-chip-field .caal-chip-input-box {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 2.6rem;
+  padding: 0.4rem 0.5rem;
+  border: 1px solid #d6dde3;
+  border-radius: 10px;
+  background: #ffffff;
+}
 
+.caal-chip-input {
+  flex: 1 1 14rem;
+  min-width: 12rem;
+  border: 0;
+  outline: none;
+  font: inherit;
+  padding: 0.35rem 0.25rem;
+  background: transparent;
+}
+
+.archive-edit-related-chip,
+.monument-edit-related-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.related-id-chip-remove {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  font-size: 1rem;
+  line-height: 1;
+  padding: 0 0.1rem;
+}
+
+.related-id-chip-pending {
+  border-style: dashed;
+  opacity: 0.75;
+}
+
+.related-id-chip-found {
+  border-color: #cfd9e2;
+}
+
+.related-id-chip-missing,
+.related-id-chip-unresolved {
+  border-color: #f2b8b5;
+  background: #fff4f4;
+  color: #9d2b25;
+}
+
+.related-id-chip-invalid {
+  border-color: #e0b84a;
+  background: #fff9e8;
+  color: #755400;
+}
+
+.related-id-chip-pending {
+  border-style: dashed;
+  border-color: #b8c2cc;
+  background: #f7f9fb;
+  color: #4b5563;
+  opacity: 1;
+}
+
+.related-id-chip-spinner {
+  width: 0.85rem;
+  height: 0.85rem;
+  border: 2px solid rgba(75, 85, 99, 0.25);
+  border-top-color: rgba(75, 85, 99, 0.85);
+  border-radius: 999px;
+  display: inline-block;
+  animation: related-chip-spin 0.75s linear infinite;
+}
+
+.related-id-chip-spinner[hidden] {
+  display: none;
+}
+
+@keyframes related-chip-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.copyable-field {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+}
+
+.copyable-field-text {
+  user-select: text;
+}
+
+.copy-field-btn {
+  border: 1px solid #d6dde3;
+  background: #ffffff;
+  color: #52606d;
+  border-radius: 8px;
+  padding: 0.22rem 0.35rem;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.copy-field-btn:hover {
+  background: #f7f9fb;
+  color: #25313c;
+}
+
+.copy-field-btn.copied {
+  border-color: #9cc9b2;
+  background: #eef8f2;
+  color: #2f6f5f;
+}
+
+.related-id-chip-text {
+  user-select: text;
+}
+
+.copy-field-btn {
+  position: relative;
+}
+
+.copy-field-btn.copy-pulse {
+  animation: copyPulse 0.45s ease-out;
+}
+
+.copy-confirm-label {
+  position: absolute;
+  left: 50%;
+  top: -1.9rem;
+  transform: translateX(-50%);
+  white-space: nowrap;
+  background: #2f6f5f;
+  color: #ffffff;
+  border-radius: 999px;
+  padding: 0.18rem 0.55rem;
+  font-size: 0.76rem;
+  line-height: 1.2;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.16);
+  pointer-events: none;
+  animation: copyLabelFade 1.2s ease-out forwards;
+}
+
+@keyframes copyPulse {
+  0% {
+    transform: scale(1);
+    box-shadow: 0 0 0 0 rgba(47, 111, 95, 0.45);
+  }
+
+  45% {
+    transform: scale(1.08);
+    box-shadow: 0 0 0 7px rgba(47, 111, 95, 0.14);
+  }
+
+  100% {
+    transform: scale(1);
+    box-shadow: 0 0 0 10px rgba(47, 111, 95, 0);
+  }
+}
+
+@keyframes copyLabelFade {
+  0% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(4px);
+  }
+
+  15% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+
+  75% {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+
+  100% {
+    opacity: 0;
+    transform: translateX(-50%) translateY(-4px);
+  }
+}
+
+.legacy-tree-disambiguator {
+  margin-left: 0.35rem;
+  font-size: 0.86em;
+  font-weight: 400;
+  color: #6b7280;
+}
 
 .filter-live-results-text {
   display: flex;
