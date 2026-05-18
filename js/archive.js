@@ -312,6 +312,29 @@ function safeArchiveValue(value) {
   return value;
 }
 
+function archiveDateOnly(value) {
+  if (!value) return value;
+
+  const text = String(value).trim();
+
+  // ISO timestamp: 2026-04-30T13:28:37.313Z
+  if (/^\d{4}-\d{2}-\d{2}T/.test(text)) {
+    return text.slice(0, 10);
+  }
+
+  // SQL timestamp: 2026-04-30 13:28:37
+  if (/^\d{4}-\d{2}-\d{2}\s/.test(text)) {
+    return text.slice(0, 10);
+  }
+
+  // Slash date with time: 13/01/2021 11:28
+  if (/^\d{1,2}\/\d{1,2}\/\d{4}\s/.test(text)) {
+    return text.split(/\s+/)[0];
+  }
+
+  return text;
+}
+
 function archiveHasRealValue(value) {
   return value !== null && value !== undefined && value !== "";
 }
@@ -2805,11 +2828,22 @@ function archiveRenderDisplayMode(record) {
   digitalHtml += archiveRenderDetailItem(archiveLabel("Resolution", "Resolution"), archiveRaw(record, "Resolution"));
 
   let metadataHtml = "";
-  metadataHtml += archiveRenderDetailItem(archiveLabel("Archive Recorder", "Archive Recorder"), s.archive_recorder);
-  metadataHtml += archiveRenderDetailItem(archiveLabel("Date of Recording", "Date of Recording"), s.date_of_recording);
-  metadataHtml += archiveRenderDetailItem(archiveLabel("Resource", "Resource"), archiveRaw(record, "Resource"), true);
-  metadataHtml += archiveRenderDetailItem(archiveLabel("Scope", "Scope"), archiveScopeLabel(record.source?.scope));
-  metadataHtml += archiveRenderDetailItem(archiveLabel("Editable", "Editable"), record.source?.is_editable ? archiveLabel("Yes", "Yes") : archiveLabel("No", "No"));
+  metadataHtml += archiveRenderDetailItem(
+    archiveLabel("Archive Recorder", "Archive Recorder"),
+    s.archive_recorder
+  );
+  metadataHtml += archiveRenderDetailItem(
+    archiveLabel("Date of Recording", "Date of Recording"),
+    archiveDateOnly(s.date_of_recording)
+  );
+  metadataHtml += archiveRenderDetailItem(
+    t("recorded_language", "Recorded Language"),
+    displayLanguageName(archiveRaw(record, "Preferred Language"))
+  );
+  metadataHtml += archiveRenderDetailItem(
+    archiveLabel("Resource", "Resource"),
+    archiveRaw(record, "Resource")
+  );
 
   const materialHasValues = archiveSectionHasValues([
     s.level,
@@ -2860,8 +2894,8 @@ function archiveRenderDisplayMode(record) {
   const metadataHasValues = archiveSectionHasValues([
     s.archive_recorder,
     s.date_of_recording,
-    archiveRaw(record, "Resource"),
-    archiveScopeLabel(record.source?.scope)
+    archiveRaw(record, "Preferred Language"),
+    archiveRaw(record, "Resource")
   ]);
 
   const canEditThisRecord = canEditArchiveRecord(record);
@@ -2933,7 +2967,6 @@ function archiveRenderEditMode(record) {
     archiveRaw(record, "Level")
   );
   materialHtml += archiveRenderTextInput("Original Reference", archiveLabel("Original Reference", "Original Reference"), archiveRaw(record, "Original Reference"));
-  materialHtml += archiveRenderReadOnlyItem(archiveLabel("CAAL_ID", "CAAL_ID"), archiveIdentity(record, "caal_id"));
   let relatedHtml = "";
   relatedHtml += archiveRenderCaalIdChipInput(
     "Associated CAAL_ID",
@@ -3039,11 +3072,12 @@ function archiveRenderEditMode(record) {
   );
   metadataHtml += archiveRenderReadOnlyItem(
     archiveLabel("Date of Recording", "Date of Recording"),
-    archiveRaw(record, "Date of Recording") || archiveLabel("Set automatically on save", "Set automatically on save")
+    archiveDateOnly(archiveRaw(record, "Date of Recording")) ||
+      archiveLabel("Set automatically on save", "Set automatically on save")
   );
   metadataHtml += archiveRenderTextarea("Resource", archiveLabel("Resource", "Resource"), archiveRaw(record, "Resource"), true);
   metadataHtml += archiveRenderReadOnlyItem(
-    archiveLabel("Preferred Language", "Preferred Language"),
+    t("recorded_language", "Recorded Language"),
     displayLanguageName(archiveRaw(record, "Preferred Language"))
   );
   metadataHtml += archiveRenderTextInput("Country", archiveLabel("Country", "Country"), archiveRaw(record, "Country"));
@@ -3391,11 +3425,24 @@ document.addEventListener("app:languageChanged", async (event) => {
         archiveUpdateSelectedResultCard();
         applyArchiveStaticLabels();
       } else {
+        archiveSelectedRecord = null;
+        archivePendingNewRecord = null;
+        archiveIsEditMode = false;
+        archiveIsDirty = false;
+        archiveSyncModeVisualState();
         renderArchiveEmptyState();
       }
+    } else {
+      archiveSelectedRecord = null;
+      archivePendingNewRecord = null;
+      archiveIsEditMode = false;
+      archiveIsDirty = false;
+      archiveSyncModeVisualState();
+      renderArchiveEmptyState();
     }
   } catch (error) {
     console.error("Archive records refresh failed:", error);
+
   } finally {
     setArchiveLoading(false);
   }

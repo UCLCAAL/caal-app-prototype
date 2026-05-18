@@ -12,6 +12,15 @@ function firstDefined(...values) {
   return null;
 }
 
+const ALLOWED_MONUMENT_LANGS = new Set([
+  "en", "ru", "zh", "kk", "ky", "tg", "tk", "uz"
+]);
+
+function safeMonumentLang(lang) {
+  const value = String(lang || "en").toLowerCase();
+  return ALLOWED_MONUMENT_LANGS.has(value) ? value : "en";
+}
+
 function pickLangValue(row, baseName, lang, fallbackOrder = []) {
   const direct = row[`${baseName}_${lang}`];
   if (direct !== undefined && direct !== null && direct !== "") return direct;
@@ -19,6 +28,36 @@ function pickLangValue(row, baseName, lang, fallbackOrder = []) {
   for (const key of fallbackOrder) {
     const value = row[key];
     if (value !== undefined && value !== null && value !== "") return value;
+  }
+
+  return null;
+}
+
+function fallbackLangForDisplay(lang) {
+  return ["kk", "ky", "tg", "tk", "uz"].includes(String(lang || "").toLowerCase())
+    ? "ru"
+    : "en";
+}
+
+function pickLangValueWithFallback(row, baseName, lang, fallbackOrder = []) {
+  const safeLang = safeMonumentLang(lang);
+  const fallbackLang = fallbackLangForDisplay(safeLang);
+
+  const direct = row[`${baseName}_${safeLang}`];
+  if (direct !== undefined && direct !== null && direct !== "") {
+    return direct;
+  }
+
+  const fallback = row[`${baseName}_${fallbackLang}`];
+  if (fallback !== undefined && fallback !== null && fallback !== "") {
+    return fallback;
+  }
+
+  for (const key of fallbackOrder) {
+    const value = row[key];
+    if (value !== undefined && value !== null && value !== "") {
+      return value;
+    }
   }
 
   return null;
@@ -74,11 +113,36 @@ function buildResolvedMonumentRecord(row, lang, session) {
     summary: {
       primary_name: firstDefined(row["Primary Name"], row.primary_name),
       primary_name_english: firstDefined(row["Primary Name (English)"], row.primary_name_english),
-      country: pickLangValue(row, "country", lang, ["Country"]),
-      classification: pickLangValue(row, "classification", lang, ["Classification"]),
-      designation: pickLangValue(row, "designation", lang, ["Designation"]),
-      monument_type1: pickLangValue(row, "monument_type1", lang, ["Monument Type1"]),
-      cultural_period1: pickLangValue(row, "cultural_period1", lang, ["Cultural Period1"])
+
+      country: firstDefined(
+        row.country_display,
+        pickLangValueWithFallback(row, "country", lang, ["Country"])
+      ),
+
+      classification: firstDefined(
+        row.classification_display,
+        pickLangValueWithFallback(row, "classification", lang, ["Classification"])
+      ),
+
+      designation: firstDefined(
+        row.designation_display,
+        pickLangValueWithFallback(row, "designation", lang, ["Designation"])
+      ),
+
+      monument_type1: firstDefined(
+        row.monument_type1_display,
+        pickLangValueWithFallback(row, "monument_type1", lang, ["Monument Type1"])
+      ),
+
+      cultural_period1: firstDefined(
+        row.cultural_period1_display,
+        pickLangValueWithFallback(row, "cultural_period1", lang, ["Cultural Period1"])
+      ),
+
+      religion1: firstDefined(
+        row.religion1_display,
+        pickLangValueWithFallback(row, "religion1", lang, ["Religion1"])
+      )
     },
     raw: row,
     geometry: buildGeometry(row),
@@ -100,8 +164,11 @@ function buildResolvedArchiveRecord(row, lang, session) {
       original_title: firstDefined(row["Original Title"], row.original_title),
       english_title: firstDefined(row["English Title"], row.english_title),
       original_reference: firstDefined(row["Original Reference"], row.original_reference),
-      content_type: pickLangValue(row, "content_type", lang, ["Content Type", "content_type_en", "content_type"]),
-      country: pickLangValue(row, "country", lang, ["Country", "country_en", "country"])
+      content_type: pickLangValueWithFallback(row, "content_type", lang, ["Content Type", "content_type_en", "content_type"]),
+      country: pickLangValueWithFallback(row, "country", lang, ["Country", "country_en", "country"]),
+      level: pickLangValueWithFallback(row, "level", lang, ["Level", "level_en", "level"]),
+      archive_recorder: firstDefined(row["Archive Recorder"], row.archive_recorder),
+      date_of_recording: firstDefined(row["Date of Recording"], row.date_of_recording)
     },
     raw: row,
     source: {
@@ -418,14 +485,43 @@ router.get("/resolve", async (req, res) => {
   const lang = req.query.lang || currentSession.profile?.preferred_language || "en";
   const scopes = getAllowedScopes(currentSession);
 
+  const safeLang = safeMonumentLang(lang);
+  const fallbackLang = fallbackLangForDisplay(safeLang);
+
+  const workspaceCode = String(
+    currentSession?.user?.workspace_code ??
+    currentSession?.profile?.workspace_code ??
+    ""
+  ).trim().toLowerCase();
+
   try {
     // 1. Workspace monument
     if (scopes.includes("workspace")) {
       const result = await pool.query(
         `
-        SELECT *, 'workspace'::text AS source_scope
-        FROM kz.v_monuments_grid_base
-        WHERE "CAAL_ID" = $1
+        SELECT
+          v.*,
+          COALESCE(country.display_${safeLang}, country.display_${fallbackLang}, country.display_en, v."Country") AS country_display,
+          COALESCE(cls.display_${safeLang}, cls.display_${fallbackLang}, cls.display_en, v."Classification") AS classification_display,
+          COALESCE(desig.display_${safeLang}, desig.display_${fallbackLang}, desig.display_en, v."Designation") AS designation_display,
+          COALESCE(mt1.display_${safeLang}, mt1.display_${fallbackLang}, mt1.display_en, v."Monument Type1") AS monument_type1_display,
+          COALESCE(cp1.display_${safeLang}, cp1.display_${fallbackLang}, cp1.display_en, v."Cultural Period1") AS cultural_period1_display,
+          COALESCE(rel1.display_${safeLang}, rel1.display_${fallbackLang}, rel1.display_en, v."Religion1") AS religion1_display,
+          'workspace'::text AS source_scope
+        FROM kz.v_monuments_grid_base v
+        LEFT JOIN ui.v_lkp_countries country
+          ON country.canonical_value = v."Country"
+        LEFT JOIN ui.v_lkp_classifications cls
+          ON cls.canonical_value = v."Classification"
+        LEFT JOIN ui.v_lkp_designation_type desig
+          ON desig.canonical_value = v."Designation"
+        LEFT JOIN ui.v_lkp_site_types_context mt1
+          ON mt1.canonical_value = v."Monument Type1"
+        LEFT JOIN ui.v_lkp_cultural_periods_context cp1
+          ON cp1.canonical_value = v."Cultural Period1"
+        LEFT JOIN ui.v_lkp_religion rel1
+          ON rel1.canonical_value = v."Religion1"
+        WHERE v."CAAL_ID" = $1
         LIMIT 1
         `,
         [caalId]
@@ -446,20 +542,25 @@ router.get("/resolve", async (req, res) => {
     if (scopes.includes("national_ref") || scopes.includes("all_caal")) {
       const result = await pool.query(
         `
-        SELECT *,
+        SELECT
+          m.*,
+          COALESCE(m.country_${safeLang}, m.country_${fallbackLang}, m.country_en, m."Country") AS country_display,
+          COALESCE(m.classification_${safeLang}, m.classification_${fallbackLang}, m.classification_en, m."Classification") AS classification_display,
+          COALESCE(m.designation_${safeLang}, m.designation_${fallbackLang}, m.designation_en, m."Designation") AS designation_display,
+          COALESCE(m.monument_type1_${safeLang}, m.monument_type1_${fallbackLang}, m.monument_type1_en, m."Monument Type1") AS monument_type1_display,
+          COALESCE(m.cultural_period1_${safeLang}, m.cultural_period1_${fallbackLang}, m.cultural_period1_en, m."Cultural Period1") AS cultural_period1_display,
+          COALESCE(m.religion1_${safeLang}, m.religion1_${fallbackLang}, m.religion1_en, m."Religion1") AS religion1_display,
           CASE
-            WHEN (
-              "CAAL_ID" LIKE 'Mon_KZ_%'
-              OR btrim(coalesce("Country", '')) IN ('Kazakhstan', 'Казахстан')
-            )
+            WHEN NULLIF(m.workspace_code, '') IS NOT NULL
+            AND lower(m.workspace_code) = $2
             THEN 'national_ref'
             ELSE 'all_caal'
           END AS source_scope
-        FROM ui.mv_monuments_caal
-        WHERE "CAAL_ID" = $1
+        FROM ui.mv_monuments_caal m
+        WHERE m."CAAL_ID" = $1
         LIMIT 1
         `,
-        [caalId]
+        [caalId, workspaceCode]
       );
 
       if (result.rows.length) {

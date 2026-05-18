@@ -575,6 +575,36 @@ function pickLangValue(row, baseName, lang, fallbackOrder = []) {
   return null;
 }
 
+function fallbackLangForDisplay(lang) {
+  return ["kk", "ky", "tg", "tk", "uz"].includes(String(lang || "").toLowerCase())
+    ? "ru"
+    : "en";
+}
+
+function pickLangValueWithFallback(row, baseName, lang, fallbackOrder = []) {
+  const safeLang = safeMonumentLang(String(lang || "en").toLowerCase());
+  const fallbackLang = fallbackLangForDisplay(safeLang);
+
+  const direct = row[`${baseName}_${safeLang}`];
+  if (direct !== undefined && direct !== null && direct !== "") {
+    return direct;
+  }
+
+  const fallback = row[`${baseName}_${fallbackLang}`];
+  if (fallback !== undefined && fallback !== null && fallback !== "") {
+    return fallback;
+  }
+
+  for (const key of fallbackOrder) {
+    const value = row[key];
+    if (value !== undefined && value !== null && value !== "") {
+      return value;
+    }
+  }
+
+  return null;
+}
+
 function getRepeatedValues(row, fieldNames) {
   return fieldNames
     .map((field) => row[field])
@@ -615,13 +645,13 @@ function buildMonumentRecord(row, lang, currentAppUserId = null, canEditCaal = f
     summary: {
       primary_name: firstDefined(row["Primary Name"], row.primary_name),
       primary_name_english: firstDefined(row["Primary Name (English)"], row.primary_name_english),
-      country: pickLangValue(row, "country", lang, ["Country"]),
-      region: firstDefined(row["Region"], row.region),
-      classification: pickLangValue(row, "classification", lang, ["Classification"]),
-      designation: pickLangValue(row, "designation", lang, ["Designation"]),
-      monument_type1: pickLangValue(row, "monument_type1", lang, ["Monument Type1"]),
-      cultural_period1: pickLangValue(row, "cultural_period1", lang, ["Cultural Period1"]),
-      religion1: pickLangValue(row, "religion1", lang, ["Religion1"]),
+      country: pickLangValueWithFallback(row, "country", lang, ["Country"]),
+      classification: pickLangValueWithFallback(row, "classification", lang, ["Classification"]),
+      designation: pickLangValueWithFallback(row, "designation", lang, ["Designation"]),
+
+      monument_type1: pickLangValueWithFallback(row, "monument_type1", lang, ["Monument Type1"]),
+      cultural_period1: pickLangValueWithFallback(row, "cultural_period1", lang, ["Cultural Period1"]),
+      religion1: pickLangValueWithFallback(row, "religion1", lang, ["Religion1"]),
       longitude: firstDefined(row["Longitude"], row.longitude, row.geom_lng),
       latitude: firstDefined(row["Latitude"], row.latitude, row.geom_lat),
       recorder: firstDefined(row["Recorder"], row.recorder),
@@ -1182,6 +1212,7 @@ function workspaceListFilterColumnsSql(alias = "m") {
 function monumentCardSelectSql(alias = "combined", lang = "en") {
   const p = alias ? `${alias}.` : "";
   const safeLang = safeMonumentLang(lang);
+  const fallbackLang = fallbackLookupLang(safeLang);
 
   return `
     ${p}id,
@@ -1190,9 +1221,9 @@ function monumentCardSelectSql(alias = "combined", lang = "en") {
     ${p}"Primary Name (English)",
     ${p}"Other Names",
     ${p}"Classification",
-    ${p}classification_${safeLang} AS classification_display,
+    COALESCE(${p}classification_${safeLang}, ${p}classification_${fallbackLang}, ${p}classification_en, ${p}"Classification") AS classification_display,
     ${p}"Monument Type1",
-    ${p}monument_type1_${safeLang} AS monument_type1_display,
+    COALESCE(${p}monument_type1_${safeLang}, ${p}monument_type1_${fallbackLang}, ${p}monument_type1_en, ${p}"Monument Type1") AS monument_type1_display,
     ${p}"Longitude",
     ${p}"Latitude",
     ${p}"Tstamp",
@@ -1208,6 +1239,7 @@ function monumentCardSelectSql(alias = "combined", lang = "en") {
 function promotedWorkspaceCardSelectSql(alias = "m", lang = "en") {
   const p = alias ? `${alias}.` : "";
   const safeLang = safeMonumentLang(lang);
+  const fallbackLang = fallbackLookupLang(safeLang);
 
   return `
     ${p}id,
@@ -1216,9 +1248,9 @@ function promotedWorkspaceCardSelectSql(alias = "m", lang = "en") {
     ${p}"Primary Name (English)",
     ${p}"Other Names",
     ${p}"Classification",
-    ${p}classification_${safeLang} AS classification_display,
+    COALESCE(${p}classification_${safeLang}, ${p}classification_${fallbackLang}, ${p}classification_en, ${p}"Classification") AS classification_display,
     ${p}"Monument Type1",
-    ${p}monument_type1_${safeLang} AS monument_type1_display,
+    COALESCE(${p}monument_type1_${safeLang}, ${p}monument_type1_${fallbackLang}, ${p}monument_type1_en, ${p}"Monument Type1") AS monument_type1_display,
     ${p}"Longitude",
     ${p}"Latitude",
     ${p}"Tstamp",
@@ -1234,6 +1266,7 @@ function promotedWorkspaceCardSelectSql(alias = "m", lang = "en") {
 function promotedWorkspaceMapSelectSql(alias = "m", lang = "en") {
   const p = alias ? `${alias}.` : "";
   const safeLang = safeMonumentLang(lang);
+  const fallbackLang = fallbackLookupLang(safeLang);
 
   return `
     ${p}id,
@@ -1241,18 +1274,18 @@ function promotedWorkspaceMapSelectSql(alias = "m", lang = "en") {
     ${p}"Primary Name",
     ${p}"Primary Name (English)",
     ${p}"Country",
-    ${p}country_${safeLang} AS country_display,
+    COALESCE(${p}country_${safeLang}, ${p}country_${fallbackLang}, ${p}country_en, ${p}"Country") AS country_display,
     ${p}"Region",
     ${p}"Classification",
-    ${p}classification_${safeLang} AS classification_display,
+    COALESCE(${p}classification_${safeLang}, ${p}classification_${fallbackLang}, ${p}classification_en, ${p}"Classification") AS classification_display,
     ${p}"Designation",
-    ${p}designation_${safeLang} AS designation_display,
+    COALESCE(${p}designation_${safeLang}, ${p}designation_${fallbackLang}, ${p}designation_en, ${p}"Designation") AS designation_display,
     ${p}"Monument Type1",
-    ${p}monument_type1_${safeLang} AS monument_type1_display,
+    COALESCE(${p}monument_type1_${safeLang}, ${p}monument_type1_${fallbackLang}, ${p}monument_type1_en, ${p}"Monument Type1") AS monument_type1_display,
     ${p}"Cultural Period1",
-    ${p}cultural_period1_${safeLang} AS cultural_period1_display,
+    COALESCE(${p}cultural_period1_${safeLang}, ${p}cultural_period1_${fallbackLang}, ${p}cultural_period1_en, ${p}"Cultural Period1") AS cultural_period1_display,
     ${p}"Religion1",
-    ${p}religion1_${safeLang} AS religion1_display,
+    COALESCE(${p}religion1_${safeLang}, ${p}religion1_${fallbackLang}, ${p}religion1_en, ${p}"Religion1") AS religion1_display,
     ${p}"Longitude",
     ${p}"Latitude",
     ${p}"Tstamp",
@@ -1266,6 +1299,7 @@ function promotedWorkspaceMapSelectSql(alias = "m", lang = "en") {
 
 function workspaceCardSelectSql(lang = "en") {
   const safeLang = safeMonumentLang(lang);
+  const fallbackLang = fallbackLookupLang(safeLang);
 
   return `
     m.id,
@@ -1313,6 +1347,7 @@ function workspaceCardJoinsSql() {
 
 function workspaceMapSelectSql(lang = "en") {
   const safeLang = safeMonumentLang(lang);
+  const fallbackLang = fallbackLookupLang(safeLang);
 
   return `
     m.id,
@@ -1896,6 +1931,7 @@ router.get("/monuments/map-national-clusters", async (req, res) => {
     "en";
 
   const safeLang = safeMonumentLang(lang);
+  const fallbackLang = fallbackLookupLang(safeLang);
   const zoom = Number(req.query.zoom || 0);
   const cellSize = nationalClusterCellSizeForZoom(zoom);
   const bbox = parseBboxParam(req.query.bbox);
@@ -2041,18 +2077,18 @@ router.get("/monuments/map-national-clusters", async (req, res) => {
         m."Primary Name",
         m."Primary Name (English)",
         m."Country",
-        m.country_${safeLang} AS country_display,
+        COALESCE(m.country_${safeLang}, m.country_${fallbackLang}, m.country_en, m."Country") AS country_display,
         m."Region",
         m."Classification",
-        m.classification_${safeLang} AS classification_display,
+        COALESCE(m.classification_${safeLang}, m.classification_${fallbackLang}, m.classification_en, m."Classification") AS classification_display,
         m."Designation",
-        m.designation_${safeLang} AS designation_display,
+        COALESCE(m.designation_${safeLang}, m.designation_${fallbackLang}, m.designation_en, m."Designation") AS designation_display,
         m."Monument Type1",
-        m.monument_type1_${safeLang} AS monument_type1_display,
+        COALESCE(m.monument_type1_${safeLang}, m.monument_type1_${fallbackLang}, m.monument_type1_en, m."Monument Type1") AS monument_type1_display,
         m."Cultural Period1",
-        m.cultural_period1_${safeLang} AS cultural_period1_display,
+        COALESCE(m.cultural_period1_${safeLang}, m.cultural_period1_${fallbackLang}, m.cultural_period1_en, m."Cultural Period1") AS cultural_period1_display,
         m."Religion1",
-        m.religion1_${safeLang} AS religion1_display,
+        COALESCE(m.religion1_${safeLang}, m.religion1_${fallbackLang}, m.religion1_en, m."Religion1") AS religion1_display,
         m."Longitude",
         m."Latitude",
         m.created_by_app_user_id,
@@ -2279,6 +2315,7 @@ router.get("/monuments/map", async (req, res) => {
     //console.log("MAP values:", extraValues);
 
     const safeLang = safeMonumentLang(lang);
+    const fallbackLang = fallbackLookupLang(safeLang);
 
     const dataSql = `
       SELECT
@@ -2287,18 +2324,18 @@ router.get("/monuments/map", async (req, res) => {
         "Primary Name",
         "Primary Name (English)",
         "Country",
-        country_${safeLang} AS country_display,
+        COALESCE(country_${safeLang}, country_${fallbackLang}, country_en, "Country") AS country_display,
         "Region",
         "Classification",
-        classification_${safeLang} AS classification_display,
+        COALESCE(classification_${safeLang}, classification_${fallbackLang}, classification_en, "Classification") AS classification_display,
         "Designation",
-        designation_${safeLang} AS designation_display,
+        COALESCE(designation_${safeLang}, designation_${fallbackLang}, designation_en, "Designation") AS designation_display,
         "Monument Type1",
-        monument_type1_${safeLang} AS monument_type1_display,
+        COALESCE(monument_type1_${safeLang}, monument_type1_${fallbackLang}, monument_type1_en, "Monument Type1") AS monument_type1_display,
         "Cultural Period1",
-        cultural_period1_${safeLang} AS cultural_period1_display,
+        COALESCE(cultural_period1_${safeLang}, cultural_period1_${fallbackLang}, cultural_period1_en, "Cultural Period1") AS cultural_period1_display,
         "Religion1",
-        religion1_${safeLang} AS religion1_display,
+        COALESCE(religion1_${safeLang}, religion1_${fallbackLang}, religion1_en, "Religion1") AS religion1_display,
         "Longitude",
         "Latitude",
         created_by_app_user_id,

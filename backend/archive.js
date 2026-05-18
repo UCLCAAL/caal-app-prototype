@@ -217,6 +217,36 @@ function pickLangValue(row, baseName, lang, fallbackOrder = []) {
   return null;
 }
 
+function fallbackLangForDisplay(lang) {
+  return ["kk", "ky", "tg", "tk", "uz"].includes(String(lang || "").toLowerCase())
+    ? "ru"
+    : "en";
+}
+
+function pickLangValueWithFallback(row, baseName, lang, fallbackOrder = []) {
+  const safeLang = String(lang || "en").toLowerCase();
+  const fallbackLang = fallbackLangForDisplay(safeLang);
+
+  const direct = row[`${baseName}_${safeLang}`];
+  if (direct !== undefined && direct !== null && direct !== "") {
+    return direct;
+  }
+
+  const fallback = row[`${baseName}_${fallbackLang}`];
+  if (fallback !== undefined && fallback !== null && fallback !== "") {
+    return fallback;
+  }
+
+  for (const key of fallbackOrder) {
+    const value = row[key];
+    if (value !== undefined && value !== null && value !== "") {
+      return value;
+    }
+  }
+
+  return null;
+}
+
 function firstDefined(...values) {
   for (const value of values) {
     if (value !== undefined && value !== null) {
@@ -256,9 +286,9 @@ function buildArchiveRecord(row, lang) {
       original_title: firstDefined(row["Original Title"], row.original_title),
       english_title: firstDefined(row["English Title"], row.english_title),
       original_reference: firstDefined(row["Original Reference"], row.original_reference),
-      content_type: pickLangValue(row, "content_type", lang, ["Content Type", "content_type_en", "content_type"]),
-      country: pickLangValue(row, "country", lang, ["Country", "country_en", "country"]),
-      level: pickLangValue(row, "level", lang, ["Level", "level_en", "level"]),
+      content_type: pickLangValueWithFallback(row, "content_type", lang, ["Content Type", "content_type_en", "content_type"]),
+      country: pickLangValueWithFallback(row, "country", lang, ["Country", "country_en", "country"]),
+      level: pickLangValueWithFallback(row, "level", lang, ["Level", "level_en", "level"]),
       archive_recorder: firstDefined(
         row["Archive Recorder"],
         row.archive_recorder
