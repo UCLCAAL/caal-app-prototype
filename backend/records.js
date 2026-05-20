@@ -493,12 +493,148 @@ router.get("/check", async (req, res) => {
       }
     }
 
+    // 5. Other public CAAL resource tables
+    // This is a lightweight validation check only. It does not expose full records.
+    // It lets the related-resource chip turn valid for RS, Vernacular, Institution, etc.
+    const otherPublicResult = await pool.query(
+      `
+      WITH q AS (
+        SELECT lower(trim($1::text)) AS caal_id_norm
+      ),
+      matches AS (
+        SELECT
+          c."CAAL_ID" AS caal_id,
+          'cartography'::text AS record_type,
+          'all_caal'::text AS source_scope,
+          'public_caal'::text AS storage_scope,
+          'public.CAAL_Cartography'::text AS found_in_table,
+          c.id::text AS source_row_id,
+          10 AS priority
+        FROM public."CAAL_Cartography" c, q
+        WHERE lower(trim(c."CAAL_ID")) = q.caal_id_norm
+
+        UNION ALL
+
+        SELECT
+          d."CAAL_ID" AS caal_id,
+          'dataset'::text AS record_type,
+          'all_caal'::text AS source_scope,
+          'public_caal'::text AS storage_scope,
+          'public.CAAL_Datasets'::text AS found_in_table,
+          d.id::text AS source_row_id,
+          20 AS priority
+        FROM public."CAAL_Datasets" d, q
+        WHERE lower(trim(d."CAAL_ID")) = q.caal_id_norm
+
+        UNION ALL
+
+        SELECT
+          i."CAAL_ID" AS caal_id,
+          'institution'::text AS record_type,
+          'all_caal'::text AS source_scope,
+          'public_caal'::text AS storage_scope,
+          'public.CAAL_Institution'::text AS found_in_table,
+          i.id::text AS source_row_id,
+          30 AS priority
+        FROM public."CAAL_Institution" i, q
+        WHERE lower(trim(i."CAAL_ID")) = q.caal_id_norm
+
+        UNION ALL
+
+        SELECT
+          g."CAAL_ID" AS caal_id,
+          'remote_sensing_group'::text AS record_type,
+          'all_caal'::text AS source_scope,
+          'public_caal'::text AS storage_scope,
+          'public.CAAL_RS3_Group'::text AS found_in_table,
+          g.id::text AS source_row_id,
+          40 AS priority
+        FROM public."CAAL_RS3_Group" g, q
+        WHERE lower(trim(g."CAAL_ID")) = q.caal_id_norm
+
+        UNION ALL
+
+        SELECT
+          l."CAAL_ID" AS caal_id,
+          'remote_sensing_line'::text AS record_type,
+          'all_caal'::text AS source_scope,
+          'public_caal'::text AS storage_scope,
+          'public.CAAL_RS3_Line'::text AS found_in_table,
+          l.id::text AS source_row_id,
+          50 AS priority
+        FROM public."CAAL_RS3_Line" l, q
+        WHERE lower(trim(l."CAAL_ID")) = q.caal_id_norm
+
+        UNION ALL
+
+        SELECT
+          p."CAAL_ID" AS caal_id,
+          'remote_sensing_polygon'::text AS record_type,
+          'all_caal'::text AS source_scope,
+          'public_caal'::text AS storage_scope,
+          'public.CAAL_RS3_Poly'::text AS found_in_table,
+          p.id::text AS source_row_id,
+          60 AS priority
+        FROM public."CAAL_RS3_Poly" p, q
+        WHERE lower(trim(p."CAAL_ID")) = q.caal_id_norm
+
+        UNION ALL
+
+        SELECT
+          v."CAAL_ID" AS caal_id,
+          'vernacular'::text AS record_type,
+          'all_caal'::text AS source_scope,
+          'public_caal'::text AS storage_scope,
+          'public.CAAL_Vernacular'::text AS found_in_table,
+          v.id::text AS source_row_id,
+          70 AS priority
+        FROM public."CAAL_Vernacular" v, q
+        WHERE lower(trim(v."CAAL_ID")) = q.caal_id_norm
+
+        -- Add later if/when this table exists:
+        -- UNION ALL
+        -- SELECT
+        --   act."CAAL_ID" AS caal_id,
+        --   'actor'::text AS record_type,
+        --   'all_caal'::text AS source_scope,
+        --   'public_caal'::text AS storage_scope,
+        --   'public.CAAL_Actors'::text AS found_in_table,
+        --   act.id::text AS source_row_id,
+        --   80 AS priority
+        -- FROM public."CAAL_Actors" act, q
+        -- WHERE lower(trim(act."CAAL_ID")) = q.caal_id_norm
+      )
+      SELECT
+        caal_id,
+        record_type,
+        source_scope,
+        storage_scope,
+        found_in_table,
+        source_row_id
+      FROM matches
+      ORDER BY priority
+      LIMIT 1
+      `,
+      [caalId]
+    );
+
+    if (otherPublicResult.rows.length) {
+      return res.json({
+        ok: true,
+        exists: true,
+        ...otherPublicResult.rows[0]
+      });
+    }
+
     return res.json({
       ok: true,
       exists: false,
       caal_id: caalId,
       record_type: null,
-      source_scope: null
+      source_scope: null,
+      storage_scope: null,
+      found_in_table: null,
+      source_row_id: null
     });
   } catch (error) {
     console.error("CAAL_ID check failed:", error);
@@ -776,6 +912,134 @@ function wrapSuggestBranch(sql) {
   `;
 }
 
+function publicCaalSuggestSqlParts({ safeLang, fallbackLang }) {
+  return [
+    wrapSuggestBranch(`
+      SELECT
+        m."CAAL_ID" AS caal_id,
+        'monument'::text AS record_type,
+        CASE
+          WHEN NULLIF(m.workspace_code, '') IS NOT NULL
+          AND lower(m.workspace_code) = $3
+          THEN 'national_ref'
+          ELSE 'all_caal'
+        END AS source_scope,
+        'public_caal'::text AS storage_scope,
+        COALESCE(m."Primary Name", m."Primary Name (English)", '') AS title,
+        COALESCE(
+          m.monument_type1_${safeLang},
+          m.monument_type1_${fallbackLang},
+          m.monument_type1_en,
+          m."Monument Type1",
+          ''
+        ) AS subtitle
+      FROM ui.mv_monuments_caal m
+      WHERE lower(m."CAAL_ID") LIKE lower($1)
+    `),
+
+    wrapSuggestBranch(`
+      SELECT
+        a."CAAL_ID" AS caal_id,
+        'archive'::text AS record_type,
+        CASE
+          WHEN NULLIF(a.workspace_code, '') IS NOT NULL
+          AND lower(a.workspace_code) = $3
+          THEN 'national_ref'
+          ELSE 'all_caal'
+        END AS source_scope,
+        'public_caal'::text AS storage_scope,
+        COALESCE(a."Original Title", a."English Title", a."Original Reference", '') AS title,
+        COALESCE(a."Original Reference", '') AS subtitle
+      FROM ui.mv_archive_caal_app a
+      WHERE lower(a."CAAL_ID") LIKE lower($1)
+    `),
+
+    wrapSuggestBranch(`
+      SELECT
+        c."CAAL_ID" AS caal_id,
+        'cartography'::text AS record_type,
+        'all_caal'::text AS source_scope,
+        'public_caal'::text AS storage_scope,
+        COALESCE(c."CAAL_ID", '') AS title,
+        'Cartography'::text AS subtitle
+      FROM public."CAAL_Cartography" c
+      WHERE lower(c."CAAL_ID") LIKE lower($1)
+    `),
+
+    wrapSuggestBranch(`
+      SELECT
+        d."CAAL_ID" AS caal_id,
+        'dataset'::text AS record_type,
+        'all_caal'::text AS source_scope,
+        'public_caal'::text AS storage_scope,
+        COALESCE(d."CAAL_ID", '') AS title,
+        'Dataset'::text AS subtitle
+      FROM public."CAAL_Datasets" d
+      WHERE lower(d."CAAL_ID") LIKE lower($1)
+    `),
+
+    wrapSuggestBranch(`
+      SELECT
+        i."CAAL_ID" AS caal_id,
+        'institution'::text AS record_type,
+        'all_caal'::text AS source_scope,
+        'public_caal'::text AS storage_scope,
+        COALESCE(i."CAAL_ID", '') AS title,
+        'Institution'::text AS subtitle
+      FROM public."CAAL_Institution" i
+      WHERE lower(i."CAAL_ID") LIKE lower($1)
+    `),
+
+    wrapSuggestBranch(`
+      SELECT
+        g."CAAL_ID" AS caal_id,
+        'remote_sensing_group'::text AS record_type,
+        'all_caal'::text AS source_scope,
+        'public_caal'::text AS storage_scope,
+        COALESCE(g."CAAL_ID", '') AS title,
+        'Remote sensing group'::text AS subtitle
+      FROM public."CAAL_RS3_Group" g
+      WHERE lower(g."CAAL_ID") LIKE lower($1)
+    `),
+
+    wrapSuggestBranch(`
+      SELECT
+        l."CAAL_ID" AS caal_id,
+        'remote_sensing_line'::text AS record_type,
+        'all_caal'::text AS source_scope,
+        'public_caal'::text AS storage_scope,
+        COALESCE(l."CAAL_ID", '') AS title,
+        'Remote sensing line'::text AS subtitle
+      FROM public."CAAL_RS3_Line" l
+      WHERE lower(l."CAAL_ID") LIKE lower($1)
+    `),
+
+    wrapSuggestBranch(`
+      SELECT
+        p."CAAL_ID" AS caal_id,
+        'remote_sensing_polygon'::text AS record_type,
+        'all_caal'::text AS source_scope,
+        'public_caal'::text AS storage_scope,
+        COALESCE(p."CAAL_ID", '') AS title,
+        'Remote sensing polygon'::text AS subtitle
+      FROM public."CAAL_RS3_Poly" p
+      WHERE lower(p."CAAL_ID") LIKE lower($1)
+    `),
+
+    wrapSuggestBranch(`
+      SELECT
+        v."CAAL_ID" AS caal_id,
+        'vernacular'::text AS record_type,
+        'all_caal'::text AS source_scope,
+        'public_caal'::text AS storage_scope,
+        COALESCE(v."CAAL_ID", '') AS title,
+        'Vernacular'::text AS subtitle
+      FROM public."CAAL_Vernacular" v
+      WHERE lower(v."CAAL_ID") LIKE lower($1)
+    `)
+  ];
+}
+
 // for dropdown suggestion speed
 function workspaceSuggestSqlForStorage(storage, sourceScope = "workspace") {
   const parts = [];
@@ -801,7 +1065,6 @@ function workspaceSuggestSqlForStorage(storage, sourceScope = "workspace") {
       WHERE lower(m."CAAL_ID") LIKE lower($1)
         AND COALESCE(rr.status, '') <> 'deleted'
       ORDER BY m."CAAL_ID"
-      LIMIT 12
     `));
   }
 
@@ -822,7 +1085,6 @@ function workspaceSuggestSqlForStorage(storage, sourceScope = "workspace") {
       WHERE lower(a."CAAL_ID") LIKE lower($1)
         AND COALESCE(rr.status, '') <> 'deleted'
       ORDER BY a."CAAL_ID"
-      LIMIT 12
     `));
   }
 
@@ -838,6 +1100,10 @@ router.get("/suggest", async (req, res) => {
   }
 
   const q = String(req.query.q || "").trim();
+
+  const requestedLimit = Number(req.query.limit) || 50;
+  const limit = Math.min(Math.max(requestedLimit, 1), 100);
+
   const lang = req.query.lang || currentSession.profile?.preferred_language || "en";
   const safeLang = safeMonumentLang(lang);
   const fallbackLang = fallbackLangForDisplay(safeLang);
@@ -855,7 +1121,7 @@ router.get("/suggest", async (req, res) => {
   const scopes = getAllowedScopes(currentSession);
 
   try {
-    const values = [`${q}%`, `%${q}%`, workspaceCode, scopes];
+    const values = [`${q}%`, `%${q}%`, workspaceCode, scopes, limit];
     const parts = [];
 
     const workspaceStorages = suggestWorkspaceStoragesForSession(currentSession);
@@ -868,49 +1134,7 @@ router.get("/suggest", async (req, res) => {
     }
 
     if (scopes.includes("national_ref") || scopes.includes("all_caal")) {
-      parts.push(wrapSuggestBranch(`
-        SELECT
-          m."CAAL_ID" AS caal_id,
-          'monument'::text AS record_type,
-          CASE
-            WHEN NULLIF(m.workspace_code, '') IS NOT NULL
-            AND lower(m.workspace_code) = $3
-            THEN 'national_ref'
-            ELSE 'all_caal'
-          END AS source_scope,
-          'public_caal'::text AS storage_scope,
-          COALESCE(m."Primary Name", m."Primary Name (English)", '') AS title,
-          COALESCE(
-            m.monument_type1_${safeLang},
-            m.monument_type1_${fallbackLang},
-            m.monument_type1_en,
-            m."Monument Type1",
-            ''
-          ) AS subtitle
-        FROM ui.mv_monuments_caal m
-        WHERE lower(m."CAAL_ID") LIKE lower($1)
-        ORDER BY m."CAAL_ID"
-        LIMIT 12
-      `));
-
-      parts.push(wrapSuggestBranch(`
-        SELECT
-          a."CAAL_ID" AS caal_id,
-          'archive'::text AS record_type,
-          CASE
-            WHEN NULLIF(a.workspace_code, '') IS NOT NULL
-            AND lower(a.workspace_code) = $3
-            THEN 'national_ref'
-            ELSE 'all_caal'
-          END AS source_scope,
-          'public_caal'::text AS storage_scope,
-          COALESCE(a."Original Title", a."English Title", a."Original Reference", '') AS title,
-          COALESCE(a."Original Reference", '') AS subtitle
-        FROM ui.mv_archive_caal_app a
-        WHERE lower(a."CAAL_ID") LIKE lower($1)
-        ORDER BY a."CAAL_ID"
-        LIMIT 12
-      `));
+      parts.push(...publicCaalSuggestSqlParts({ safeLang, fallbackLang }));
     }
 
     if (!parts.length) {
@@ -932,7 +1156,7 @@ router.get("/suggest", async (req, res) => {
           ELSE 2
         END,
         caal_id
-      LIMIT 12
+      LIMIT $5
     `;
 
     const result = await pool.query(sql, values);
