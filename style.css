@@ -889,6 +889,12 @@ body {
   text-overflow: ellipsis;
 }
 
+.is-disabled,
+[aria-busy="true"] {
+  pointer-events: none;
+  opacity: 0.55;
+}
+
 .legacy-tree-disambiguator {
   margin-left: 0.35rem;
   font-size: 0.86em;

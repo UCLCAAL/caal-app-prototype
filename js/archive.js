@@ -74,6 +74,8 @@ let archiveLimit = 100;
 let archiveOffset = 0;
 
 let archivePendingNewRecord = null;    //
+let archiveRecordOpenInProgress = false;
+
 let archiveIsDirty = false;      // when entering edit mode and makign a change, save resets it to false
 let archivePreviewRecord = null;
 let archiveJustSavedRecordId = null;
@@ -149,6 +151,33 @@ function setArchiveLoading(isLoading, message = "") {
       el.classList.remove("is-loading");
     }
   });
+}
+
+function setArchiveRecordOpening(isOpening) {
+  archiveRecordOpenInProgress = isOpening;
+
+  const disabled = isOpening === true;
+
+  document
+    .querySelectorAll(
+      [
+        ".result-card",
+        ".archive-associated-id-chip",
+        "#archiveCloseRecordBtn",
+        "#archiveEditBtn",
+        "#addArchiveBtn"
+      ].join(",")
+    )
+    .forEach((el) => {
+      if (!el) return;
+
+      if ("disabled" in el) {
+        el.disabled = disabled;
+      }
+
+      el.classList.toggle("is-disabled", disabled);
+      el.setAttribute("aria-busy", disabled ? "true" : "false");
+    });
 }
 
 function setArchiveResultsCountText(text) {
@@ -2686,9 +2715,13 @@ function renderArchiveResultsList(records) {
 
     Array.from(archiveResultsList.querySelectorAll(".result-card")).forEach((card) => {
       card.addEventListener("click", async () => {
+        if (archiveRecordOpenInProgress) return;
+
         const idx = Number(card.dataset.archiveResultIndex);
         const lightRecord = records[idx];
         if (!lightRecord) return;
+
+        setArchiveRecordOpening(true);
 
         setArchiveLoading(
           true,
@@ -2716,12 +2749,45 @@ function renderArchiveResultsList(records) {
           alert(error.message || t("could_not_load_full_archive_record", "Could not load full archive record"));
         } finally {
           setArchiveLoading(false);
+          setArchiveRecordOpening(false);
         }
       });
     });
 
   archiveUpdateSelectedResultCard();
   renderArchivePageInfo();
+}
+
+async function archiveOpenAssociatedRecord(caalId) {
+  if (archiveRecordOpenInProgress) return;
+
+  setArchiveRecordOpening(true);
+  setArchiveLoading(true, t("loading_preview", "Loading preview..."));
+
+  try {
+    const response = await fetch(
+      `/api/records/resolve?caal_id=${encodeURIComponent(caalId)}`,
+      {
+        method: "GET",
+        credentials: "include"
+      }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok || !data.ok || !data.record) {
+      alert(data.error || t("could_not_load_related_record", "Could not load related record"));
+      return;
+    }
+
+    archiveOpenAssociatedRecordPreview(data.record, data.record_type, caalId);
+  } catch (error) {
+    console.error("Could not load associated CAAL_ID:", error);
+    alert(error.message || t("could_not_load_related_record", "Could not load related record"));
+  } finally {
+    setArchiveLoading(false);
+    setArchiveRecordOpening(false);
+  }
 }
 
 // Detail rendering

@@ -179,6 +179,7 @@ let monumentPageLimit = 100;
 let monumentPageOffset = 0;
 
 let monumentsIsLoading = false;
+let monumentRecordOpenInProgress = false;
 
 let monumentMoveDebounceTimer = null;
 let monumentFilterDebounceTimer = null;
@@ -2394,38 +2395,7 @@ function hasActiveDetailsRecord() {
 }
 
 async function openResultRecordFromList(lightRecord) {
-  if (!lightRecord) return;
-
-  setMonumentsLoading(true, t("loading_full_record", "Loading full record..."));
-
-  try {
-    const fullRecord = await loadFullMonumentRecord(lightRecord);
-
-    if (hasActiveDetailsRecord()) {
-      renderMonumentPreviewModal(fullRecord);
-      return;
-    }
-
-    monumentIsEditMode = false;
-    monumentSyncModeVisualState();
-    monumentPendingNewRecord = null;
-    monumentSelectedRecord = fullRecord;
-    clearRelationshipStateForNewSelection();
-
-    renderMonumentRecordDetails(fullRecord);
-    updateSelectedResultCard();
-
-    if (map && fullRecord.geometry?.coordinates) {
-      drawSelectedMonumentHighlight(fullRecord);
-    } else if (map && lightRecord.geometry?.coordinates) {
-      drawSelectedMonumentHighlight(lightRecord);
-    }
-  } catch (error) {
-    console.error("Failed to load monument record:", error);
-    alert(error.message || t("could_not_load_full_monument_record", "Could not load full monument record"));
-  } finally {
-    setMonumentsLoading(false);
-  }
+  return handleResultCardOpen(lightRecord);
 }
 
 function updateSelectedResultCard() {
@@ -2477,6 +2447,36 @@ function setMonumentsLoading(isLoading, message = "") {
       }
     }
   });
+}
+
+function setMonumentRecordOpening(isOpening) {
+  monumentRecordOpenInProgress = isOpening;
+
+  const disabled = isOpening === true;
+
+  document
+    .querySelectorAll(
+      [
+        ".result-card",
+        ".result-preview-btn",
+        ".result-centre-btn",
+        ".related-id-chip",
+        ".monument-master-id-chip",
+        "#monumentCloseRecordBtn",
+        "#monumentEditBtn",
+        "#addMonumentBtn"
+      ].join(",")
+    )
+    .forEach((el) => {
+      if (!el) return;
+
+      if ("disabled" in el) {
+        el.disabled = disabled;
+      }
+
+      el.classList.toggle("is-disabled", disabled);
+      el.setAttribute("aria-busy", disabled ? "true" : "false");
+    });
 }
 
 function setMonumentResultsCountText(text) {
@@ -4896,8 +4896,10 @@ function wireMasterIdChip() {
 }
 
 async function openMasterRecordInDetails(masterId) {
+  if (monumentRecordOpenInProgress) return;
   if (!monumentConfirmLoseChanges()) return;
 
+  setMonumentRecordOpening(true);
   setMonumentsLoading(true, t("loading_full_record", "Loading full record..."));
 
   try {
@@ -4951,10 +4953,13 @@ async function openMasterRecordInDetails(masterId) {
     alert(error.message || t("could_not_load_master_record", "Could not load master record"));
   } finally {
     setMonumentsLoading(false);
+    setMonumentRecordOpening(false);
   }
 }
 
 async function openRelatedRecordPreview(caalId) {
+  if (monumentRecordOpenInProgress) return;
+
   const key = relatedPreviewCacheKey(caalId);
 
   if (relatedPreviewRecordCache.has(key)) {
@@ -4972,6 +4977,7 @@ async function openRelatedRecordPreview(caalId) {
     window.appSession?.profile?.preferred_language ||
     "en";
 
+  setMonumentRecordOpening(true);
   setMonumentsLoading(true, t("loading_preview", "Loading preview..."));
 
   try {
@@ -4998,8 +5004,9 @@ async function openRelatedRecordPreview(caalId) {
   } catch (error) {
     console.error("Could not load related record:", error);
     alert(error.message || t("could_not_load_related_record", "Could not load related record"));
-  } finally {
+    } finally {
     setMonumentsLoading(false);
+    setMonumentRecordOpening(false);
   }
 }
 
@@ -8659,7 +8666,9 @@ function wireCopyFieldButtons(root = document) {
 
 async function previewMonumentFromLightRecord(lightRecord) {
   if (!lightRecord) return;
+  if (monumentRecordOpenInProgress) return;
 
+  setMonumentRecordOpening(true);
   setMonumentsLoading(true, t("loading_preview", "Loading preview..."));
 
   try {
@@ -8670,6 +8679,7 @@ async function previewMonumentFromLightRecord(lightRecord) {
     alert(error.message || t("could_not_load_monument_preview", "Could not load monument preview"));
   } finally {
     setMonumentsLoading(false);
+    setMonumentRecordOpening(false);
   }
 }
 
@@ -8722,7 +8732,11 @@ async function centreLightRecordOnMap(lightRecord) {
 
 async function openLightRecordInDetails(lightRecord) {
   if (!lightRecord) return;
+  if (monumentRecordOpenInProgress) return;
 
+  if (!monumentConfirmLoseChanges()) return;
+
+  setMonumentRecordOpening(true);
   setMonumentsLoading(true, t("loading_full_record", "Loading full record..."));
 
   try {
@@ -8748,11 +8762,13 @@ async function openLightRecordInDetails(lightRecord) {
     alert(error.message || t("could_not_load_full_monument_record", "Could not load full monument record"));
   } finally {
     setMonumentsLoading(false);
+    setMonumentRecordOpening(false);
   }
 }
 
 async function handleResultCardOpen(lightRecord) {
   if (!lightRecord) return;
+  if (monumentRecordOpenInProgress) return;
 
   if (monumentIsEditMode) {
     await previewMonumentFromLightRecord(lightRecord);
