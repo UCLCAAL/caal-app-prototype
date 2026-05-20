@@ -1,10 +1,33 @@
 const express = require("express");
 const pool = require("./db");
+
+const {
+  WORKSPACE_STORAGE,
+  getWorkspaceStorage,
+  getSessionWorkspaceCode,
+  workspaceMonumentTableSql,
+  workspaceMonumentViewSql,
+  workspaceSourceSchemaSql,
+  workspaceStorageScopeSql,
+  workspaceSourceTableSql,
+  storageScopeForSession,
+  tableSqlForStorageScope,
+  storageFromScope,
+  viewSql,
+  tableSql,
+  inferRecordWorkspaceCodeFromPayload,
+  monumentTableForWorkspaceCode,
+  storageScopeForWorkspaceCode,
+  enabledWorkspaceStorageConfigs
+} = require("./workspaceStorage");
+
 const {
   getResourceRelations,
   syncResourceRelationsForMonument,
   deactivateResourceRelationsForDeletedRecord
 } = require("./resourceRelations");
+
+const { allocateCaalId } = require("./caalIdAllocator");
 
 const router = express.Router();
 
@@ -12,9 +35,9 @@ const router = express.Router();
 // CONFIG
 // ========================================================
 
-const MONUMENTS_WORKSPACE_TABLE = 'kz."CAAL_Monuments"';
+//const MONUMENTS_WORKSPACE_TABLE = 'kz."CAAL_Monuments"';
 const MONUMENTS_CAAL_TABLE = 'public."CAAL_Monuments"';
-const MONUMENTS_VIEW = 'kz.v_monuments_grid_base';
+//const MONUMENTS_VIEW = 'kz.v_monuments_grid_base';
 const GEOM_COLUMN_SQL = `"geom"`;
 
 const MONUMENTS_CAAL_MV = "ui.mv_monuments_caal";
@@ -194,9 +217,185 @@ function monumentHelperColumnsSql(alias = "") {
   `;
 }
 
+function ownedWorkspaceStorageConfigs(currentSession) {
+  const ws = getWorkspaceStorage(currentSession);
+
+  if (ws.workspaceCode !== "caal") {
+    return [ws];
+  }
+
+  return enabledWorkspaceStorageConfigs()
+    .filter((config) => {
+      return (
+        config?.monumentTable &&
+        (config?.monumentAppView || config?.monumentView)
+      );
+    });
+}
+
+function sqlTextLiteral(value) {
+  return `'${String(value ?? "").replace(/'/g, "''")}'`;
+}
+
+function ownedWorkspaceMonumentFullSql(storage, userId) {
+  const viewName = viewSql(storage.schema, storage.monumentView);
+  const storageScope = sqlTextLiteral(storage.storageScope);
+  const sourceSchema = sqlTextLiteral(storage.schema);
+
+  return `
+    SELECT
+      v.*,
+      ${monumentHelperColumnsSql("v")},
+      'workspace'::text AS source_scope,
+      ${storageScope}::text AS storage_scope,
+      false AS is_promoted,
+      true AS is_editable
+    FROM ${viewName} v
+    LEFT JOIN public.record_registry rr
+      ON rr.source_schema = ${sourceSchema}
+     AND rr.source_table = 'CAAL_Monuments'
+     AND rr.source_row_id = v.id
+    WHERE v.created_by_app_user_id = ${userId}
+      AND COALESCE(rr.status, '') <> 'deleted'
+  `;
+}
+
+function workspaceCardSelectSqlForStorage(storageScopeSql, lang = "en") {
+  const safeLang = safeMonumentLang(lang);
+  const fallbackLang = fallbackLookupLang(safeLang);
+
+  return `
+    m.id,
+    m."CAAL_ID",
+    m."Primary Name",
+    m."Primary Name (English)",
+    m."Other Names",
+
+    m."Classification",
+    COALESCE(
+      cls.display_${safeLang},
+      cls.display_ru,
+      cls.display_en,
+      m."Classification"
+    ) AS classification_display,
+
+    m."Monument Type1",
+    COALESCE(
+      mt1.display_${safeLang},
+      mt1.display_ru,
+      mt1.display_en,
+      m."Monument Type1"
+    ) AS monument_type1_display,
+
+    m."Longitude",
+    m."Latitude",
+    m."Tstamp",
+    m.created_by_app_user_id,
+    'workspace'::text AS source_scope,
+    ${storageScopeSql}::text AS storage_scope,
+    false AS is_promoted,
+    true AS is_editable,
+    ${workspaceListFilterColumnsSql("m")}
+  `;
+}
+
+function ownedWorkspaceMonumentListSql(storage, userId, lang = "en") {
+  const tableName = tableSql(storage.schema, storage.monumentTable);
+  const storageScope = sqlTextLiteral(storage.storageScope);
+  const sourceSchema = sqlTextLiteral(storage.schema);
+
+  return `
+    SELECT
+      ${workspaceCardSelectSqlForStorage(storageScope, lang)}
+    FROM ${tableName} m
+    LEFT JOIN public.record_registry rr
+      ON rr.source_schema = ${sourceSchema}
+     AND rr.source_table = 'CAAL_Monuments'
+     AND rr.source_row_id = m.id
+    ${workspaceCardJoinsSql()}
+    WHERE m.created_by_app_user_id = ${userId}
+      AND COALESCE(rr.status, '') <> 'deleted'
+  `;
+}
+
+function allWorkspaceMonumentListSql(storage, currentSession, lang = "en") {
+  const tableName = tableSql(storage.schema, storage.monumentTable);
+  const storageScope = sqlTextLiteral(storage.storageScope);
+  const sourceSchema = sqlTextLiteral(storage.schema);
+  const userId = currentAppUserIdFromSession(currentSession) ?? -1;
+
+  return `
+    SELECT
+      ${workspaceCardSelectSqlForStorage(storageScope, lang)}
+    FROM ${tableName} m
+    LEFT JOIN public.record_registry rr
+      ON rr.source_schema = ${sourceSchema}
+     AND rr.source_table = 'CAAL_Monuments'
+     AND rr.source_row_id = m.id
+    ${workspaceCardJoinsSql()}
+    WHERE COALESCE(rr.status, '') <> 'deleted'
+      AND COALESCE(m.created_by_app_user_id, -1) <> ${userId}
+  `;
+}
+
+function allWorkspaceMonumentListSqlForCaalAdmin(currentSession, lang = "en") {
+  if (!isCaalAdmin(currentSession)) return "";
+
+  return monumentAllWorkspaceStorageConfigs()
+    .map((storage) => allWorkspaceMonumentListSql(storage, currentSession, lang))
+    .join("\nUNION ALL\n");
+}
+
+function monumentAllWorkspaceStorageConfigs() {
+  return enabledWorkspaceStorageConfigs()
+    .filter((config) => {
+      return (
+        config?.monumentTable &&
+        (config?.monumentAppView || config?.monumentView)
+      );
+    });
+}
+
+function allWorkspaceMonumentsSqlForCaalAdmin(currentSession) {
+  if (!isCaalAdmin(currentSession)) return "";
+
+  const userId = currentAppUserIdFromSession(currentSession) ?? -1;
+
+  return monumentAllWorkspaceStorageConfigs()
+    .map((storage) => {
+      const monumentView = viewSql(
+        storage.schema,
+        storage.monumentAppView || storage.monumentView
+      );
+
+      const storageScope = sqlTextLiteral(storage.storageScope);
+      const sourceSchema = sqlTextLiteral(storage.schema);
+
+      return `
+        SELECT
+          v.*,
+          ${monumentHelperColumnsSql("v")},
+          'all_caal'::text AS source_scope,
+          ${storageScope}::text AS storage_scope,
+          false AS is_promoted,
+          true AS is_editable
+        FROM ${monumentView} v
+        LEFT JOIN public.record_registry rr
+          ON rr.source_schema = ${sourceSchema}
+         AND rr.source_table = 'CAAL_Monuments'
+         AND rr.source_row_id = v.id
+        WHERE COALESCE(rr.status, '') <> 'deleted'
+          AND COALESCE(v.created_by_app_user_id, -1) <> ${userId}
+      `;
+    })
+    .join("\nUNION ALL\n");
+}
+
 function makeBrowseScopeConfig(currentSession, options = {}) {
   const caalSource = options.caalSource || MONUMENTS_CAAL_MV;
   const currentAppUserId = currentAppUserIdFromSession(currentSession);
+  const userId = currentAppUserId ?? -1;
+
   const canEditCaal = canEditCaalMonuments(currentSession);
   const workspaceCode = getSessionWorkspaceCode(currentSession);
   const canEditNationalCaal = isNationalAdmin(currentSession);
@@ -211,44 +410,49 @@ function makeBrowseScopeConfig(currentSession, options = {}) {
 
   const nationalWhere = nationalRefWhereSql("m", currentSession);
 
+  const workspaceSchemaSql = ownedWorkspaceStorageConfigs(currentSession)
+    .map((storage) => ownedWorkspaceMonumentFullSql(storage, userId))
+    .join("\nUNION ALL\n");
+
+  const workspacePublicOwnedSql = `
+    SELECT
+      m.*,
+      'workspace'::text AS source_scope,
+      'public_caal'::text AS storage_scope,
+      true AS is_promoted,
+      true AS is_editable
+    FROM ${caalSource} m
+    LEFT JOIN public.record_registry rr
+      ON rr.caal_id = m."CAAL_ID"
+    WHERE (
+        rr.created_by_app_user_id = ${userId}
+        OR m.created_by_app_user_id = ${userId}
+      )
+      AND COALESCE(rr.status, '') <> 'deleted'
+  `;
+
+  const ownPromotedExclusion = `
+    NOT EXISTS (
+      SELECT 1
+      FROM public.record_registry rr
+      WHERE rr.caal_id = m."CAAL_ID"
+        AND rr.created_by_app_user_id = ${userId}
+        AND (
+          rr.record_type = 'monument'
+          OR rr.source_table = 'CAAL_Monuments'
+        )
+        AND COALESCE(rr.status, '') <> 'deleted'
+    )
+  `;
+  const allWorkspaceMonumentsSql = allWorkspaceMonumentsSqlForCaalAdmin(currentSession);
+
   return {
-    // Frontend still calls this "workspace".
-    // Backend semantics: only records belonging to the current app user.
     workspace: {
-      sql: `
-        SELECT
-          v.*,
-          ${monumentHelperColumnsSql("v")},
-          'workspace'::text AS source_scope,
-          'kz_workspace'::text AS storage_scope,
-          false AS is_promoted,
-          true AS is_editable
-        FROM kz.v_monuments_grid_base v
-        LEFT JOIN public.record_registry rr
-          ON rr.source_schema = 'kz'
-         AND rr.source_table = 'CAAL_Monuments'
-         AND rr.source_row_id = v.id
-        WHERE v.created_by_app_user_id = ${currentAppUserId ?? -1}
-          AND COALESCE(rr.status, '') <> 'deleted'
-
-        UNION ALL
-
-        SELECT
-          m.*,
-          'workspace'::text AS source_scope,
-          'public_caal'::text AS storage_scope,
-          true AS is_promoted,
-          ${canEditCaal ? "true" : "true"} AS is_editable
-        FROM ${caalSource} m
-        JOIN public.record_registry rr
-          ON rr.caal_id = m."CAAL_ID"
-        WHERE rr.created_by_app_user_id = ${currentAppUserId ?? -1}
-          AND COALESCE(rr.status, '') <> 'deleted'
-      `
+      sql: [workspaceSchemaSql, workspacePublicOwnedSql]
+        .filter(Boolean)
+        .join("\nUNION ALL\n")
     },
 
-    // Frontend calls this "national_ref".
-    // Backend: national public CAAL records, excluding my own promoted records.
     national_ref: {
       sql: `
         SELECT
@@ -259,40 +463,37 @@ function makeBrowseScopeConfig(currentSession, options = {}) {
           ${publicEditableSql} AS is_editable
         FROM ${caalSource} m
         WHERE (${nationalWhere})
+          AND COALESCE(m.created_by_app_user_id, -1) <> ${userId}
           AND NOT EXISTS (
             SELECT 1
             FROM public.record_registry rr
             WHERE rr.caal_id = m."CAAL_ID"
-              AND rr.created_by_app_user_id = ${currentAppUserId ?? -1}
+              AND rr.created_by_app_user_id = ${userId}
               AND COALESCE(rr.status, '') <> 'deleted'
           )
       `
     },
 
-    // Frontend still calls this "all_caal".
-    // Backend semantics: other CAAL records only, excluding national and my own promoted records.
     all_caal: {
-      sql: `
-        SELECT
-          m.*,
-          'all_caal'::text AS source_scope,
-          'public_caal'::text AS storage_scope,
-          true AS is_promoted,
-          ${allCaalEditableSql} AS is_editable
-        FROM ${caalSource} m
-        WHERE (
-            ${workspaceCode && workspaceCode !== "caal"
-              ? `m.workspace_code IS DISTINCT FROM '${workspaceCode.replace(/'/g, "''")}'`
-              : "true"}
-          )
-          AND NOT EXISTS (
-            SELECT 1
-            FROM public.record_registry rr
-            WHERE rr.caal_id = m."CAAL_ID"
-              AND rr.created_by_app_user_id = ${currentAppUserId ?? -1}
-              AND COALESCE(rr.status, '') <> 'deleted'
-          )
-      `
+      sql: [
+        `
+          SELECT
+            m.*,
+            'all_caal'::text AS source_scope,
+            'public_caal'::text AS storage_scope,
+            true AS is_promoted,
+            ${allCaalEditableSql} AS is_editable
+          FROM ${caalSource} m
+          WHERE (
+              ${workspaceCode && workspaceCode !== "caal"
+                ? `m.workspace_code IS DISTINCT FROM '${workspaceCode.replace(/'/g, "''")}'`
+                : "true"}
+            )
+            AND COALESCE(m.created_by_app_user_id, -1) <> ${userId}
+            AND ${ownPromotedExclusion}
+        `,
+        allWorkspaceMonumentsSql
+      ].filter(Boolean).join("\nUNION ALL\n")
     }
   };
 }
@@ -348,34 +549,62 @@ function buildBrowseListUnionSql(scopes, currentSession, lang = "en") {
   const canEditNationalCaal = isNationalAdmin(currentSession);
 
   const publicEditableSqlForListBase = canEditCaal
-  ? "true"
-  : canEditNationalCaal
-    ? `base.workspace_code = '${workspaceCode.replace(/'/g, "''")}'`
-    : "false";
+    ? "true"
+    : canEditNationalCaal
+      ? `base.workspace_code = '${workspaceCode.replace(/'/g, "''")}'`
+      : "false";
 
   const allCaalEditableSql = canEditCaal ? "true" : "false";
-  const nationalWhere = nationalRefWhereSql("m", currentSession);
+
+  const workspaceSchemaListSql = ownedWorkspaceStorageConfigs(currentSession)
+    .map((storage) => ownedWorkspaceMonumentListSql(storage, userId, lang))
+    .join("\nUNION ALL\n");
+
+  const workspacePublicOwnedListSql = `
+    SELECT
+      ${promotedWorkspaceCardSelectSql("m", lang)}
+    FROM ${MONUMENTS_CAAL_LIST_MV} m
+    LEFT JOIN public.record_registry rr
+      ON rr.caal_id = m."CAAL_ID"
+    WHERE (
+        rr.created_by_app_user_id = ${userId}
+        OR m.created_by_app_user_id = ${userId}
+      )
+      AND COALESCE(rr.status, '') <> 'deleted'
+  `;
+
+  const allWorkspaceMonumentListSql =
+    allWorkspaceMonumentListSqlForCaalAdmin(currentSession, lang);
+
+  console.log("[Monuments list all_caal workspace debug]", {
+    username: currentSession?.user?.username,
+    workspaceCode: getSessionWorkspaceCode(currentSession),
+    accessLevel: getAccessLevel(currentSession),
+    isCaalAdmin: isCaalAdmin(currentSession),
+    enabledWorkspaces: enabledWorkspaceStorageConfigs().map((s) => ({
+      workspaceCode: s.workspaceCode,
+      schema: s.schema,
+      storageScope: s.storageScope,
+      monumentTable: s.monumentTable,
+      monumentView: s.monumentView,
+      monumentAppView: s.monumentAppView,
+      enabled: s.enabled
+    })),
+    monumentAllWorkspaceConfigs: monumentAllWorkspaceStorageConfigs().map((s) => ({
+      workspaceCode: s.workspaceCode,
+      schema: s.schema,
+      storageScope: s.storageScope,
+      monumentTable: s.monumentTable,
+      monumentView: s.monumentView,
+      monumentAppView: s.monumentAppView
+    })),
+    allWorkspaceSqlPresent: Boolean(allWorkspaceMonumentListSql)
+  });
 
   const config = {
-    workspace: `
-      SELECT
-        ${workspaceCardSelectSql(lang)}
-      FROM ${MONUMENTS_WORKSPACE_TABLE} m
-      ${workspaceFastRegistryJoinSql("m")}
-      ${workspaceCardJoinsSql()}
-      WHERE m.created_by_app_user_id = ${userId}
-        AND COALESCE(rr.status, '') <> 'deleted'
-
-      UNION ALL
-
-      SELECT
-        ${promotedWorkspaceCardSelectSql("m", lang)}
-      FROM ${MONUMENTS_CAAL_LIST_MV} m
-      JOIN public.record_registry rr
-        ON rr.caal_id = m."CAAL_ID"
-      WHERE rr.created_by_app_user_id = ${userId}
-        AND COALESCE(rr.status, '') <> 'deleted'
-    `,
+    workspace: [workspaceSchemaListSql, workspacePublicOwnedListSql]
+      .filter(Boolean)
+      .join("\nUNION ALL\n"),
 
     national_ref: `
       SELECT
@@ -390,6 +619,7 @@ function buildBrowseListUnionSql(scopes, currentSession, lang = "en") {
         FROM ${MONUMENTS_CAAL_LIST_MV} base
       ) m
       WHERE (${nationalRefWhereSql("m", currentSession)})
+        AND COALESCE(m.created_by_app_user_id, -1) <> ${userId}
         AND NOT EXISTS (
           SELECT 1
           FROM public.record_registry rr
@@ -399,36 +629,45 @@ function buildBrowseListUnionSql(scopes, currentSession, lang = "en") {
         )
     `,
 
-    all_caal: `
-      SELECT
-        ${monumentCardSelectSql("m", lang)}
-      FROM (
+    all_caal: [
+      `
         SELECT
-          base.*,
-          'all_caal'::text AS source_scope,
-          'public_caal'::text AS storage_scope,
-          true AS is_promoted,
-          ${allCaalEditableSql} AS is_editable
-        FROM ${MONUMENTS_CAAL_LIST_MV} base
-      ) m
-      WHERE (
-        ${workspaceCode && workspaceCode !== "caal"
-          ? `m.workspace_code IS DISTINCT FROM '${workspaceCode.replace(/'/g, "''")}'`
-          : "true"}
-      )
-      AND NOT EXISTS (
-        SELECT 1
-        FROM public.record_registry rr
-        WHERE rr.caal_id = m."CAAL_ID"
-          AND rr.created_by_app_user_id = ${userId}
-          AND COALESCE(rr.status, '') <> 'deleted'
-      )
-    `
+          ${monumentCardSelectSql("m", lang)}
+        FROM (
+          SELECT
+            base.*,
+            'all_caal'::text AS source_scope,
+            'public_caal'::text AS storage_scope,
+            true AS is_promoted,
+            ${allCaalEditableSql} AS is_editable
+          FROM ${MONUMENTS_CAAL_LIST_MV} base
+        ) m
+        WHERE (
+          ${workspaceCode && workspaceCode !== "caal"
+            ? `m.workspace_code IS DISTINCT FROM '${workspaceCode.replace(/'/g, "''")}'`
+            : "true"}
+        )
+        AND COALESCE(m.created_by_app_user_id, -1) <> ${userId}
+        AND NOT EXISTS (
+          SELECT 1
+          FROM public.record_registry rr
+          WHERE rr.caal_id = m."CAAL_ID"
+            AND rr.created_by_app_user_id = ${userId}
+            AND (
+              rr.record_type = 'monument'
+              OR rr.source_table = 'CAAL_Monuments'
+            )
+            AND COALESCE(rr.status, '') <> 'deleted'
+        )
+      `,
+      allWorkspaceMonumentListSql
+    ].filter(Boolean).join("\nUNION ALL\n")
   };
 
   return scopes
     .filter((scope) => config[scope])
     .map((scope) => config[scope])
+    .filter(Boolean)
     .join("\nUNION ALL\n");
 }
 
@@ -441,13 +680,13 @@ function workspaceFastBaseWhereSql(alias = "m") {
   `;
 }
 
-function workspaceFastRegistryJoinSql(alias = "m") {
+function workspaceFastRegistryJoinSql(currentSession, alias = "m") {
   const p = alias ? `${alias}.` : "";
 
   return `
     LEFT JOIN public.record_registry rr
-      ON rr.source_schema = 'kz'
-     AND rr.source_table = 'CAAL_Monuments'
+      ON rr.source_schema = ${workspaceSourceSchemaSql(currentSession)}
+     AND rr.source_table = ${workspaceSourceTableSql("monument")}
      AND rr.source_row_id = ${p}id
   `;
 }
@@ -461,12 +700,12 @@ function buildWorkspaceOnlyUnionSql(currentSession) {
       v.*,
       ${monumentHelperColumnsSql("v")},
       'workspace'::text AS source_scope,
-      'kz_workspace'::text AS storage_scope,
+      ${workspaceStorageScopeSql(currentSession)}::text AS storage_scope,
       false AS is_promoted,
       true AS is_editable
-    FROM kz.v_monuments_grid_base v
+    FROM ${workspaceMonumentViewSql(currentSession)} v
     LEFT JOIN public.record_registry rr
-      ON rr.source_schema = 'kz'
+      ON rr.source_schema = ${workspaceSourceSchemaSql(currentSession)}
      AND rr.source_table = 'CAAL_Monuments'
      AND rr.source_row_id = v.id
     WHERE v.created_by_app_user_id = ${userId}
@@ -481,9 +720,12 @@ function buildWorkspaceOnlyUnionSql(currentSession) {
       true AS is_promoted,
       true AS is_editable
     FROM ${MONUMENTS_CAAL_MV} m
-    JOIN public.record_registry rr
+    LEFT JOIN public.record_registry rr
       ON rr.caal_id = m."CAAL_ID"
-    WHERE rr.created_by_app_user_id = ${userId}
+    WHERE (
+        rr.created_by_app_user_id = ${userId}
+        OR m.created_by_app_user_id = ${userId}
+      )
       AND COALESCE(rr.status, '') <> 'deleted'
   `;
 }
@@ -1297,7 +1539,7 @@ function promotedWorkspaceMapSelectSql(alias = "m", lang = "en") {
   `;
 }
 
-function workspaceCardSelectSql(lang = "en") {
+function workspaceCardSelectSql(currentSession, lang = "en") {
   const safeLang = safeMonumentLang(lang);
   const fallbackLang = fallbackLookupLang(safeLang);
 
@@ -1329,7 +1571,7 @@ function workspaceCardSelectSql(lang = "en") {
     m."Tstamp",
     m.created_by_app_user_id,
     'workspace'::text AS source_scope,
-    'kz_workspace'::text AS storage_scope,
+    ${workspaceStorageScopeSql(currentSession)}::text AS storage_scope,
     false AS is_promoted,
     true AS is_editable,
     ${workspaceListFilterColumnsSql("m")}
@@ -1345,7 +1587,7 @@ function workspaceCardJoinsSql() {
   `;
 }
 
-function workspaceMapSelectSql(lang = "en") {
+function workspaceMapSelectSql(currentSession, lang = "en") {
   const safeLang = safeMonumentLang(lang);
   const fallbackLang = fallbackLookupLang(safeLang);
 
@@ -1372,7 +1614,7 @@ function workspaceMapSelectSql(lang = "en") {
     m."Tstamp",
     m.created_by_app_user_id,
     'workspace'::text AS source_scope,
-    'kz_workspace'::text AS storage_scope,
+    ${workspaceStorageScopeSql(currentSession)}::text AS storage_scope,
     false AS is_promoted,
     true AS is_editable
   `;
@@ -2155,7 +2397,10 @@ router.get("/monuments/map", async (req, res) => {
     currentSession.profile?.preferred_language ||
     "en";
 
-  const workspaceOnly = scopes.length === 1 && scopes[0] === "workspace";
+  const workspaceOnly =
+    scopes.length === 1 &&
+    scopes[0] === "workspace" &&
+    getSessionWorkspaceCode(currentSession) !== "caal";
 
   if (workspaceOnly) {
     try {
@@ -2202,9 +2447,9 @@ router.get("/monuments/map", async (req, res) => {
       const dataSql = `
         WITH workspace_rows AS (
           SELECT
-            ${workspaceMapSelectSql(lang)}
-          FROM ${MONUMENTS_WORKSPACE_TABLE} m
-          ${workspaceFastRegistryJoinSql("m")}
+            ${workspaceMapSelectSql(currentSession, lang)}
+          FROM ${workspaceMonumentTableSql(currentSession)} m
+          ${workspaceFastRegistryJoinSql(currentSession, "m")}
           ${workspaceMapJoinsSql()}
           ${workspaceWhere}
 
@@ -2410,7 +2655,10 @@ router.get("/monuments", async (req, res) => {
   const offset = Number(req.query.offset) || 0;
   const lang = req.query.lang || currentSession.profile?.preferred_language || "en";
 
-  const workspaceOnly = scopes.length === 1 && scopes[0] === "workspace";
+  const workspaceOnly =
+    scopes.length === 1 &&
+    scopes[0] === "workspace" &&
+    getSessionWorkspaceCode(currentSession) !== "caal";
 
   if (workspaceOnly) {
     try {
@@ -2441,9 +2689,9 @@ router.get("/monuments", async (req, res) => {
       const dataSql = `
         WITH workspace_rows AS (
           SELECT
-            ${workspaceCardSelectSql(lang)}
-          FROM ${MONUMENTS_WORKSPACE_TABLE} m
-          ${workspaceFastRegistryJoinSql("m")}
+            ${workspaceCardSelectSql(currentSession, lang)}
+          FROM ${workspaceMonumentTableSql(currentSession)} m
+          ${workspaceFastRegistryJoinSql(currentSession, "m")}
           ${workspaceCardJoinsSql()}
           ${workspaceWhere}
 
@@ -2474,8 +2722,8 @@ router.get("/monuments", async (req, res) => {
       const countSql = `
         WITH workspace_rows AS (
           SELECT m.id
-          FROM ${MONUMENTS_WORKSPACE_TABLE} m
-          ${workspaceFastRegistryJoinSql("m")}
+          FROM ${workspaceMonumentTableSql(currentSession)} m
+          ${workspaceFastRegistryJoinSql(currentSession, "m")}
           ${workspaceWhere}
 
           UNION ALL
@@ -2650,14 +2898,6 @@ function getAccessLevel(session) {
     session?.access_level ??
     0
   );
-}
-
-function getSessionWorkspaceCode(session) {
-  return String(
-    session?.user?.workspace_code ??
-    session?.profile?.workspace_code ??
-    ""
-  ).trim().toLowerCase();
 }
 
 function isCaalAdmin(session) {
@@ -2997,7 +3237,15 @@ function payloadIncludesMasterId(payload = {}) {
     String(value).trim() !== "";
 }
 
-async function fetchMonumentRowById(id) {
+async function fetchMonumentRowById(id, currentSession) {
+  const ws = getWorkspaceStorage(currentSession);
+
+  if (ws.workspaceCode === "caal") {
+    return fetchPublicMonumentRowById(id);
+  }
+
+  const viewName = workspaceMonumentViewSql(currentSession);
+
   const result = await pool.query(
     `
     SELECT
@@ -3010,7 +3258,7 @@ async function fetchMonumentRowById(id) {
         WHEN v.geom IS NOT NULL THEN ST_Y(v.geom::geometry)
         ELSE NULL
       END AS geom_lat
-    FROM ${MONUMENTS_VIEW} v
+    FROM ${viewName} v
     WHERE v.id = $1
     `,
     [id]
@@ -3043,6 +3291,62 @@ async function fetchPublicMonumentRowById(id) {
   );
 
   return result.rows[0] || null;
+}
+
+async function fetchWorkspaceMonumentRowById(id, storageScope) {
+      const storage = storageFromScope(storageScope);
+      const viewName = viewSql(storage.schema, storage.monumentView);
+
+      const result = await pool.query(
+        `
+        SELECT
+          v.*,
+          CASE
+            WHEN v.geom IS NOT NULL THEN ST_X(v.geom::geometry)
+            ELSE NULL
+          END AS geom_lng,
+          CASE
+            WHEN v.geom IS NOT NULL THEN ST_Y(v.geom::geometry)
+            ELSE NULL
+          END AS geom_lat
+        FROM ${viewName} v
+        WHERE v.id = $1
+        `,
+        [id]
+      );
+
+    return result.rows[0] || null;
+  }
+
+async function getCurrentUserMonumentPrefix(userId) {
+  if (!userId) return null;
+
+  const result = await pool.query(
+    `
+    SELECT monument_id_prefix
+    FROM public.app_users
+    WHERE user_id = $1
+      AND is_enabled = true
+    LIMIT 1
+    `,
+    [userId]
+  );
+
+  return result.rows[0]?.monument_id_prefix || null;
+}    
+
+function canCreateMonumentInWorkspaceCode(workspaceCode) {
+  const code = String(workspaceCode || "").trim().toLowerCase();
+
+  if (code === "caal") return true;
+
+  const storage = WORKSPACE_STORAGE?.[code];
+
+  return Boolean(
+    storage?.enabled === true &&
+    storage?.schema &&
+    storage?.monumentTable
+  );
 }
 
 // ========================================================
@@ -3106,8 +3410,56 @@ router.post("/monuments", async (req, res) => {
   payload["Recorder"] = sessionUsername;
   payload["Preferred Language"] = preferredLanguage;
   payload["Date of Recording"] = new Date().toISOString().slice(0, 10);
+  payload["Tstamp"] = new Date();
   payload.created_by_app_user_id = appUserId;
-  payload.workspace_code = getSessionWorkspaceCode(currentSession);
+
+  const recordWorkspaceCode = inferRecordWorkspaceCodeFromPayload(payload, currentSession);
+
+if (!recordWorkspaceCode) {
+  return res.status(400).json({
+    ok: false,
+    error: "A country is required so the record can be assigned to a national workspace"
+  });
+}
+
+// Until other schemas get added / public fallback is implemented.
+if (!canCreateMonumentInWorkspaceCode(recordWorkspaceCode)) {
+  return res.status(400).json({
+    ok: false,
+    error: `Records for this country cannot yet be saved because workspace '${recordWorkspaceCode}' is not configured for web entry.`
+  });
+}
+
+payload.workspace_code = recordWorkspaceCode;
+
+  const prefix =
+    currentSession?.user?.monument_id_prefix ||
+    currentSession?.profile?.monument_id_prefix ||
+    await getCurrentUserMonumentPrefix(appUserId);
+
+  if (!prefix || !String(prefix).trim()) {
+    return res.status(400).json({
+      ok: false,
+      error: "No monument CAAL_ID prefix is configured for this user."
+    });
+  }
+
+  try {
+    const caalId = await allocateCaalId(pool, {
+      recordType: "monument",
+      prefix
+    });
+
+    payload["CAAL_ID"] = caalId;
+  } catch (error) {
+    console.error("Monument CAAL_ID allocation failed:", error);
+
+    return res.status(500).json({
+      ok: false,
+      error: "Monument CAAL_ID allocation failed",
+      detail: error.message
+    });
+  }
 
   const lng = locationCheck.lng;
   const lat = locationCheck.lat;
@@ -3136,8 +3488,11 @@ router.post("/monuments", async (req, res) => {
   try {
     const queryValues = geomSql ? [...values, Number(lng), Number(lat)] : values;
 
+    const targetTable = monumentTableForWorkspaceCode(recordWorkspaceCode);
+    const targetStorage = storageScopeForWorkspaceCode(recordWorkspaceCode);
+
     const insertSql = `
-      INSERT INTO ${MONUMENTS_WORKSPACE_TABLE} (${columnSql}${geomSql})
+      INSERT INTO ${targetTable} (${columnSql}${geomSql})
       VALUES (${fields.map((_, i) => `$${i + 1}`).join(", ")}${geomValueSql})
       RETURNING id
     `;
@@ -3145,14 +3500,25 @@ router.post("/monuments", async (req, res) => {
     const insertResult = await pool.query(insertSql, queryValues);
     const newId = insertResult.rows[0].id;
 
-    const freshRow = await fetchMonumentRowById(newId);
+    const freshRow = await fetchWorkspaceMonumentRowById(newId, targetStorage);
 
-    await syncResourceRelationsForMonument(pool, {
-      caalId: freshRow["CAAL_ID"],
-      sourceRowId: freshRow.id,
-      payload,
-      currentSession
-    });
+    if (!freshRow) {
+      return res.status(500).json({
+        ok: false,
+        error: "Monument created but refreshed record could not be loaded",
+        detail: `Created id ${newId} in ${targetStorage}, but fetch returned no row`
+      });
+    }
+
+    if (freshRow["CAAL_ID"]) {
+      await syncResourceRelationsForMonument(pool, {
+        caalId: freshRow["CAAL_ID"],
+        sourceRowId: freshRow.id,
+        payload,
+        currentSession,
+        storageScope: targetStorage
+      });
+    }
 
     const lang = req.query.lang || currentSession.profile?.preferred_language || "en";
 
@@ -3228,6 +3594,8 @@ router.patch("/monuments/:id", async (req, res) => {
   }
 
   const payload = normaliseMonumentPayload(req.body || {});
+  delete payload["CAAL_ID"];
+
   const canEditCaal = canEditCaalMonuments(currentSession);
 
   // For now, only global CAAL admins can change MasterID.
@@ -3259,6 +3627,13 @@ router.patch("/monuments/:id", async (req, res) => {
   }
 
   const setParts = fields.map((field, index) => `"${field}" = $${index + 1}`);
+
+  const requestedStorageScope = String(req.body?._storage_scope || "").trim();
+  const requestedSourceScope = String(req.body?._source_scope || "").trim();
+
+  const isPublicTarget = requestedStorageScope === "public_caal";
+  const isWorkspaceTarget = requestedStorageScope.endsWith("_workspace");
+
   const values = fields.map((field) => payload[field]);
 
   const lng = payload["Longitude"];
@@ -3279,50 +3654,11 @@ router.patch("/monuments/:id", async (req, res) => {
   try {
     const userId = currentSession?.user?.user_id ?? null;
 
-    console.log("Monument PATCH permissions:", {
-      id,
-      userId,
-      workspaceCode: getSessionWorkspaceCode(currentSession),
-      accessLevel: getAccessLevel(currentSession),
-      canEditWorkspace: canEditMonuments(currentSession),
-      isCaalAdmin: isCaalAdmin(currentSession),
-      isNationalAdmin: isNationalAdmin(currentSession),
-      canEditPublicCaal: canEditPublicCaalMonuments(currentSession)
-    });
-
-    let updateResult;
-    let updatedScope = "workspace";
+    let updateResult = { rows: [] };
+    let updatedScope = requestedSourceScope || "workspace";
     let oldPublicCaalRow = null;
 
-    // 1. Try the KZ workspace table first.
-    // CAAL admins and national admins can edit any workspace row.
-    // Regular users can edit only their own workspace rows.
-    if (isCaalAdmin(currentSession) || isNationalAdmin(currentSession)) {
-      updateResult = await pool.query(
-        `
-        UPDATE ${MONUMENTS_WORKSPACE_TABLE}
-        SET ${setParts.join(", ")}
-        WHERE id = $${values.length + 1}
-        RETURNING id
-        `,
-        [...values, id]
-      );
-    } else {
-      updateResult = await pool.query(
-        `
-        UPDATE ${MONUMENTS_WORKSPACE_TABLE}
-        SET ${setParts.join(", ")}
-        WHERE id = $${values.length + 1}
-          AND created_by_app_user_id = $${values.length + 2}
-          AND COALESCE("MasterID", '') = ''
-        RETURNING id
-        `,
-        [...values, id, userId]
-      );
-    }
-
-    // 2. If not found in the workspace table, try public CAAL.
-    if (updateResult.rows.length === 0) {
+    if (isPublicTarget) {
       const publicEditCheck = publicCaalMonumentEditWhereSql(
         currentSession,
         "m",
@@ -3359,8 +3695,52 @@ router.patch("/monuments/:id", async (req, res) => {
       );
 
       if (updateResult.rows.length > 0) {
-        updatedScope = "all_caal";
+        updatedScope =
+          requestedSourceScope ||
+          (
+            isCaalAdmin(currentSession)
+              ? "all_caal"
+              : isNationalAdmin(currentSession)
+                ? "national_ref"
+                : "workspace"
+          );
       }
+    } else if (isWorkspaceTarget) {
+      const ownStorageScope = storageScopeForSession(currentSession);
+
+      if (requestedStorageScope !== ownStorageScope && !isCaalAdmin(currentSession)) {
+        return res.status(403).json({
+          ok: false,
+          error: "You can only edit records in your own workspace"
+        });
+      }
+
+      const targetTable = tableSqlForStorageScope(requestedStorageScope, "monument");
+
+      updateResult = await pool.query(
+        `
+        UPDATE ${targetTable}
+        SET ${setParts.join(", ")}
+        WHERE id = $${values.length + 1}
+          AND (
+            $${values.length + 2}::boolean = true
+            OR created_by_app_user_id = $${values.length + 3}
+          )
+          AND (
+            $${values.length + 2}::boolean = true
+            OR COALESCE("MasterID", '') = ''
+          )
+        RETURNING *
+        `,
+        [...values, id, isCaalAdmin(currentSession), userId]
+      );
+
+      updatedScope = "workspace";
+    } else {
+      return res.status(400).json({
+        ok: false,
+        error: "Missing or unsupported record storage source"
+      });
     }
 
     if (updateResult.rows.length === 0) {
@@ -3371,9 +3751,9 @@ router.patch("/monuments/:id", async (req, res) => {
     }
 
     const freshRow =
-      updatedScope === "workspace"
-        ? await fetchMonumentRowById(id)
-        : await fetchPublicMonumentRowById(id);
+      isPublicTarget
+        ? await fetchPublicMonumentRowById(id)
+        : await fetchWorkspaceMonumentRowById(id, requestedStorageScope);
 
     if (!freshRow) {
       return res.status(500).json({
@@ -3386,10 +3766,11 @@ router.patch("/monuments/:id", async (req, res) => {
       caalId: freshRow["CAAL_ID"],
       sourceRowId: freshRow.id,
       payload,
-      currentSession
+      currentSession,
+      storageScope: requestedStorageScope
     });
 
-    if (updatedScope !== "workspace" && oldPublicCaalRow) {
+    if (isPublicTarget && oldPublicCaalRow) {
       await logPublicCaalMonumentEdit({
         oldRow: oldPublicCaalRow,
         newRow: freshRow,
@@ -3426,8 +3807,9 @@ router.patch("/monuments/:id", async (req, res) => {
   }
 });
 
+/// ========================================================
 // DELETE
-// ---------------------------
+// ========================================================
 router.delete("/monuments/:id", async (req, res) => {
   const currentSession = req.session?.appSession || null;
 
@@ -3459,53 +3841,64 @@ router.delete("/monuments/:id", async (req, res) => {
   const canEditCaal = canEditCaalMonuments(currentSession);
   const deleteReason = String(req.body?.reason || "").trim() || null;
 
+  const requestedStorageScope = String(req.body?._storage_scope || "").trim();
+  const isPublicTarget = requestedStorageScope === "public_caal";
+  const isWorkspaceTarget = requestedStorageScope.endsWith("_workspace");
+
+  if (isPublicTarget) {
+    return res.status(403).json({
+      ok: false,
+      error: "Public CAAL records cannot currently be deleted from this screen"
+    });
+  }
+
+  if (!isWorkspaceTarget) {
+    return res.status(400).json({
+      ok: false,
+      error: "Missing or unsupported record storage source"
+    });
+  }
+
   try {
-    if (!canEditCaal) {
-      const targetCheck = await pool.query(
-        `
-        SELECT id, created_by_app_user_id, "MasterID"
-        FROM ${MONUMENTS_WORKSPACE_TABLE}
-        WHERE id = $1
-        `,
-        [id]
-      );
+    const ownStorageScope = storageScopeForSession(currentSession);
 
-      const target = targetCheck.rows[0];
-
-      if (!target) {
-        return res.status(404).json({
-          ok: false,
-          error: "Monument record not found"
-        });
-      }
-
-      if (Number(target.created_by_app_user_id) !== Number(userId)) {
-        return res.status(403).json({
-          ok: false,
-          error: "You can only delete your own workspace monument records"
-        });
-      }
-
-      if (String(target["MasterID"] || "").trim() !== "") {
-        return res.status(403).json({
-          ok: false,
-          error: "Records linked to a MasterID are read-only and cannot be deleted"
-        });
-      }
+    if (requestedStorageScope !== ownStorageScope && !isCaalAdmin(currentSession)) {
+      return res.status(403).json({
+        ok: false,
+        error: "You can only delete records in your own workspace"
+      });
     }
 
+    const targetTable = tableSqlForStorageScope(requestedStorageScope, "monument");
+    const storage = storageFromScope(requestedStorageScope);
+
+    if (!storage?.schema) {
+      return res.status(400).json({
+        ok: false,
+        error: "Unsupported record storage source"
+      });
+    }
+
+    /*
+      Non-CAAL users may only delete their own workspace records.
+      CAAL admins may delete workspace records only if you allow that by reaching this branch.
+      Public CAAL deletion is blocked above.
+    */
     const ownershipClause = canEditCaal
       ? ""
       : `AND m.created_by_app_user_id = $2`;
 
-    const values = [id, userId, username, deleteReason];
+    const masterIdClause = canEditCaal
+      ? ""
+      : `AND COALESCE(m."MasterID", '') = ''`;
 
     const deleteSql = `
       WITH target AS (
         SELECT *
-        FROM ${MONUMENTS_WORKSPACE_TABLE} m
+        FROM ${targetTable} m
         WHERE m.id = $1
           ${ownershipClause}
+          ${masterIdClause}
       ),
       registry_update AS (
         UPDATE public.record_registry rr
@@ -3517,7 +3910,7 @@ router.delete("/monuments/:id", async (req, res) => {
           delete_reason = $4,
           deleted_record = to_jsonb(target)
         FROM target
-        WHERE rr.source_schema = 'kz'
+        WHERE rr.source_schema = $5
           AND rr.source_table = 'CAAL_Monuments'
           AND rr.source_row_id = target.id
         RETURNING rr.id
@@ -3541,7 +3934,7 @@ router.delete("/monuments/:id", async (req, res) => {
           deleted_record
         )
         SELECT
-          'kz',
+          $5,
           'CAAL_Monuments',
           target.id,
           target."CAAL_ID",
@@ -3561,7 +3954,7 @@ router.delete("/monuments/:id", async (req, res) => {
         RETURNING id
       ),
       deleted AS (
-        DELETE FROM ${MONUMENTS_WORKSPACE_TABLE} m
+        DELETE FROM ${targetTable} m
         USING target
         WHERE m.id = target.id
         RETURNING m.id, m."CAAL_ID"
@@ -3569,17 +3962,23 @@ router.delete("/monuments/:id", async (req, res) => {
       SELECT * FROM deleted;
     `;
 
-    const result = await pool.query(deleteSql, values);
+    const result = await pool.query(deleteSql, [
+      id,
+      userId,
+      username,
+      deleteReason,
+      storage.schema
+    ]);
 
     if (result.rows.length === 0) {
       return res.status(403).json({
         ok: false,
         error: canEditCaal
           ? "Monument record not found in workspace table"
-          : "You can only delete your own workspace monument records"
+          : "You can only delete your own workspace monument records, and records linked to a MasterID cannot be deleted"
       });
     }
-    
+
     await deactivateResourceRelationsForDeletedRecord(pool, {
       caalId: result.rows[0]["CAAL_ID"],
       currentSession,

@@ -1,4 +1,19 @@
 // backend/resourceRelations.js
+const {
+  getWorkspaceStorage,
+  storageFromScope,
+  enabledWorkspaceStorageConfigs,
+  tableSql
+} = require("./workspaceStorage");
+
+function relationStorageFromContext(currentSession, storageScope = null) {
+  if (storageScope) {
+    const storage = storageFromScope(storageScope);
+    if (storage?.schema) return storage;
+  }
+
+  return getWorkspaceStorage(currentSession);
+}
 
 async function getResourceRelations(db, caalId) {
   if (!caalId) return [];
@@ -112,6 +127,43 @@ function normaliseRelationType(value) {
   return String(value || "").trim().toLowerCase();
 }
 
+function workspaceRelationMatchSql() {
+  const branches = [];
+
+  enabledWorkspaceStorageConfigs().forEach((storage, index) => {
+    const basePriority = index * 20;
+
+    if (storage?.schema && storage?.monumentTable) {
+      branches.push(`
+        SELECT ${sqlTextLiteral(`${storage.schema}.${storage.monumentTable}`)}::text AS found_in_table,
+               ${10 + basePriority} AS priority
+        FROM ${tableSql(storage.schema, storage.monumentTable)}, q
+        WHERE lower(trim("CAAL_ID")) = q.caal_id_norm
+      `);
+    }
+
+    if (storage?.schema && storage?.archiveTable) {
+      branches.push(`
+        SELECT ${sqlTextLiteral(`${storage.schema}.${storage.archiveTable}`)}::text AS found_in_table,
+               ${15 + basePriority} AS priority
+        FROM ${tableSql(storage.schema, storage.archiveTable)}, q
+        WHERE lower(trim("CAAL_ID")) = q.caal_id_norm
+      `);
+    }
+  });
+
+  return branches.length
+    ? branches.join("\nUNION ALL\n")
+    : `
+      SELECT NULL::text AS found_in_table, 999999 AS priority
+      WHERE false
+    `;
+}
+
+function sqlTextLiteral(value) {
+  return `'${String(value ?? "").replace(/'/g, "''")}'`;
+}
+
 async function resolveCaalIdMetadata(db, caalId) {
   if (!caalId) {
     return {
@@ -120,68 +172,64 @@ async function resolveCaalIdMetadata(db, caalId) {
     };
   }
 
+  const workspaceMatchesSql = workspaceRelationMatchSql();
+
   const result = await db.query(
     `
     WITH q AS (
       SELECT lower(trim($1::text)) AS caal_id_norm
     ),
     matches AS (
-      SELECT 'kz.CAAL_Monuments'::text AS found_in_table, 10 AS priority
-      FROM kz."CAAL_Monuments", q
-      WHERE lower(trim("CAAL_ID")) = q.caal_id_norm
+      ${workspaceMatchesSql}
 
       UNION ALL
-      SELECT 'public.CAAL_Monuments', 20
+      SELECT 'public.CAAL_Monuments'::text AS found_in_table, 1000 AS priority
       FROM public."CAAL_Monuments", q
       WHERE lower(trim("CAAL_ID")) = q.caal_id_norm
 
       UNION ALL
-      SELECT 'kz.CAAL_Archive', 30
-      FROM kz."CAAL_Archive", q
-      WHERE lower(trim("CAAL_ID")) = q.caal_id_norm
-
-      UNION ALL
-      SELECT 'public.CAAL_Archive', 40
+      SELECT 'public.CAAL_Archive', 1010
       FROM public."CAAL_Archive", q
       WHERE lower(trim("CAAL_ID")) = q.caal_id_norm
 
       UNION ALL
-      SELECT 'public.CAAL_Cartography', 50
+      SELECT 'public.CAAL_Cartography', 1020
       FROM public."CAAL_Cartography", q
       WHERE lower(trim("CAAL_ID")) = q.caal_id_norm
 
       UNION ALL
-      SELECT 'public.CAAL_Datasets', 60
+      SELECT 'public.CAAL_Datasets', 1030
       FROM public."CAAL_Datasets", q
       WHERE lower(trim("CAAL_ID")) = q.caal_id_norm
 
       UNION ALL
-      SELECT 'public.CAAL_Institution', 70
+      SELECT 'public.CAAL_Institution', 1040
       FROM public."CAAL_Institution", q
       WHERE lower(trim("CAAL_ID")) = q.caal_id_norm
 
       UNION ALL
-      SELECT 'public.CAAL_RS3_Group', 80
+      SELECT 'public.CAAL_RS3_Group', 1050
       FROM public."CAAL_RS3_Group", q
       WHERE lower(trim("CAAL_ID")) = q.caal_id_norm
 
       UNION ALL
-      SELECT 'public.CAAL_RS3_Line', 90
+      SELECT 'public.CAAL_RS3_Line', 1060
       FROM public."CAAL_RS3_Line", q
       WHERE lower(trim("CAAL_ID")) = q.caal_id_norm
 
       UNION ALL
-      SELECT 'public.CAAL_RS3_Poly', 100
+      SELECT 'public.CAAL_RS3_Poly', 1070
       FROM public."CAAL_RS3_Poly", q
       WHERE lower(trim("CAAL_ID")) = q.caal_id_norm
 
       UNION ALL
-      SELECT 'public.CAAL_Vernacular', 110
+      SELECT 'public.CAAL_Vernacular', 1080
       FROM public."CAAL_Vernacular", q
       WHERE lower(trim("CAAL_ID")) = q.caal_id_norm
     )
     SELECT found_in_table
     FROM matches
+    WHERE found_in_table IS NOT NULL
     ORDER BY priority
     LIMIT 1
     `,
@@ -496,7 +544,8 @@ async function syncResourceRelationsForMonument(db, {
   sourceRowId,
   payload,
   currentSession = null,
-  username = null
+  username = null,
+  storageScope = null
 }) {
   if (!caalId || !sourceRowId || !payload) return;
 
@@ -504,7 +553,8 @@ async function syncResourceRelationsForMonument(db, {
     username ||
     "web app";
 
-  const sourceTable = "kz.CAAL_Monuments";
+  const ws = relationStorageFromContext(currentSession, storageScope);
+  const sourceTable = `${ws.schema}.CAAL_Monuments`;
 
   const relationFields = [
     {
@@ -561,6 +611,9 @@ async function syncResourceRelationsForMonument(db, {
         updated_by = $3,
         notes = COALESCE(e.notes, '') || E'\nDeactivated by web edit sync because source field no longer lists this ID.'
       WHERE COALESCE(e.edge_status, 'active') = 'active'
+      AND e.source_tables @> ARRAY[$5]::text[]
+      AND e.source_fields @> ARRAY[$6]::text[]
+      AND e.source_row_ids @> ARRAY[$7]::text[]
         AND e.relation_type_norm = $2
         AND (
           lower(trim(e.parent_id)) = lower(trim($1))
@@ -592,7 +645,10 @@ async function syncResourceRelationsForMonument(db, {
         caalId,
         normaliseRelationType(config.relationType),
         effectiveUsername,
-        normalisedCurrentRelatedIds
+        normalisedCurrentRelatedIds,
+        sourceTable,
+        config.field,
+        String(sourceRowId)
       ]
     );
 
@@ -630,11 +686,13 @@ async function syncResourceRelationsForArchive(db, {
   caalId,
   sourceRowId,
   payload,
-  currentSession = null
+  currentSession = null,
+  storageScope = null
 }) {
   if (!caalId || !sourceRowId || !payload) return;
 
-  const sourceTable = "kz.CAAL_Archive";
+  const ws = relationStorageFromContext(currentSession, storageScope);
+  const sourceTable = `${ws.schema}.CAAL_Archive`;
   const sourceField = "Associated CAAL_ID";
   const relationType = "is related to";
 
@@ -688,6 +746,9 @@ async function syncResourceRelationsForArchive(db, {
       updated_by = $3,
       notes = COALESCE(e.notes, '') || E'\nDeactivated by web edit sync because source field no longer lists this ID.'
     WHERE COALESCE(e.edge_status, 'active') = 'active'
+      AND e.source_tables @> ARRAY[$5]::text[]
+      AND e.source_fields @> ARRAY[$6]::text[]
+      AND e.source_row_ids @> ARRAY[$7]::text[]
       AND e.relation_type_norm = $2
       AND (
         lower(trim(e.parent_id)) = lower(trim($1))
@@ -707,11 +768,14 @@ async function syncResourceRelationsForArchive(db, {
       e.relation_type
     `,
     [
-      caalId,
-      normaliseRelationType(relationType),
-      currentSession?.user?.username ?? "web app",
-      normalisedCurrentRelatedIds
-    ]
+    caalId,
+    normaliseRelationType(relationType),
+    currentSession?.user?.username ?? "web app",
+    normalisedCurrentRelatedIds,
+    sourceTable,
+    sourceField,
+    String(sourceRowId)
+  ]
   );
 
   for (const row of deactivateResult.rows) {

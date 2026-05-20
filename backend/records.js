@@ -1,5 +1,41 @@
 const express = require("express");
 const pool = require("./db");
+const {
+  getWorkspaceStorage,
+  workspaceMonumentViewSql,
+  workspaceArchiveViewSql,
+  workspaceStorageScopeSql,
+  viewSql,
+  tableSql,
+  enabledWorkspaceStorageConfigs
+} = require("./workspaceStorage");
+
+function resolveWorkspaceStoragesForSession(currentSession) {
+  const ws = getWorkspaceStorage(currentSession);
+
+  // National users resolve against their own workspace schema.
+  if (ws.workspaceCode !== "caal") {
+    return [ws];
+  }
+
+  // CAAL users resolve against every enabled national workspace schema.
+  return enabledWorkspaceStorageConfigs();
+}
+
+function monumentResolveViewForStorage(storage) {
+  return viewSql(
+    storage.schema,
+    storage.monumentAppView || storage.monumentView || "v_monuments_grid_base"
+  );
+}
+
+function archiveResolveViewForStorage(storage) {
+  return viewSql(
+    storage.schema,
+    storage.archiveAppView || storage.archiveView || "v_archive_grid_base"
+  );
+}
+
 const { getResourceRelations } = require("./resourceRelations");
 
 const router = express.Router();
@@ -148,6 +184,7 @@ function buildResolvedMonumentRecord(row, lang, session) {
     geometry: buildGeometry(row),
     source: {
       scope: row.source_scope,
+      storage: row.storage_scope || null,
       is_editable: isEditableResolvedRow(row, session)
     }
   };
@@ -173,6 +210,7 @@ function buildResolvedArchiveRecord(row, lang, session) {
     raw: row,
     source: {
       scope: row.source_scope,
+      storage: row.storage_scope || null,
       is_editable: isEditableResolvedRow(row, session)
     }
   };
@@ -235,72 +273,6 @@ function isEditableResolvedRow(row, session) {
   );
 }
 
-function buildMonumentResolveSql(scopes) {
-  const parts = [];
-
-  if (scopes.includes("workspace")) {
-    parts.push(`
-      SELECT *, 'workspace'::text AS source_scope
-      FROM kz.v_monuments_grid_base
-      WHERE "CAAL_ID" = $1
-    `);
-  }
-
-  if (scopes.includes("national_ref")) {
-    parts.push(`
-      SELECT *, 'national_ref'::text AS source_scope
-      FROM ui.mv_monuments_caal
-      WHERE "CAAL_ID" = $1
-        AND (
-          "CAAL_ID" LIKE 'Mon_KZ_%'
-          OR btrim(coalesce("Country", '')) IN ('Kazakhstan', 'Казахстан')
-        )
-    `);
-  }
-
-  if (scopes.includes("all_caal")) {
-    parts.push(`
-      SELECT *, 'all_caal'::text AS source_scope
-      FROM ui.mv_monuments_caal
-      WHERE "CAAL_ID" = $1
-    `);
-  }
-
-  return parts.join("\nUNION ALL\n");
-}
-
-function buildArchiveResolveSql(scopes) {
-  const parts = [];
-
-  if (scopes.includes("workspace")) {
-    parts.push(`
-      SELECT *, 'workspace'::text AS source_scope
-      FROM kz.v_archive_grid_base
-      WHERE "CAAL_ID" = $1
-    `);
-  }
-
-  if (scopes.includes("national_ref")) {
-    parts.push(`
-      SELECT *
-      FROM kz.mv_archive_combined
-      WHERE source_scope = 'national_ref'
-        AND "CAAL_ID" = $1
-    `);
-  }
-
-  if (scopes.includes("all_caal")) {
-    parts.push(`
-      SELECT *
-      FROM kz.mv_archive_combined
-      WHERE source_scope = 'all_caal'
-        AND "CAAL_ID" = $1
-    `);
-  }
-
-  return parts.join("\nUNION ALL\n");
-}
-
 async function sendResolvedRecord(res, recordType, record) {
   record.relations = await getResourceRelations(pool, record.identity?.caal_id);
 
@@ -330,30 +302,78 @@ router.get("/check", async (req, res) => {
     });
   }
 
+  const lang = req.query.lang || currentSession.profile?.preferred_language || "en";
+  const safeLang = safeMonumentLang(lang);
+  const fallbackLang = fallbackLangForDisplay(safeLang);
+
   const scopes = getAllowedScopes(currentSession);
+
+  const workspaceCode = String(
+    currentSession?.user?.workspace_code ??
+    currentSession?.profile?.workspace_code ??
+    ""
+  ).trim().toLowerCase();
+
+  const ws = getWorkspaceStorage(currentSession);
+  const hasWorkspaceSchema = ws.workspaceCode !== "caal";
 
   try {
     // 1. Workspace monument
-    if (scopes.includes("workspace")) {
-      const result = await pool.query(
-        `
-        SELECT
-          "CAAL_ID" AS caal_id,
-          'monument'::text AS record_type,
-          'workspace'::text AS source_scope
-        FROM kz.v_monuments_grid_base
-        WHERE lower(trim("CAAL_ID")) = lower(trim($1))
-        LIMIT 1
-        `,
-        [caalId]
-      );
+    if (scopes.includes("workspace") || scopes.includes("all_caal")) {
+      const workspaceStorages = resolveWorkspaceStoragesForSession(currentSession);
 
-      if (result.rows.length) {
-        return res.json({
-          ok: true,
-          exists: true,
-          ...result.rows[0]
-        });
+      for (const storage of workspaceStorages) {
+        const monumentView = monumentResolveViewForStorage(storage);
+
+        const result = await pool.query(
+          `
+          SELECT
+            v.*,
+            COALESCE(country.display_${safeLang}, country.display_${fallbackLang}, country.display_en, v."Country") AS country_display,
+            COALESCE(cls.display_${safeLang}, cls.display_${fallbackLang}, cls.display_en, v."Classification") AS classification_display,
+            COALESCE(desig.display_${safeLang}, desig.display_${fallbackLang}, desig.display_en, v."Designation") AS designation_display,
+            COALESCE(mt1.display_${safeLang}, mt1.display_${fallbackLang}, mt1.display_en, v."Monument Type1") AS monument_type1_display,
+            COALESCE(cp1.display_${safeLang}, cp1.display_${fallbackLang}, cp1.display_en, v."Cultural Period1") AS cultural_period1_display,
+            COALESCE(rel1.display_${safeLang}, rel1.display_${fallbackLang}, rel1.display_en, v."Religion1") AS religion1_display,
+            'workspace'::text AS source_scope,
+            $2::text AS storage_scope
+          FROM ${monumentView} v
+          LEFT JOIN public.record_registry rr
+            ON rr.source_schema = $3
+          AND rr.source_table = 'CAAL_Monuments'
+          AND rr.source_row_id = v.id
+          LEFT JOIN ui.v_lkp_countries country
+            ON country.canonical_value = v."Country"
+          LEFT JOIN ui.v_lkp_classifications cls
+            ON cls.canonical_value = v."Classification"
+          LEFT JOIN ui.v_lkp_designation_type desig
+            ON desig.canonical_value = v."Designation"
+          LEFT JOIN ui.v_lkp_site_types_context mt1
+            ON mt1.canonical_value = v."Monument Type1"
+          LEFT JOIN ui.v_lkp_cultural_periods_context cp1
+            ON cp1.canonical_value = v."Cultural Period1"
+          LEFT JOIN ui.v_lkp_religion rel1
+            ON rel1.canonical_value = v."Religion1"
+          WHERE v."CAAL_ID" = $1
+          AND COALESCE(rr.status, '') <> 'deleted'
+          LIMIT 1
+          `,
+          [caalId, storage.storageScope, storage.schema]
+        );
+
+        if (result.rows.length) {
+          return res.json({
+            ok: true,
+            exists: true,
+            caal_id: caalId,
+            record_type: "monument",
+            source_scope:
+              getWorkspaceStorage(currentSession).workspaceCode === "caal"
+                ? "all_caal"
+                : "workspace",
+            storage_scope: storage.storageScope
+          });
+        }
       }
     }
 
@@ -364,11 +384,10 @@ router.get("/check", async (req, res) => {
         SELECT
           "CAAL_ID" AS caal_id,
           'monument'::text AS record_type,
+          'public_caal'::text AS storage_scope,
           CASE
-            WHEN (
-              "CAAL_ID" LIKE 'Mon_KZ_%'
-              OR btrim(coalesce("Country", '')) IN ('Kazakhstan', 'Казахстан')
-            )
+            WHEN NULLIF(workspace_code, '') IS NOT NULL
+              AND lower(workspace_code) = $2
             THEN 'national_ref'
             ELSE 'all_caal'
           END AS source_scope
@@ -376,7 +395,7 @@ router.get("/check", async (req, res) => {
         WHERE lower(trim("CAAL_ID")) = lower(trim($1))
         LIMIT 1
         `,
-        [caalId]
+        [caalId, workspaceCode]
       );
 
       if (result.rows.length) {
@@ -396,58 +415,81 @@ router.get("/check", async (req, res) => {
     }
 
     // 3. Workspace archive
-    if (scopes.includes("workspace")) {
-      const result = await pool.query(
-        `
-        SELECT
-          "CAAL_ID" AS caal_id,
-          'archive'::text AS record_type,
-          'workspace'::text AS source_scope
-        FROM kz.v_archive_grid_base
-        WHERE lower(trim("CAAL_ID")) = lower(trim($1))
-        LIMIT 1
-        `,
-        [caalId]
-      );
+    if (scopes.includes("workspace") || scopes.includes("all_caal")) {
+      const workspaceStorages = resolveWorkspaceStoragesForSession(currentSession);
 
-      if (result.rows.length) {
-        return res.json({
-          ok: true,
-          exists: true,
-          ...result.rows[0]
-        });
+      for (const storage of workspaceStorages) {
+        const archiveView = archiveResolveViewForStorage(storage);
+
+        const result = await pool.query(
+          `
+          SELECT
+            v.*,
+            'workspace'::text AS source_scope,
+            $2::text AS storage_scope
+          FROM ${archiveView} v
+          LEFT JOIN public.record_registry rr
+            ON rr.source_schema = $3
+          AND rr.source_table = 'CAAL_Archive'
+          AND rr.source_row_id = v.id
+          WHERE v."CAAL_ID" = $1
+            AND COALESCE(rr.status, '') <> 'deleted'
+          LIMIT 1
+          `,
+          [caalId, storage.storageScope, storage.schema]
+        );
+
+        if (result.rows.length) {
+          return res.json({
+            ok: true,
+            exists: true,
+            caal_id: caalId,
+            record_type: "archive",
+            source_scope:
+              getWorkspaceStorage(currentSession).workspaceCode === "caal"
+                ? "all_caal"
+                : "workspace",
+            storage_scope: storage.storageScope
+          });
+        }
       }
     }
 
     // 4. Public CAAL archive
     if (scopes.includes("national_ref") || scopes.includes("all_caal")) {
+
       const result = await pool.query(
         `
         SELECT
           "CAAL_ID" AS caal_id,
           'archive'::text AS record_type,
-          source_scope
-        FROM kz.mv_archive_combined
+          'public_caal'::text AS storage_scope,
+          CASE
+            WHEN NULLIF(workspace_code, '') IS NOT NULL
+              AND lower(workspace_code) = $2
+            THEN 'national_ref'
+            ELSE 'all_caal'
+          END AS source_scope
+        FROM ui.mv_archive_caal_app
         WHERE lower(trim("CAAL_ID")) = lower(trim($1))
-          AND source_scope = ANY($2)
-        ORDER BY
-          CASE source_scope
-            WHEN 'workspace' THEN 1
-            WHEN 'national_ref' THEN 2
-            WHEN 'all_caal' THEN 3
-            ELSE 99
-          END
         LIMIT 1
         `,
-        [caalId, scopes]
+        [caalId, workspaceCode]
       );
 
       if (result.rows.length) {
-        return res.json({
-          ok: true,
-          exists: true,
-          ...result.rows[0]
-        });
+        const row = result.rows[0];
+
+        if (
+          row.source_scope === "national_ref" ||
+          scopes.includes("all_caal")
+        ) {
+          return res.json({
+            ok: true,
+            exists: true,
+            ...row
+          });
+        }
       }
     }
 
@@ -496,45 +538,67 @@ router.get("/resolve", async (req, res) => {
 
   try {
     // 1. Workspace monument
-    if (scopes.includes("workspace")) {
-      const result = await pool.query(
-        `
-        SELECT
-          v.*,
-          COALESCE(country.display_${safeLang}, country.display_${fallbackLang}, country.display_en, v."Country") AS country_display,
-          COALESCE(cls.display_${safeLang}, cls.display_${fallbackLang}, cls.display_en, v."Classification") AS classification_display,
-          COALESCE(desig.display_${safeLang}, desig.display_${fallbackLang}, desig.display_en, v."Designation") AS designation_display,
-          COALESCE(mt1.display_${safeLang}, mt1.display_${fallbackLang}, mt1.display_en, v."Monument Type1") AS monument_type1_display,
-          COALESCE(cp1.display_${safeLang}, cp1.display_${fallbackLang}, cp1.display_en, v."Cultural Period1") AS cultural_period1_display,
-          COALESCE(rel1.display_${safeLang}, rel1.display_${fallbackLang}, rel1.display_en, v."Religion1") AS religion1_display,
-          'workspace'::text AS source_scope
-        FROM kz.v_monuments_grid_base v
-        LEFT JOIN ui.v_lkp_countries country
-          ON country.canonical_value = v."Country"
-        LEFT JOIN ui.v_lkp_classifications cls
-          ON cls.canonical_value = v."Classification"
-        LEFT JOIN ui.v_lkp_designation_type desig
-          ON desig.canonical_value = v."Designation"
-        LEFT JOIN ui.v_lkp_site_types_context mt1
-          ON mt1.canonical_value = v."Monument Type1"
-        LEFT JOIN ui.v_lkp_cultural_periods_context cp1
-          ON cp1.canonical_value = v."Cultural Period1"
-        LEFT JOIN ui.v_lkp_religion rel1
-          ON rel1.canonical_value = v."Religion1"
-        WHERE v."CAAL_ID" = $1
-        LIMIT 1
-        `,
-        [caalId]
-      );
+    if (scopes.includes("workspace") || scopes.includes("all_caal")) {
+      const workspaceStorages = resolveWorkspaceStoragesForSession(currentSession);
 
-      if (result.rows.length) {
-        const record = buildResolvedMonumentRecord(
-          stripMonumentInternalFields(result.rows[0]),
-          lang,
-          currentSession
+      for (const storage of workspaceStorages) {
+        if (!storage?.monumentView && !storage?.monumentAppView) continue;
+
+        const monumentView = monumentResolveViewForStorage(storage);
+
+        const result = await pool.query(
+          `
+          SELECT
+            v.*,
+            COALESCE(country.display_${safeLang}, country.display_${fallbackLang}, country.display_en, v."Country") AS country_display,
+            COALESCE(cls.display_${safeLang}, cls.display_${fallbackLang}, cls.display_en, v."Classification") AS classification_display,
+            COALESCE(desig.display_${safeLang}, desig.display_${fallbackLang}, desig.display_en, v."Designation") AS designation_display,
+            COALESCE(mt1.display_${safeLang}, mt1.display_${fallbackLang}, mt1.display_en, v."Monument Type1") AS monument_type1_display,
+            COALESCE(cp1.display_${safeLang}, cp1.display_${fallbackLang}, cp1.display_en, v."Cultural Period1") AS cultural_period1_display,
+            COALESCE(rel1.display_${safeLang}, rel1.display_${fallbackLang}, rel1.display_en, v."Religion1") AS religion1_display,
+            CASE
+              WHEN $3::text = 'caal' THEN 'all_caal'
+              ELSE 'workspace'
+            END AS source_scope,
+            $2::text AS storage_scope
+          FROM ${monumentView} v
+          LEFT JOIN public.record_registry rr
+            ON rr.source_schema = $4
+          AND rr.source_table = 'CAAL_Monuments'
+          AND rr.source_row_id = v.id
+          LEFT JOIN ui.v_lkp_countries country
+            ON country.canonical_value = v."Country"
+          LEFT JOIN ui.v_lkp_classifications cls
+            ON cls.canonical_value = v."Classification"
+          LEFT JOIN ui.v_lkp_designation_type desig
+            ON desig.canonical_value = v."Designation"
+          LEFT JOIN ui.v_lkp_site_types_context mt1
+            ON mt1.canonical_value = v."Monument Type1"
+          LEFT JOIN ui.v_lkp_cultural_periods_context cp1
+            ON cp1.canonical_value = v."Cultural Period1"
+          LEFT JOIN ui.v_lkp_religion rel1
+            ON rel1.canonical_value = v."Religion1"
+          WHERE v."CAAL_ID" = $1
+            AND COALESCE(rr.status, '') <> 'deleted'
+          LIMIT 1
+          `,
+          [
+            caalId,
+            storage.storageScope,
+            String(getWorkspaceStorage(currentSession).workspaceCode || ""),
+            storage.schema
+          ]
         );
 
-        return sendResolvedRecord(res, "monument", record);
+        if (result.rows.length) {
+          const record = buildResolvedMonumentRecord(
+            stripMonumentInternalFields(result.rows[0]),
+            lang,
+            currentSession
+          );
+
+          return sendResolvedRecord(res, "monument", record);
+        }
       }
     }
 
@@ -550,6 +614,7 @@ router.get("/resolve", async (req, res) => {
           COALESCE(m.monument_type1_${safeLang}, m.monument_type1_${fallbackLang}, m.monument_type1_en, m."Monument Type1") AS monument_type1_display,
           COALESCE(m.cultural_period1_${safeLang}, m.cultural_period1_${fallbackLang}, m.cultural_period1_en, m."Cultural Period1") AS cultural_period1_display,
           COALESCE(m.religion1_${safeLang}, m.religion1_${fallbackLang}, m.religion1_en, m."Religion1") AS religion1_display,
+          'public_caal'::text AS storage_scope,
           CASE
             WHEN NULLIF(m.workspace_code, '') IS NOT NULL
             AND lower(m.workspace_code) = $2
@@ -582,25 +647,49 @@ router.get("/resolve", async (req, res) => {
     }
 
     // 3. Workspace archive
-    if (scopes.includes("workspace")) {
-      const result = await pool.query(
-        `
-        SELECT *, 'workspace'::text AS source_scope
-        FROM kz.v_archive_grid_base
-        WHERE "CAAL_ID" = $1
-        LIMIT 1
-        `,
-        [caalId]
-      );
+    if (scopes.includes("workspace") || scopes.includes("all_caal")) {
+      const workspaceStorages = resolveWorkspaceStoragesForSession(currentSession);
 
-      if (result.rows.length) {
-        const record = buildResolvedArchiveRecord(
-          stripMonumentInternalFields(result.rows[0]),
-          lang,
-          currentSession
+      for (const storage of workspaceStorages) {
+        if (!storage?.archiveView && !storage?.archiveAppView) continue;
+
+        const archiveView = archiveResolveViewForStorage(storage);
+
+        const result = await pool.query(
+          `
+          SELECT
+            v.*,
+            CASE
+              WHEN $3::text = 'caal' THEN 'all_caal'
+              ELSE 'workspace'
+            END AS source_scope,
+            $2::text AS storage_scope
+          FROM ${archiveView} v
+          LEFT JOIN public.record_registry rr
+            ON rr.source_schema = $4
+          AND rr.source_table = 'CAAL_Archive'
+          AND rr.source_row_id = v.id
+          WHERE v."CAAL_ID" = $1
+            AND COALESCE(rr.status, '') <> 'deleted'
+          LIMIT 1
+          `,
+          [
+            caalId,
+            storage.storageScope,
+            String(getWorkspaceStorage(currentSession).workspaceCode || ""),
+            storage.schema
+          ]
         );
 
-        return sendResolvedRecord(res, "archive", record);
+        if (result.rows.length) {
+          const record = buildResolvedArchiveRecord(
+            result.rows[0],
+            lang,
+            currentSession
+          );
+
+          return sendResolvedRecord(res, "archive", record);
+        }
       }
     }
 
@@ -608,30 +697,37 @@ router.get("/resolve", async (req, res) => {
     if (scopes.includes("national_ref") || scopes.includes("all_caal")) {
       const result = await pool.query(
         `
-        SELECT *
-        FROM kz.mv_archive_combined
-        WHERE "CAAL_ID" = $1
-          AND source_scope = ANY($2)
-        ORDER BY
-          CASE source_scope
-            WHEN 'workspace' THEN 1
-            WHEN 'national_ref' THEN 2
-            WHEN 'all_caal' THEN 3
-            ELSE 99
-          END
+        SELECT
+          m.*,
+          'public_caal'::text AS storage_scope,
+          CASE
+            WHEN NULLIF(m.workspace_code, '') IS NOT NULL
+              AND lower(m.workspace_code) = $2
+            THEN 'national_ref'
+            ELSE 'all_caal'
+          END AS source_scope
+        FROM ui.mv_archive_caal_app m
+        WHERE m."CAAL_ID" = $1
         LIMIT 1
         `,
-        [caalId, scopes]
+        [caalId, workspaceCode]
       );
 
       if (result.rows.length) {
-        const record = buildResolvedArchiveRecord(
-          stripMonumentInternalFields(result.rows[0]),
-          lang,
-          currentSession
-        );
+        const row = result.rows[0];
 
-        return sendResolvedRecord(res, "archive", record);
+        if (
+          row.source_scope === "national_ref" ||
+          scopes.includes("all_caal")
+        ) {
+          const record = buildResolvedArchiveRecord(
+            stripMonumentInternalFields(row),
+            lang,
+            currentSession
+          );
+
+          return sendResolvedRecord(res, "archive", record);
+        }
       }
     }
 
@@ -646,6 +742,211 @@ router.get("/resolve", async (req, res) => {
     return res.status(500).json({
       ok: false,
       error: "Related record resolve failed",
+      detail: error.message
+    });
+  }
+});
+
+// FOR RELATED RECORDS AUTO COMPLETE SUGGESTIONS
+function sqlTextLiteral(value) {
+  return `'${String(value ?? "").replace(/'/g, "''")}'`;
+}
+
+function suggestWorkspaceStoragesForSession(currentSession) {
+  const ws = getWorkspaceStorage(currentSession);
+
+  if (ws.workspaceCode !== "caal") {
+    return [ws];
+  }
+
+  return enabledWorkspaceStorageConfigs();
+}
+
+function suggestSourceScopeForStorage(currentSession) {
+  const ws = getWorkspaceStorage(currentSession);
+  return ws.workspaceCode === "caal" ? "all_caal" : "workspace";
+}
+
+function wrapSuggestBranch(sql) {
+  return `
+    SELECT *
+    FROM (
+      ${sql}
+    ) branch
+  `;
+}
+
+// for dropdown suggestion speed
+function workspaceSuggestSqlForStorage(storage, sourceScope = "workspace") {
+  const parts = [];
+
+  const storageScopeSql = sqlTextLiteral(storage.storageScope);
+  const sourceScopeSql = sqlTextLiteral(sourceScope);
+  const sourceSchemaSql = sqlTextLiteral(storage.schema);
+
+  if (storage?.schema && storage?.monumentTable) {
+    parts.push(wrapSuggestBranch(`
+      SELECT
+        m."CAAL_ID" AS caal_id,
+        'monument'::text AS record_type,
+        ${sourceScopeSql}::text AS source_scope,
+        ${storageScopeSql}::text AS storage_scope,
+        COALESCE(m."Primary Name", m."Primary Name (English)", m."CAAL_ID", '') AS title,
+        COALESCE(m."Primary Name (English)", '') AS subtitle
+      FROM ${tableSql(storage.schema, storage.monumentTable)} m
+      LEFT JOIN public.record_registry rr
+        ON rr.source_schema = ${sourceSchemaSql}
+      AND rr.source_table = 'CAAL_Monuments'
+      AND rr.source_row_id = m.id
+      WHERE lower(m."CAAL_ID") LIKE lower($1)
+        AND COALESCE(rr.status, '') <> 'deleted'
+      ORDER BY m."CAAL_ID"
+      LIMIT 12
+    `));
+  }
+
+  if (storage?.schema && storage?.archiveTable) {
+    parts.push(wrapSuggestBranch(`
+      SELECT
+        a."CAAL_ID" AS caal_id,
+        'archive'::text AS record_type,
+        ${sourceScopeSql}::text AS source_scope,
+        ${storageScopeSql}::text AS storage_scope,
+        COALESCE(a."Original Title", a."English Title", a."Original Reference", a."CAAL_ID", '') AS title,
+        COALESCE(a."Original Reference", '') AS subtitle
+      FROM ${tableSql(storage.schema, storage.archiveTable)} a
+      LEFT JOIN public.record_registry rr
+        ON rr.source_schema = ${sourceSchemaSql}
+      AND rr.source_table = 'CAAL_Archive'
+      AND rr.source_row_id = a.id
+      WHERE lower(a."CAAL_ID") LIKE lower($1)
+        AND COALESCE(rr.status, '') <> 'deleted'
+      ORDER BY a."CAAL_ID"
+      LIMIT 12
+    `));
+  }
+
+  return parts;
+}
+
+// actual fetch
+router.get("/suggest", async (req, res) => {
+  const currentSession = req.session?.appSession || null;
+
+  if (!currentSession) {
+    return res.status(401).json({ ok: false, error: "No active session" });
+  }
+
+  const q = String(req.query.q || "").trim();
+  const lang = req.query.lang || currentSession.profile?.preferred_language || "en";
+  const safeLang = safeMonumentLang(lang);
+  const fallbackLang = fallbackLangForDisplay(safeLang);
+
+  if (q.length < 4) {
+    return res.json({ ok: true, suggestions: [] });
+  }
+
+  const workspaceCode = String(
+    currentSession?.user?.workspace_code ??
+    currentSession?.profile?.workspace_code ??
+    ""
+  ).trim().toLowerCase();
+
+  const scopes = getAllowedScopes(currentSession);
+
+  try {
+    const values = [`${q}%`, `%${q}%`, workspaceCode, scopes];
+    const parts = [];
+
+    const workspaceStorages = suggestWorkspaceStoragesForSession(currentSession);
+    const workspaceSourceScope = suggestSourceScopeForStorage(currentSession);
+
+    if (scopes.includes("workspace") || scopes.includes("all_caal")) {
+      workspaceStorages.forEach((storage) => {
+        parts.push(...workspaceSuggestSqlForStorage(storage, workspaceSourceScope));
+      });
+    }
+
+    if (scopes.includes("national_ref") || scopes.includes("all_caal")) {
+      parts.push(wrapSuggestBranch(`
+        SELECT
+          m."CAAL_ID" AS caal_id,
+          'monument'::text AS record_type,
+          CASE
+            WHEN NULLIF(m.workspace_code, '') IS NOT NULL
+            AND lower(m.workspace_code) = $3
+            THEN 'national_ref'
+            ELSE 'all_caal'
+          END AS source_scope,
+          'public_caal'::text AS storage_scope,
+          COALESCE(m."Primary Name", m."Primary Name (English)", '') AS title,
+          COALESCE(
+            m.monument_type1_${safeLang},
+            m.monument_type1_${fallbackLang},
+            m.monument_type1_en,
+            m."Monument Type1",
+            ''
+          ) AS subtitle
+        FROM ui.mv_monuments_caal m
+        WHERE lower(m."CAAL_ID") LIKE lower($1)
+        ORDER BY m."CAAL_ID"
+        LIMIT 12
+      `));
+
+      parts.push(wrapSuggestBranch(`
+        SELECT
+          a."CAAL_ID" AS caal_id,
+          'archive'::text AS record_type,
+          CASE
+            WHEN NULLIF(a.workspace_code, '') IS NOT NULL
+            AND lower(a.workspace_code) = $3
+            THEN 'national_ref'
+            ELSE 'all_caal'
+          END AS source_scope,
+          'public_caal'::text AS storage_scope,
+          COALESCE(a."Original Title", a."English Title", a."Original Reference", '') AS title,
+          COALESCE(a."Original Reference", '') AS subtitle
+        FROM ui.mv_archive_caal_app a
+        WHERE lower(a."CAAL_ID") LIKE lower($1)
+        ORDER BY a."CAAL_ID"
+        LIMIT 12
+      `));
+    }
+
+    if (!parts.length) {
+      return res.json({ ok: true, suggestions: [] });
+    }
+
+    const sql = `
+      SELECT *
+      FROM (
+        ${parts.join("\nUNION ALL\n")}
+      ) s
+      WHERE source_scope = 'workspace'
+        OR source_scope = 'national_ref'
+        OR source_scope = ANY($4)
+      ORDER BY
+        CASE
+          WHEN lower(caal_id) LIKE lower($1) THEN 0
+          WHEN lower(caal_id) LIKE lower($2) THEN 1
+          ELSE 2
+        END,
+        caal_id
+      LIMIT 12
+    `;
+
+    const result = await pool.query(sql, values);
+
+    return res.json({
+      ok: true,
+      suggestions: result.rows
+    });
+  } catch (error) {
+    console.error("CAAL_ID suggest failed:", error);
+
+    return res.status(500).json({
+      ok: false,
+      error: "CAAL_ID suggest failed",
       detail: error.message
     });
   }

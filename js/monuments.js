@@ -3672,6 +3672,9 @@ function mBuildSavePayload() {
     payload["MasterID"] = normaliseRelatedIdList(mGetInputValue("MasterID"));
   }
 
+  payload._storage_scope = monumentSelectedRecord?.source?.storage || null;
+  payload._source_scope = monumentSelectedRecord?.source?.scope || null;
+
   return payload;
 }
 
@@ -4656,10 +4659,13 @@ function mWireRelatedCaalIdChipInputs() {
         event.key === "Enter" ||
         event.key === "Tab" ||
         event.key === "," ||
-        event.key === ";" ||
-        event.key === " ";
+        event.key === ";";
 
       if (!shouldCommit) return;
+
+      if (isRelatedCaalIdSuggestOpen(fieldEl)) {
+        return;
+      }
 
       if (input.value.trim()) {
         event.preventDefault();
@@ -4683,11 +4689,25 @@ function mWireRelatedCaalIdChipInputs() {
     });
 
     input.addEventListener("blur", async () => {
-      if (input.value.trim()) {
-        const rawValue = input.value;
-        input.value = "";
+      setTimeout(async () => {
+        if (isRelatedCaalIdSuggestOpen(fieldEl)) {
+          return;
+        }
 
-        await mAddRelatedCaalIdChip(fieldEl, rawValue);
+        if (input.value.trim()) {
+          const rawValue = input.value;
+          input.value = "";
+
+          await mAddRelatedCaalIdChip(fieldEl, rawValue);
+        }
+      }, 120);
+    });
+
+    wireRelatedCaalIdSuggestInput({
+      fieldEl,
+      input,
+      addChip: async (caalId) => {
+        await mAddRelatedCaalIdChip(fieldEl, caalId);
       }
     });
 
@@ -6184,20 +6204,15 @@ function renderMonumentPreviewModal(record) {
   const previewCentreBtn = document.getElementById("previewCentreOnMapBtn");
 
   if (previewCentreBtn) {
-    previewCentreBtn.addEventListener("click", () => {
+    previewCentreBtn.addEventListener("click", async () => {
       if (!map || !record?.geometry?.coordinates) return;
 
       monumentSelectedRecord = record;
-
       drawSelectedMonumentHighlight(record);
       renderMonumentLegend();
       updateMapOptionsState();
 
-      map.easeTo({
-        center: record.geometry.coordinates,
-        zoom: Math.max(map.getZoom(), 10),
-        duration: 600
-      });
+      await centreLightRecordOnMap(record);
 
       closeMonumentPreviewModal();
     });
@@ -8658,16 +8673,51 @@ async function previewMonumentFromLightRecord(lightRecord) {
   }
 }
 
-function centreLightRecordOnMap(lightRecord) {
+async function centreLightRecordOnMap(lightRecord) {
   if (!map || !lightRecord?.geometry?.coordinates) return;
+
+  setMapStaleState(true, t("redrawing_map", "Redrawing map..."));
+
+  suppressNextMapMoveReload = true;
+
+  await new Promise((resolve) => {
+    let resolved = false;
+
+    function finish() {
+      if (resolved) return;
+      resolved = true;
+      resolve();
+    }
+
+    map.once("moveend", finish);
+
+    map.easeTo({
+      center: lightRecord.geometry.coordinates,
+      zoom: Math.max(map.getZoom(), 10),
+      duration: 600
+    });
+
+    setTimeout(finish, 800);
+  });
+
+  try {
+    await loadMonumentMapRecords();
+  } catch (error) {
+    console.error("Failed to reload monuments after centring record:", error);
+  }
 
   drawFocusedResultHighlight(lightRecord);
 
-  map.easeTo({
-    center: lightRecord.geometry.coordinates,
-    zoom: Math.max(map.getZoom(), 10),
-    duration: 600
-  });
+  if (
+    monumentSelectedRecord?.identity?.caal_id &&
+    String(monumentSelectedRecord.identity.caal_id) === String(lightRecord.identity?.caal_id)
+  ) {
+    drawSelectedMonumentHighlight(monumentSelectedRecord);
+  }
+
+  renderLiveMapLabels();
+  updateMapOptionsState();
+  updateMapStatusLine();
 }
 
 async function openLightRecordInDetails(lightRecord) {
@@ -8797,13 +8847,13 @@ function renderMonumentResultsList(records) {
   });
 
   Array.from(resultsList.querySelectorAll(".result-centre-btn")).forEach((btn) => {
-    btn.addEventListener("click", (event) => {
+    btn.addEventListener("click", async (event) => {
       event.stopPropagation();
 
       const idx = Number(btn.dataset.centreIndex);
       const lightRecord = records[idx];
 
-      centreLightRecordOnMap(lightRecord);
+      await centreLightRecordOnMap(lightRecord);
     });
   });
 }
@@ -9113,7 +9163,26 @@ function renderMonumentDisplayMode(record) {
 
       <div class="record-title-main">
         <h3>${mSafeValue(mSummary(record, "primary_name"))}</h3>
-        <p>${mSafeValue(mIdentity(record, "caal_id"))}</p>
+        <p class="copyable-field monument-title-caal-id">
+          <span class="copyable-field-text">
+            ${mSafeValue(mIdentity(record, "caal_id"))}
+          </span>
+          ${
+            mIdentity(record, "caal_id")
+              ? `
+                <button
+                  type="button"
+                  class="copy-field-btn"
+                  data-copy-value="${mSafeValue(mIdentity(record, "caal_id"))}"
+                  title="${t("copy_to_clipboard", "Copy to clipboard")}"
+                  aria-label="${t("copy_to_clipboard", "Copy to clipboard")}: ${mSafeValue(mIdentity(record, "caal_id"))}"
+                >
+                  ${svgCopyIcon ? svgCopyIcon() : svgCopyIcon()}
+                </button>
+              `
+              : ""
+          }
+        </p>
       </div>
 
       ${renderMasterIdChip(record)}
@@ -9132,16 +9201,11 @@ function renderMonumentDisplayMode(record) {
   const zoomBtn = document.getElementById("zoomToSelectedMonumentBtn");
 
   if (zoomBtn) {
-    zoomBtn.addEventListener("click", () => {
+    zoomBtn.addEventListener("click", async () => {
       if (!record?.geometry?.coordinates || !map) return;
 
-      drawSelectedMonumentHighlight(record);
-
-      map.easeTo({
-        center: record.geometry.coordinates,
-  //      zoom: Math.max(map.getZoom(), 10),
-        duration: 600
-      });
+      monumentSelectedRecord = record;
+      await centreLightRecordOnMap(record);
     });
   }
 
@@ -9328,8 +9392,28 @@ function mRenderMeasurementEditSet(index, record) {
 function renderMonumentEditMode(record) {
   recordDetails.innerHTML = `
     <div class="record-title">
-      <h3>${mSafeValue(mSummary(record, "primary_name"))}</h3>
-      <p>${mSafeValue(mIdentity(record, "caal_id"))}</p>
+      <div class="record-title-actions record-title-actions-topright">
+        ${
+          record?.geometry?.coordinates
+            ? `
+              <button
+                type="button"
+                class="icon-action-btn record-title-icon-btn"
+                id="zoomToSelectedMonumentBtn"
+                title="${t("centre_on_map", "Centre on map")}"
+                aria-label="${t("centre_on_map", "Centre on map")}"
+              >
+                ${svgTargetIcon()}
+              </button>
+            `
+            : ""
+        }
+      </div>
+
+      <div class="record-title-main">
+        <h3>${mSafeValue(mSummary(record, "primary_name"))}</h3>
+        <p>${mSafeValue(mIdentity(record, "caal_id"))}</p>
+      </div>
     </div>
 
     <div class="group-stack">
@@ -9537,6 +9621,18 @@ function renderMonumentEditMode(record) {
   mWireRelatedCaalIdChipInputs();
 
   wireInlineLocationButtons();
+
+  const zoomBtn = document.getElementById("zoomToSelectedMonumentBtn");
+
+  if (zoomBtn) {
+    zoomBtn.addEventListener("click", async () => {
+      if (!record?.geometry?.coordinates || !map) return;
+
+      monumentSelectedRecord = record;
+      await centreLightRecordOnMap(record);
+    });
+  }
+
   updateAddModeUI();
 }
 
@@ -10020,7 +10116,9 @@ async function monumentDeleteCurrentRecord() {
       },
       credentials: "include",
       body: JSON.stringify({
-        reason: reason || null
+        reason: reason || null,
+        _storage_scope: record.source?.storage || null,
+        _source_scope: record.source?.scope || null
       })
     });
 
@@ -10406,34 +10504,20 @@ document.addEventListener("app:languageChanged", async () => {
   if (!el) return;
 
   el.addEventListener("change", async () => {
-    if (!monumentConfirmLoseChanges()) {
-      el.checked = !el.checked;
-      return;
-    }
-
     const scopes = getMonumentEnabledScopes();
 
     monumentPageOffset = 0;
-    monumentPendingNewRecord = null;
-    monumentIsEditMode = false;
-    monumentIsDirty = false;
-    monumentIsAddMode = false;
-    monumentSyncModeVisualState();
-    updateAddModeUI();
-    monumentSelectedRecord = null;
 
-    if (map) {
-      if (map.getLayer("monument-selected-ring")) {
-        map.removeLayer("monument-selected-ring");
-      }
-
-      if (map.getSource("monument-selected")) {
-        map.removeSource("monument-selected");
-      }
-    }
-
-    clearRelatedMonumentsMap();
-    updateMapOptionsState();
+    /*
+      Scope changes should update the browse list and result map only.
+      They must not discard the open details record, edit mode, add mode,
+      dirty state, or pending new-record point.
+    */
+    const selectedBefore = monumentSelectedRecord;
+    const wasEditing = monumentIsEditMode;
+    const wasDirty = monumentIsDirty;
+    const wasAddMode = monumentIsAddMode;
+    const pendingBefore = monumentPendingNewRecord;
 
     if (!scopes.length) {
       setMonumentsLoading(false);
@@ -10448,11 +10532,33 @@ document.addEventListener("app:languageChanged", async () => {
       clearNationalClustersLayer();
       drawMonumentRecords([]);
       renderNoScopeSelectedState();
-      renderMonumentEmptyState();
       updateShowResultsOnMapButton();
+
+      /*
+        Keep details pane and edit/add state intact.
+      */
+      monumentSelectedRecord = selectedBefore;
+      monumentIsEditMode = wasEditing;
+      monumentIsDirty = wasDirty;
+      monumentIsAddMode = wasAddMode;
+      monumentPendingNewRecord = pendingBefore;
+
+      if (selectedBefore?.geometry?.coordinates) {
+        drawSelectedMonumentHighlight(selectedBefore);
+      }
+
+      if (pendingBefore?.geometry?.coordinates) {
+        drawPendingPickPoint(
+          pendingBefore.geometry.coordinates[0],
+          pendingBefore.geometry.coordinates[1]
+        );
+      }
+
       renderLiveMapLabels();
       updateMapOptionsState();
       updateMapStatusLine();
+      updateMonumentActionBar();
+      updateAddModeUI();
 
       return;
     }
@@ -10463,7 +10569,30 @@ document.addEventListener("app:languageChanged", async () => {
     try {
       await loadMonumentListRecords();
       await loadMonumentMapRecords();
-      renderMonumentEmptyState();
+
+      /*
+        Restore details/edit/add state after the browse/map reload.
+      */
+      monumentSelectedRecord = selectedBefore;
+      monumentIsEditMode = wasEditing;
+      monumentIsDirty = wasDirty;
+      monumentIsAddMode = wasAddMode;
+      monumentPendingNewRecord = pendingBefore;
+
+      if (selectedBefore?.geometry?.coordinates) {
+        drawSelectedMonumentHighlight(selectedBefore);
+      }
+
+      if (pendingBefore?.geometry?.coordinates) {
+        drawPendingPickPoint(
+          pendingBefore.geometry.coordinates[0],
+          pendingBefore.geometry.coordinates[1]
+        );
+      }
+
+      updateSelectedResultCard();
+      updateMonumentActionBar();
+      updateAddModeUI();
     } catch (error) {
       console.error("Failed to reload monuments after scope change:", error);
 

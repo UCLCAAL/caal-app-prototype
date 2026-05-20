@@ -641,6 +641,7 @@ function archiveWireCaalIdChipInputs() {
         }
         return;
       }
+
       input.focus();
     });
 
@@ -649,10 +650,13 @@ function archiveWireCaalIdChipInputs() {
         event.key === "Enter" ||
         event.key === "Tab" ||
         event.key === "," ||
-        event.key === ";" ||
-        event.key === " ";
+        event.key === ";";
 
       if (!shouldCommit) return;
+
+      if (isRelatedCaalIdSuggestOpen(fieldEl)) {
+        return;
+      }
 
       if (input.value.trim()) {
         event.preventDefault();
@@ -676,11 +680,25 @@ function archiveWireCaalIdChipInputs() {
     });
 
     input.addEventListener("blur", async () => {
-      if (input.value.trim()) {
-        const rawValue = input.value;
-        input.value = "";
+      setTimeout(async () => {
+        if (isRelatedCaalIdSuggestOpen(fieldEl)) {
+          return;
+        }
 
-        await archiveAddCaalIdChip(fieldEl, rawValue);
+        if (input.value.trim()) {
+          const rawValue = input.value;
+          input.value = "";
+
+          await archiveAddCaalIdChip(fieldEl, rawValue);
+        }
+      }, 120);
+    });
+
+    wireRelatedCaalIdSuggestInput({
+      fieldEl,
+      input,
+      addChip: async (caalId) => {
+        await archiveAddCaalIdChip(fieldEl, caalId);
       }
     });
 
@@ -1135,7 +1153,9 @@ async function archiveDeleteCurrentRecord() {
       },
       credentials: "include",
       body: JSON.stringify({
-        reason: reason || null
+        reason: reason || null,
+        _storage_scope: record.source?.storage || null,
+        _source_scope: record.source?.scope || null
       })
     });
 
@@ -1424,6 +1444,10 @@ function archiveBuildSavePayload() {
     "Resource": archiveGetInputValue("Resource"),
     "Country": archiveGetInputValue("Country")
   };
+  payload._storage_scope = archiveSelectedRecord?.source?.storage || null;
+  payload._source_scope = archiveSelectedRecord?.source?.scope || null;
+
+return payload;
 }
 
 // add helper
@@ -2909,7 +2933,24 @@ function archiveRenderDisplayMode(record) {
       <div class="record-title-row">
         <div>
           <h3>${safeArchiveValue(s.original_title || s.english_title)}</h3>
-          <p>${safeArchiveValue(archiveIdentity(record, "caal_id"))}</p>
+          <p class="copyable-field archive-title-caal-id">
+            <span class="copyable-field-text">${safeArchiveValue(archiveIdentity(record, "caal_id"))}</span>
+            ${
+              archiveIdentity(record, "caal_id")
+                ? `
+                  <button
+                    type="button"
+                    class="copy-field-btn"
+                    data-copy-value="${safeArchiveValue(archiveIdentity(record, "caal_id"))}"
+                    title="${t("copy_to_clipboard", "Copy to clipboard")}"
+                    aria-label="${t("copy_to_clipboard", "Copy to clipboard")}: ${safeArchiveValue(archiveIdentity(record, "caal_id"))}"
+                  >
+                    ${archiveSvgCopyIcon()}
+                  </button>
+                `
+                : ""
+            }
+          </p>
           <div class="archive-title-associated-id related-id-list">
             <strong>${archiveLabel("Associated CAAL_ID", "Associated CAAL_ID")}:</strong>
             ${archiveRenderAssociatedRelationChips(record)}
@@ -2955,11 +2996,7 @@ function archiveRenderEditMode(record) {
   const r = record.raw || {};
 
   let materialHtml = "";
-  materialHtml += archiveCopyableDetailItem(
-    archiveLabel("CAAL_ID", "CAAL_ID"),
-    archiveIdentity(record, "caal_id") || archiveRaw(record, "CAAL_ID"),
-    true
-  );
+
   materialHtml += archiveRenderSelect(
     "Level",
     archiveLabel("Level", "Level"),
@@ -3080,13 +3117,23 @@ function archiveRenderEditMode(record) {
     t("recorded_language", "Recorded Language"),
     displayLanguageName(archiveRaw(record, "Preferred Language"))
   );
-  metadataHtml += archiveRenderTextInput("Country", archiveLabel("Country", "Country"), archiveRaw(record, "Country"));
+  metadataHtml += archiveRenderSelect(
+    "Country",
+    archiveLabel("Country", "Country"),
+    "country",
+    archiveRaw(record, "Country")
+  );
+
+  const editCaalId =
+  archiveIdentity(record, "caal_id") ||
+  archiveRaw(record, "CAAL_ID") ||
+  archiveLabel("Assigned on save", "Assigned on save");
 
   archiveRecordDetails.innerHTML = `
-    <div class="${archiveRecordTitleClass(record)}">
-      <h3>${safeArchiveValue(record?.summary?.original_title || record?.summary?.english_title)}</h3>
-      <p>${safeArchiveValue(archiveIdentity(record, "caal_id") || archiveLabel("Assigned on save", "Assigned on save"))}</p>
-    </div>
+  <div class="${archiveRecordTitleClass(record)}">
+    <h3>${safeArchiveValue(record?.summary?.original_title || record?.summary?.english_title)}</h3>
+    <p>${safeArchiveValue(archiveIdentity(record, "caal_id") || archiveLabel("Assigned on save", "Assigned on save"))}</p>
+  </div>
 
     <div class="group-stack">
       ${archiveRenderGroupBlock(t("material_details", "Material Details"), materialHtml, true)}

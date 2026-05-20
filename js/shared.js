@@ -608,6 +608,250 @@ window.getRelatedIdsFromRecord = getRelatedIdsFromRecord;
 window.groupRecordRelationsByType = groupRecordRelationsByType;
 window.relationChipClass = relationChipClass;
 
+// ========================================================
+// RELATED CAAL_ID AUTOCOMPLETE
+// Used by monument/archive related-resource chip inputs
+// ========================================================
+
+let relatedSuggestAbortController = null;
+
+function getActiveAppLanguageForSuggest() {
+  if (typeof getCurrentLanguage === "function") {
+    return getCurrentLanguage();
+  }
+
+  const htmlLang = document.documentElement?.lang;
+  if (htmlLang) return htmlLang;
+
+  return "en";
+}
+
+function escapeHtmlForSuggest(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+
+async function fetchRelatedCaalIdSuggestions(query) {
+  const q = String(query || "").trim();
+
+  if (q.length < 2) {
+    return [];
+  }
+
+  if (relatedSuggestAbortController) {
+    relatedSuggestAbortController.abort();
+  }
+
+  relatedSuggestAbortController = new AbortController();
+
+  const params = new URLSearchParams({
+    q,
+    lang: getActiveAppLanguageForSuggest()
+  });
+
+  const response = await fetch(`/api/records/suggest?${params.toString()}`, {
+    credentials: "include",
+    signal: relatedSuggestAbortController.signal
+  });
+
+  const data = await response.json();
+
+  if (!response.ok || !data.ok) {
+    throw new Error(data.error || "Suggestion lookup failed");
+  }
+
+  return Array.isArray(data.suggestions) ? data.suggestions : [];
+}
+
+function ensureRelatedSuggestDropdown(fieldEl) {
+  const box = fieldEl.querySelector(".caal-chip-input-box") || fieldEl;
+
+  let dropdown = box.querySelector(".related-id-suggest-dropdown");
+
+  if (!dropdown) {
+    dropdown = document.createElement("div");
+    dropdown.className = "related-id-suggest-dropdown";
+    dropdown.hidden = true;
+    box.appendChild(dropdown);
+  }
+
+  return dropdown;
+}
+
+function isRelatedCaalIdSuggestOpen(fieldEl) {
+  const dropdown = fieldEl?.querySelector(".related-id-suggest-dropdown");
+  return !!dropdown && !dropdown.hidden;
+}
+
+function renderRelatedCaalIdSuggestions(fieldEl, suggestions, activeIndex = -1, options = {}) {
+  const dropdown = ensureRelatedSuggestDropdown(fieldEl);
+  const onPick = options.onPick;
+
+  if (!Array.isArray(suggestions) || suggestions.length === 0) {
+    dropdown.hidden = true;
+    dropdown.innerHTML = "";
+    return;
+  }
+
+  dropdown.innerHTML = suggestions.map((item, index) => {
+    const caalId = escapeHtmlForSuggest(item.caal_id);
+    const recordType = escapeHtmlForSuggest(String(item.record_type || "").toUpperCase());
+    const title = escapeHtmlForSuggest(item.title || item.subtitle || "");
+    const activeClass = index === activeIndex ? " is-active" : "";
+
+    return `
+      <button
+        type="button"
+        class="related-id-suggest-option${activeClass}"
+        data-index="${index}"
+      >
+        <span class="related-id-suggest-main">${caalId}</span>
+        <span class="related-id-suggest-meta">
+          ${recordType}${title ? " · " + title : ""}
+        </span>
+      </button>
+    `;
+  }).join("");
+
+  dropdown.hidden = false;
+
+  dropdown.querySelectorAll(".related-id-suggest-option").forEach((btn) => {
+    btn.addEventListener("mousedown", async (event) => {
+      event.preventDefault();
+
+      const index = Number(btn.dataset.index);
+      if (typeof onPick === "function") {
+        await onPick(index);
+      }
+    });
+  });
+}
+
+function clearRelatedCaalIdSuggestions(fieldEl) {
+  renderRelatedCaalIdSuggestions(fieldEl, [], -1);
+}
+
+function wireRelatedCaalIdSuggestInput({ fieldEl, input, addChip }) {
+  console.log("wireRelatedCaalIdSuggestInput called", { fieldEl, input });
+  
+  if (!fieldEl || !input || typeof addChip !== "function") return;
+
+  if (input.dataset.suggestWired === "true") {
+    console.log("suggest already wired", input);
+    return;
+  }
+
+  input.dataset.suggestWired = "true";
+
+  let suggestTimer = null;
+  let suggestions = [];
+  let activeIndex = -1;
+
+  function clearSuggestions() {
+    suggestions = [];
+    activeIndex = -1;
+    clearRelatedCaalIdSuggestions(fieldEl);
+  }
+
+  async function pickSuggestion(index) {
+    const picked = suggestions[index];
+    if (!picked?.caal_id) return;
+
+    input.value = "";
+    clearSuggestions();
+
+    await addChip(picked.caal_id);
+    input.focus();
+  }
+
+  input.addEventListener("input", () => {
+    console.log("suggest input event", input.value);
+    
+    clearTimeout(suggestTimer);
+
+    suggestTimer = setTimeout(async () => {
+      const query = input.value.trim();
+      console.log("suggest query", query);
+
+      if (query.length < 2) {
+        clearSuggestions();
+        return;
+      }
+
+      try {
+        suggestions = await fetchRelatedCaalIdSuggestions(query);
+        activeIndex = suggestions.length ? 0 : -1;
+
+        renderRelatedCaalIdSuggestions(fieldEl, suggestions, activeIndex, {
+          onPick: async (index) => {
+            await pickSuggestion(index);
+          }
+        });
+      } catch (error) {
+        if (error.name !== "AbortError") {
+          console.warn("Related CAAL_ID suggestions failed:", error);
+        }
+
+        clearSuggestions();
+      }
+    }, 180);
+  });
+
+  input.addEventListener("keydown", async (event) => {
+    const hasSuggestions = suggestions.length > 0;
+
+    if (event.key === "ArrowDown" && hasSuggestions) {
+      event.preventDefault();
+
+      activeIndex = Math.min(activeIndex + 1, suggestions.length - 1);
+
+      renderRelatedCaalIdSuggestions(fieldEl, suggestions, activeIndex, {
+        onPick: async (index) => {
+          await pickSuggestion(index);
+        }
+      });
+
+      return;
+    }
+
+    if (event.key === "ArrowUp" && hasSuggestions) {
+      event.preventDefault();
+
+      activeIndex = Math.max(activeIndex - 1, 0);
+
+      renderRelatedCaalIdSuggestions(fieldEl, suggestions, activeIndex, {
+        onPick: async (index) => {
+          await pickSuggestion(index);
+        }
+      });
+
+      return;
+    }
+
+    if (event.key === "Enter" && hasSuggestions && activeIndex >= 0) {
+      event.preventDefault();
+      event.stopPropagation();
+
+      await pickSuggestion(activeIndex);
+      return;
+    }
+
+    if (event.key === "Escape") {
+      event.preventDefault();
+      clearSuggestions();
+    }
+  });
+
+  input.addEventListener("blur", () => {
+    setTimeout(() => {
+      clearSuggestions();
+    }, 150);
+  });
+}
+
 // --------------------------------------------------------
 // Shared text helpers
 // --------------------------------------------------------

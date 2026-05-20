@@ -26,6 +26,7 @@ const MONUMENT_LOOKUP_VIEWS = {
 
 const ARCHIVE_LOOKUP_VIEWS = {
   level: "ui.v_lkp_level",
+  country: "ui.v_lkp_countries",
   related_country: "ui.v_lkp_countries",
   related_religion: "ui.v_lkp_religion",
   related_subject: "ui.v_lkp_subjects",
