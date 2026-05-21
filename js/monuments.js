@@ -79,6 +79,8 @@ const monumentCancelEditBtn = document.getElementById("monumentCancelEditBtn");
 const monumentDeleteBtn = document.getElementById("monumentDeleteBtn");
 const monumentCloseRecordBtn = document.getElementById("monumentCloseRecordBtn");
 
+const refreshMonumentsCacheBtn = document.getElementById("refreshMonumentsCacheBtn");
+
 // modal
 const monumentPreviewModal = document.getElementById("monumentPreviewModal");
 const monumentPreviewTitle = document.getElementById("monumentPreviewTitle");
@@ -180,6 +182,7 @@ let monumentPageOffset = 0;
 
 let monumentsIsLoading = false;
 let monumentRecordOpenInProgress = false;
+let monumentSaveInProgress = false;
 
 let monumentMoveDebounceTimer = null;
 let monumentFilterDebounceTimer = null;
@@ -1933,14 +1936,6 @@ function updateMapStatusLine() {
 
 async function showCurrentMonumentResultsOnMap() {
   if (activeMapViewFilterBbox) {
-    if (selectedAdminBoundary?.boundary_id) {
-      chips.push({
-        kind: "admin_boundary",
-        label: selectedAdminBoundary.admin_name || t("selected_region", "Selected region"),
-        title: t("region_filter", "Region filter"),
-        className: "active-filter-chip-region"
-    });
-  }
     fitMapToSavedMapViewFilter();
     return;
   }
@@ -2429,7 +2424,6 @@ function setMonumentsLoading(isLoading, message = "") {
   const mapPane = document.getElementById("map-pane");
   const detailPane = document.getElementById("detail-pane");
 
-  console.log("setMonumentsLoading:", isLoading, message);
 
   if (indicator) {
     indicator.hidden = !isLoading;
@@ -2820,7 +2814,20 @@ function mPopulateMultiSelect(selectEl, items) {
   if (!selectEl) return;
   selectEl.innerHTML = "";
 
-  items.forEach((item) => {
+  const sortedItems = Array.isArray(items)
+    ? [...items].sort((a, b) => {
+        return mLookupSortLabel(a).localeCompare(
+          mLookupSortLabel(b),
+          getCurrentSortLocale(),
+          {
+            sensitivity: "base",
+            numeric: true
+          }
+        );
+      })
+    : [];
+
+  sortedItems.forEach((item) => {
     const option = document.createElement("option");
     option.value = item.value ?? "";
     option.textContent = item.label ?? item.value ?? "";
@@ -2963,9 +2970,7 @@ function mRenderLegacyMultiSelect({
 
   const selectedValues = mLegacyMultiValues(record, fieldBase, count).map(String);
 
-  const options = Array.isArray(monumentLookups?.[lookupName])
-    ? monumentLookups[lookupName]
-    : [];
+  const options = mLookupOptions(lookupName);
 
   const optionsHtml = options
     .map((item) => {
@@ -3479,8 +3484,34 @@ function wireLegacyTreePickers() {
   });
 }
 
-function mLookupOptions(lookupName) {
-  return Array.isArray(monumentLookups?.[lookupName]) ? monumentLookups[lookupName] : [];
+function mLookupSortLabel(item) {
+  return String(
+    item?.label ||
+    item?.display_label ||
+    item?.value ||
+    ""
+  ).trim();
+}
+
+function mLookupOptions(lookupName, { sort = true } = {}) {
+  const options = Array.isArray(monumentLookups?.[lookupName])
+    ? [...monumentLookups[lookupName]]
+    : [];
+
+  if (!sort) {
+    return options;
+  }
+
+  return options.sort((a, b) => {
+    return mLookupSortLabel(a).localeCompare(
+      mLookupSortLabel(b),
+      monumentCurrentLanguageCode(),
+      {
+        sensitivity: "base",
+        numeric: true
+      }
+    );
+  });
 }
 
 function mLookupLabel(lookupName, value) {
@@ -4362,49 +4393,12 @@ function wireMonumentCulturalPeriodDateRecalc() {
   });
 }
 
-// super user cache button
-// -------------------------------------
-const refreshMonumentsCacheBtn = document.getElementById("refreshMonumentsCacheBtn");
-
-if (monumentUserIsCaalAdmin() && refreshMonumentsCacheBtn) {
-  refreshMonumentsCacheBtn.hidden = false;
-
-  refreshMonumentsCacheBtn.addEventListener("click", async () => {
-    refreshMonumentsCacheBtn.disabled = true;
-    refreshMonumentsCacheBtn.textContent = t("refreshing", "Refreshing...");
-    setMonumentsLoading(true, t("refreshing_caal_cache", "Refreshing CAAL cache..."));
-
-    try {
-      const response = await fetch("/api/monuments/admin/refresh-caal-cache", {
-        method: "POST",
-        credentials: "include"
-      });
-
-      const data = await response.json();
-
-      if (!response.ok || !data.ok) {
-        alert(data.detail || data.error || t("cache_refresh_failed", "Cache refresh failed"));
-        return;
-      }
-
-      showToast(t("caal_cache_refreshed", "CAAL cache refreshed"));
-
-      await loadMonumentMapRecords();
-      await loadMonumentListRecords();
-    } catch (error) {
-      console.error("Cache refresh failed:", error);
-      alert(error.message || t("cache_refresh_failed", "Cache refresh failed"));
-    } finally {
-      refreshMonumentsCacheBtn.disabled = false;
-      refreshMonumentsCacheBtn.textContent = t("refresh_cache", "Refresh cache");
-      setMonumentsLoading(false);
-    }
-  });
-}
 
 /// related resource helpers
 // ----------------------------------------------
 
+// Edit-field helpers for legacy related-resource fields.
+// These normalise typed CAAL_ID lists before saving.
 function normaliseRelatedIdList(value) {
   return Array.from(new Set(parseRelatedIds(value))).join(", ");
 }
@@ -9941,6 +9935,8 @@ window.monumentCanChangeLanguage = function () {
 
 // button logic 
 async function saveCurrentMonumentRecord() {
+  if (monumentSaveInProgress) return;
+
   if (!monumentSelectedRecord) return;
   if (!validateRelatedFieldsBeforeSave()) return;
   if (!validateLegacyMultiSelectLimits()) return;
@@ -9952,6 +9948,24 @@ async function saveCurrentMonumentRecord() {
 
   if (isNewRecord && !validateNewMonumentLocationBeforeSave(payload)) {
     return;
+  }
+
+  monumentSaveInProgress = true;
+
+  if (monumentSaveBtn) {
+    monumentSaveBtn.disabled = true;
+    monumentSaveBtn.classList.add("is-disabled");
+    monumentSaveBtn.setAttribute("aria-busy", "true");
+  }
+
+  if (monumentCancelEditBtn) {
+    monumentCancelEditBtn.disabled = true;
+    monumentCancelEditBtn.classList.add("is-disabled");
+  }
+
+  if (monumentDeleteBtn) {
+    monumentDeleteBtn.disabled = true;
+    monumentDeleteBtn.classList.add("is-disabled");
   }
 
   setMonumentsLoading(true, t("saving_record", "Saving record..."));
@@ -9978,7 +9992,11 @@ async function saveCurrentMonumentRecord() {
     const data = await response.json();
 
     if (!response.ok || !data.ok) {
-      alert(data.detail || data.error || t("monument_save_failed", "Monument save failed"));
+      alert(
+        data.detail ||
+        data.error ||
+        t("monument_save_failed", "Monument save failed")
+      );
       return;
     }
 
@@ -10008,7 +10026,7 @@ async function saveCurrentMonumentRecord() {
     } else {
       showToast(t("record_saved", "Record saved"), 3000);
     }
-        
+
     monumentPendingNewRecord = null;
     monumentIsEditMode = false;
     monumentSyncModeVisualState();
@@ -10056,8 +10074,29 @@ async function saveCurrentMonumentRecord() {
     }
   } catch (error) {
     console.error("Monument save failed:", error);
-    alert(error.message || t("monument_save_failed", "Monument save failed"));
+    alert(
+      error.message ||
+      t("monument_save_failed", "Monument save failed")
+    );
   } finally {
+    monumentSaveInProgress = false;
+
+    if (monumentSaveBtn) {
+      monumentSaveBtn.disabled = false;
+      monumentSaveBtn.classList.remove("is-disabled");
+      monumentSaveBtn.setAttribute("aria-busy", "false");
+    }
+
+    if (monumentCancelEditBtn) {
+      monumentCancelEditBtn.disabled = false;
+      monumentCancelEditBtn.classList.remove("is-disabled");
+    }
+
+    if (monumentDeleteBtn) {
+      monumentDeleteBtn.disabled = false;
+      monumentDeleteBtn.classList.remove("is-disabled");
+    }
+
     setMonumentsLoading(false);
   }
 }
@@ -10347,13 +10386,6 @@ if (closeMapOptionsBtn && mapOptionsPanel) {
 
 if (showMapLabelsCheckbox) {
   showMapLabelsCheckbox.addEventListener("change", () => {
-    updateMapOptionsState();
-    renderLiveMapLabels();
-  });
-}
-
-if (mapLabelScopeSelect) {
-  mapLabelScopeSelect.addEventListener("change", () => {
     updateMapOptionsState();
     renderLiveMapLabels();
   });
@@ -10668,10 +10700,46 @@ document.addEventListener("DOMContentLoaded", async () => {
     closeMapOptionsPanel();
   });
 
-  const refreshMonumentsCacheBtn = document.getElementById("refreshMonumentsCacheBtn");
-
   if (refreshMonumentsCacheBtn) {
-    refreshMonumentsCacheBtn.hidden = !monumentUserIsCaalAdmin();
+    const canRefreshMonumentsCache = monumentUserIsCaalAdmin();
+
+    refreshMonumentsCacheBtn.hidden = !canRefreshMonumentsCache;
+
+    if (canRefreshMonumentsCache && refreshMonumentsCacheBtn.dataset.cacheRefreshWired !== "true") {
+      refreshMonumentsCacheBtn.dataset.cacheRefreshWired = "true";
+
+      refreshMonumentsCacheBtn.addEventListener("click", async () => {
+        refreshMonumentsCacheBtn.disabled = true;
+        refreshMonumentsCacheBtn.textContent = t("refreshing", "Refreshing...");
+        setMonumentsLoading(true, t("refreshing_caal_cache", "Refreshing CAAL cache..."));
+
+        try {
+          const response = await fetch("/api/monuments/admin/refresh-caal-cache", {
+            method: "POST",
+            credentials: "include"
+          });
+
+          const data = await response.json();
+
+          if (!response.ok || !data.ok) {
+            alert(data.detail || data.error || t("cache_refresh_failed", "Cache refresh failed"));
+            return;
+          }
+
+          showToast(t("caal_cache_refreshed", "CAAL cache refreshed"));
+
+          await loadMonumentMapRecords();
+          await loadMonumentListRecords();
+        } catch (error) {
+          console.error("Cache refresh failed:", error);
+          alert(error.message || t("cache_refresh_failed", "Cache refresh failed"));
+        } finally {
+          refreshMonumentsCacheBtn.disabled = false;
+          refreshMonumentsCacheBtn.textContent = t("refresh_cache", "Refresh cache");
+          setMonumentsLoading(false);
+        }
+      });
+    }
   }
 
   setMonumentsLoading(false);

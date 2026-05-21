@@ -16,8 +16,8 @@
         class="app-brand-logo"
       />
       <div class="app-brand-text">
-        <h1 data-i18n="app_title">CAAL Workspace</h1>
-        <p data-i18n="archive_workspace_subtitle">Kazakhstan archive workspace</p>
+        <h1 data-workspace-title>CAAL Workspace</h1>
+        <p data-workspace-subtitle data-i18n="archive_workspace_subtitle">Kazakhstan archive workspace</p>
       </div>
     </div>
 
@@ -45,9 +45,23 @@
 
   <main class="workspace-shell archive-workspace">
     <aside class="workspace-pane browse-pane">
-      <div class="pane-header">
-        <h2 data-i18n="archive_browse">Browse</h2>
-        <p data-i18n="archive_browse_intro">Search and consult archive records</p>
+      <div class="pane-header pane-header-inline">
+        <div>
+          <h2 data-i18n="archive_browse">Browse</h2>
+          <p data-i18n="archive_browse_intro">Search and consult archive records</p>
+        </div>
+
+        <button
+          type="button"
+          id="refreshArchiveCacheBtn"
+          class="admin-cache-btn"
+          title="Admin only: refreshes the CAAL archive browse cache"
+          data-i18n="refresh_cache"
+          data-i18n-title="refresh_cache_admin_title"
+          hidden
+        >
+          Refresh archive cache
+        </button>
       </div>
 
       <div class="pane-body">

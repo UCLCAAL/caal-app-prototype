@@ -23,8 +23,16 @@ const appRoot = path.join(__dirname, "..");
 // --------------------------------------------------------
 // Middleware
 // --------------------------------------------------------
+if (process.env.NODE_ENV === "production" && !process.env.SESSION_SECRET) {
+  throw new Error("SESSION_SECRET must be set in production");
+}
+
+if (process.env.NODE_ENV === "production" && !process.env.APP_ORIGIN) {
+  throw new Error("APP_ORIGIN must be set in production");
+}
+
 app.use(cors({
-  origin: process.env.APP_ORIGIN || true,
+  origin: process.env.APP_ORIGIN || "http://localhost:3000",
   credentials: true
 }));
 
@@ -49,22 +57,22 @@ app.use(session({
   }
 }));
 
+// logging middleware
 app.use((req, res, next) => {
-    const start = Date.now();
+  const start = Date.now();
 
-    res.on("finish", () => {
-      if (req.url.startsWith("/api/monuments")) {
-        console.log(
-          `[API timing] ${req.method} ${req.url} ${res.statusCode} ${Date.now() - start}ms`
-        );
-      }
-    });
+  res.on("finish", () => {
+    const shouldLogTiming =
+      process.env.API_TIMING_LOGS === "true" &&
+      req.url.startsWith("/api/");
 
-  console.log("Incoming request:", req.method, req.url);
-  console.log("Cookie header:", req.headers.cookie || "[none]");
-  console.log("Session ID:", req.sessionID || "[no session id]");
-  console.log("Session keys:", req.session ? Object.keys(req.session) : "[no req.session]");
-  console.log("appSession present:", !!req.session?.appSession);
+    if (shouldLogTiming) {
+      console.log(
+        `[API timing] ${req.method} ${req.url} ${res.statusCode} ${Date.now() - start}ms`
+      );
+    }
+  });
+
   next();
 });
 

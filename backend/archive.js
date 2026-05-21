@@ -195,7 +195,7 @@ function makeArchiveBrowseScopeConfig(currentSession) {
       AND COALESCE(rr.status, '') <> 'deleted'
   `;
 
-  const allWorkspaceArchivesSql = allWorkspaceArchivesSqlForCaalAdmin(currentSession);
+  const allWorkspaceArchivesSql = "";
 
   return {
     workspace: {
@@ -1304,8 +1304,7 @@ router.delete("/:id", async (req, res) => {
 // ------------------------------------------------
 router.post("/", async (req, res) => {
   const currentSession = req.session?.appSession || null;
-  console.log("Archive POST currentSession:", JSON.stringify(currentSession, null, 2));
-
+  
   if (!currentSession) {
     return res.status(401).json({
       ok: false,
@@ -1331,6 +1330,7 @@ router.post("/", async (req, res) => {
   payload["Archive Recorder"] = sessionUsername;
   payload["Preferred Language"] = preferredLanguage;
   payload["Tstamp"] = new Date();
+  payload["Date of Recording"] = new Date().toISOString().slice(0, 10);
 
   if (!payload["Country"]) {
     payload["Country"] = sessionCountry;
@@ -1446,6 +1446,40 @@ router.post("/", async (req, res) => {
       ok: false,
       error: "Archive create failed",
       detail: error.message
+    });
+  }
+});
+
+// cache update for CAAL superuser
+router.post("/admin/refresh-caal-cache", async (req, res) => {
+  const currentSession = req.session?.appSession || null;
+
+  if (!isCaalAdmin(currentSession)) {
+    return res.status(403).json({
+      ok: false,
+      error: "CAAL admin only"
+    });
+  }
+
+  const refreshed = [];
+
+  try {
+    await pool.query(`REFRESH MATERIALIZED VIEW CONCURRENTLY ui.mv_archive_caal_app`);
+    await pool.query(`ANALYZE ui.mv_archive_caal_app`);
+    refreshed.push("ui.mv_archive_caal_app");
+
+    return res.json({
+      ok: true,
+      refreshed
+    });
+  } catch (error) {
+    console.error("Archive CAAL cache refresh failed:", error);
+
+    return res.status(500).json({
+      ok: false,
+      error: "Archive CAAL cache refresh failed",
+      detail: error.message,
+      refreshed
     });
   }
 });

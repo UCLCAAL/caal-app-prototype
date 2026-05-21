@@ -3547,7 +3547,7 @@ payload.workspace_code = recordWorkspaceCode;
   }
 });
 
-// cache update for super user
+// cache update for CAAL superuser
 router.post("/monuments/admin/refresh-caal-cache", async (req, res) => {
   const currentSession = req.session?.appSession || null;
 
@@ -3558,14 +3558,27 @@ router.post("/monuments/admin/refresh-caal-cache", async (req, res) => {
     });
   }
 
+  const refreshed = [];
+
   try {
     await pool.query(`REFRESH MATERIALIZED VIEW CONCURRENTLY ui.mv_monuments_caal`);
-    return res.json({ ok: true });
+    refreshed.push("ui.mv_monuments_caal");
+
+    await pool.query(`REFRESH MATERIALIZED VIEW CONCURRENTLY ui.mv_monuments_caal_list`);
+    refreshed.push("ui.mv_monuments_caal_list");
+
+    return res.json({
+      ok: true,
+      refreshed
+    });
   } catch (error) {
+    console.error("Monument CAAL cache refresh failed:", error);
+
     return res.status(500).json({
       ok: false,
-      error: "CAAL cache refresh failed",
-      detail: error.message
+      error: "Monument CAAL cache refresh failed",
+      detail: error.message,
+      refreshed
     });
   }
 });

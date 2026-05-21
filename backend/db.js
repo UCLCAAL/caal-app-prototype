@@ -9,29 +9,31 @@ const pool = new Pool({
   password: process.env.DB_PASSWORD,
   ssl: process.env.DB_SSL === "true" ? { rejectUnauthorized: false } : false,
 
-  max: 20,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 15000
+  max: Number(process.env.DB_POOL_MAX || 10),
+  idleTimeoutMillis: Number(process.env.DB_IDLE_TIMEOUT_MS || 30000),
+  connectionTimeoutMillis: Number(process.env.DB_CONNECTION_TIMEOUT_MS || 15000)
 });
 
-pool.on("connect", () => {
-  console.log("[PG pool] client connected");
-});
-
-pool.on("acquire", () => {
-  console.log("[PG pool] client acquired");
-});
-
-pool.on("remove", () => {
-  console.log("[PG pool] client removed");
-});
-
-setInterval(() => {
-  console.log("[PG pool stats]", {
-    total: pool.totalCount,
-    idle: pool.idleCount,
-    waiting: pool.waitingCount
+if (process.env.DB_POOL_DEBUG === "true") {
+  pool.on("connect", () => {
+    console.log("[PG pool] client connected");
   });
-}, 5000);
+
+  pool.on("acquire", () => {
+    console.log("[PG pool] client acquired");
+  });
+
+  pool.on("remove", () => {
+    console.log("[PG pool] client removed");
+  });
+
+  setInterval(() => {
+    console.log("[PG pool stats]", {
+      total: pool.totalCount,
+      idle: pool.idleCount,
+      waiting: pool.waitingCount
+    });
+  }, Number(process.env.DB_POOL_DEBUG_INTERVAL_MS || 30000));
+}
 
 module.exports = pool;

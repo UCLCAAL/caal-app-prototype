@@ -2,6 +2,7 @@ const express = require("express");
 const pool = require("./db");
 const {
   getWorkspaceStorage,
+  getSessionWorkspaceCode,
   workspaceMonumentViewSql,
   workspaceArchiveViewSql,
   workspaceStorageScopeSql,
@@ -243,8 +244,8 @@ function getAccessLevel(session) {
 
 function canEditCaal(session) {
   return (
-    session?.permissions?.can_edit_caal === true ||
-    getAccessLevel(session) === 9
+    getAccessLevel(session) === 9 &&
+    getSessionWorkspaceCode(session) === "caal"
   );
 }
 
@@ -313,9 +314,6 @@ router.get("/check", async (req, res) => {
     currentSession?.profile?.workspace_code ??
     ""
   ).trim().toLowerCase();
-
-  const ws = getWorkspaceStorage(currentSession);
-  const hasWorkspaceSchema = ws.workspaceCode !== "caal";
 
   try {
     // 1. Workspace monument

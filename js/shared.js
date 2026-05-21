@@ -241,6 +241,20 @@ function getSessionWorkspaceCodeForDisplay(session = window.appSession) {
   ).trim().toLowerCase();
 }
 
+function getWorkspaceHeaderTitle(session = window.appSession) {
+  const workspaceCode = getSessionWorkspaceCodeForDisplay(session);
+  const countryName = getWorkspaceCountryName(session);
+
+  if (workspaceCode === "caal") {
+    return t("app_title", "CAAL Workspace");
+  }
+
+  return countryName
+    ? t("country_records_workspace", "{country} records workspace")
+        .replace("{country}", countryName)
+    : t("caal_national_workspace", "CAAL national workspace");
+}
+
 function getWorkspacePageSubtitle(page, session = window.appSession) {
   const workspaceCode = getSessionWorkspaceCodeForDisplay(session);
   const countryName = getWorkspaceCountryName(session);
@@ -298,7 +312,7 @@ function applyWorkspaceHeaderText(page = getCurrentPageName(), session = window.
   );
 
   titleEls.forEach((el) => {
-    el.textContent = t("app_title", "CAAL Workspace");
+    el.textContent = getWorkspaceHeaderTitle(session);
   });
 
   subtitleEls.forEach((el) => {
@@ -319,6 +333,7 @@ window.getWorkspaceCode = getWorkspaceCode;
 window.getPreferredLanguageFromSession = getPreferredLanguageFromSession;
 
 window.getWorkspacePageSubtitle = getWorkspacePageSubtitle;
+window.getWorkspaceHeaderTitle = getWorkspaceHeaderTitle;
 window.applyWorkspaceHeaderText = applyWorkspaceHeaderText;
 
 // lang persistence
@@ -552,6 +567,8 @@ async function loadDirectLinkedRecord(caalId) {
   return data;
 }
 
+// Relation display helpers for records returned by /api/records/resolve.
+// These read the normalised record.relations array.
 function getRecordRelations(record) {
   return Array.isArray(record?.relations) ? record.relations : [];
 }
@@ -612,7 +629,7 @@ window.relationChipClass = relationChipClass;
 // RELATED CAAL_ID AUTOCOMPLETE
 // Used by monument/archive related-resource chip inputs
 // ========================================================
-
+// This only suggests IDs. Existence is still checked separately before save/display.
 let relatedSuggestAbortController = null;
 
 function getActiveAppLanguageForSuggest() {

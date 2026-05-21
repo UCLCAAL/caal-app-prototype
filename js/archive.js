@@ -36,6 +36,8 @@ const showArchiveNationalRef = document.getElementById("showArchiveNationalRef")
 const showArchiveAllCaal = document.getElementById("showArchiveAllCaal");
 const allCaalArchiveToggleWrapper = document.getElementById("allCaalArchiveToggleWrapper");
 
+const refreshArchiveCacheBtn = document.getElementById("refreshArchiveCacheBtn");
+
 const archivePrevBtn = document.getElementById("archivePrevBtn");
 const archiveNextBtn = document.getElementById("archiveNextBtn");
 const archivePageInfo = document.getElementById("archivePageInfo");
@@ -56,8 +58,6 @@ const archiveCloseRecordBtn = document.getElementById("archiveCloseRecordBtn");
 // API base
 // --------------------------------------------------------
 //const API_BASE = "http://localhost:3000";
-
-console.log("archive.js loaded");
 
 
 // State
@@ -133,8 +133,6 @@ function setArchiveLoading(isLoading, message = "") {
   const browsePane = document.getElementById("browse-pane");
   const detailPane = document.getElementById("detail-pane");
 
-  console.log("setArchiveLoading:", isLoading, message);
-
   if (archiveLoadingIndicator) {
     archiveLoadingIndicator.hidden = !isLoading;
     archiveLoadingIndicator.innerHTML = isLoading
@@ -154,9 +152,9 @@ function setArchiveLoading(isLoading, message = "") {
 }
 
 function setArchiveRecordOpening(isOpening) {
-  archiveRecordOpenInProgress = isOpening;
+  archiveRecordOpenInProgress = isOpening === true;
 
-  const disabled = isOpening === true;
+  const disabled = archiveRecordOpenInProgress;
 
   document
     .querySelectorAll(
@@ -219,6 +217,22 @@ function showArchiveToast(message, variant = "success", durationMs = 3000) {
   showArchiveToast._timer = window.setTimeout(() => {
     toast.classList.remove("is-visible");
   }, durationMs);
+}
+
+function archiveUserIsCaalAdmin() {
+  const accessLevel = Number(
+    window.appSession?.user?.access_level ??
+    window.appSession?.profile?.access_level ??
+    0
+  );
+
+  const workspaceCode = String(
+    window.appSession?.user?.workspace_code ??
+    window.appSession?.profile?.workspace_code ??
+    ""
+  ).trim().toLowerCase();
+
+  return accessLevel === 9 && workspaceCode === "caal";
 }
 
 // Label helpers
@@ -780,7 +794,20 @@ function archivePopulateMultiSelect(selectEl, items) {
   if (!selectEl) return;
   selectEl.innerHTML = "";
 
-  items.forEach((item) => {
+  const sortedItems = Array.isArray(items)
+    ? [...items].sort((a, b) => {
+        return archiveLookupSortLabel(a).localeCompare(
+          archiveLookupSortLabel(b),
+          archiveCurrentLanguageCode(),
+          {
+            sensitivity: "base",
+            numeric: true
+          }
+        );
+      })
+    : [];
+
+  sortedItems.forEach((item) => {
     const option = document.createElement("option");
     option.value = item.value ?? "";
     option.textContent = item.label ?? item.value ?? "";
@@ -1240,8 +1267,34 @@ function archiveRenderTextarea(fieldName, label, value, fullWidth = true) {
   `;
 }
 
-function archiveLookupOptions(lookupName) {
-  return Array.isArray(archiveLookups?.[lookupName]) ? archiveLookups[lookupName] : [];
+function archiveLookupSortLabel(item) {
+  return String(
+    item?.label ||
+    item?.display_label ||
+    item?.value ||
+    ""
+  ).trim();
+}
+
+function archiveLookupOptions(lookupName, { sort = true } = {}) {
+  const options = Array.isArray(archiveLookups?.[lookupName])
+    ? [...archiveLookups[lookupName]]
+    : [];
+
+  if (!sort) {
+    return options;
+  }
+
+  return options.sort((a, b) => {
+    return archiveLookupSortLabel(a).localeCompare(
+      archiveLookupSortLabel(b),
+      archiveCurrentLanguageCode(),
+      {
+        sensitivity: "base",
+        numeric: true
+      }
+    );
+  });
 }
 
 function archiveLookupLabel(lookupName, value) {
@@ -1434,7 +1487,7 @@ function archiveGetMultiSelectValue(fieldName) {
 }
 
 function archiveBuildSavePayload() {
-  return {
+  const payload = {
     "Level": archiveGetInputValue("Level"),
     "Original Reference": archiveGetInputValue("Original Reference"),
     "Associated CAAL_ID": normaliseArchiveAssociatedIdList(
@@ -1473,10 +1526,11 @@ function archiveBuildSavePayload() {
     "Resource": archiveGetInputValue("Resource"),
     "Country": archiveGetInputValue("Country")
   };
+
   payload._storage_scope = archiveSelectedRecord?.source?.storage || null;
   payload._source_scope = archiveSelectedRecord?.source?.scope || null;
 
-return payload;
+  return payload;
 }
 
 // add helper
@@ -1486,11 +1540,10 @@ function makeNewBlankArchiveRecord() {
     (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
     window.appSession?.profile?.preferred_language ||
     "en";
-  
-    const sessionCountry = window.appSession?.profile?.country || "";
-    const sessionUsername = window.appSession?.user?.username || "";
 
-    const today = new Date().toISOString().slice(0, 10);
+  const sessionCountry = window.appSession?.profile?.country || "";
+  const sessionUsername = window.appSession?.user?.username || "";
+  const today = new Date().toISOString().slice(0, 10);
 
   return {
     identity: {
@@ -1999,6 +2052,12 @@ function wireArchiveAssociatedCaalIdChips() {
 }
 
 async function archiveOpenAssociatedRecord(caalId) {
+  if (!caalId) return;
+  if (archiveRecordOpenInProgress) return;
+
+  setArchiveRecordOpening(true);
+  setArchiveLoading(true, t("loading_preview", "Loading preview..."));
+
   try {
     const response = await fetch(
       `/api/records/resolve?caal_id=${encodeURIComponent(caalId)}`,
@@ -2011,14 +2070,24 @@ async function archiveOpenAssociatedRecord(caalId) {
     const data = await response.json();
 
     if (!response.ok || !data.ok || !data.record) {
-      alert(data.error || t("could_not_load_related_record", "Could not load related record"));
+      alert(
+        data.detail ||
+        data.error ||
+        t("could_not_load_related_record", "Could not load related record")
+      );
       return;
     }
 
     archiveOpenAssociatedRecordPreview(data.record, data.record_type, caalId);
   } catch (error) {
     console.error("Could not load associated CAAL_ID:", error);
-    alert(error.message || t("could_not_load_related_record", "Could not load related record"));
+    alert(
+      error.message ||
+      t("could_not_load_related_record", "Could not load related record")
+    );
+  } finally {
+    setArchiveLoading(false);
+    setArchiveRecordOpening(false);
   }
 }
 
@@ -2394,8 +2463,6 @@ async function loadArchiveLabels(langOverride = null) {
   }
 
   archiveLabels = data.labels || {};
-
-  console.log("Archive labels loaded for:", lang, archiveLabels);
 }
 
 
@@ -2574,7 +2641,7 @@ async function loadArchiveRecords(limit = 100, offset = 0, options = {}) {
 
   const params = archiveBuildQueryParams({ limit, offset });
 
-  console.log("Archive fetch URL:", `/api/archive?${params.toString()}`);
+  //console.log("Archive fetch URL:", `/api/archive?${params.toString()}`);
 
   const response = await fetch(`/api/archive?${params.toString()}`, {
     method: "GET",
@@ -2582,7 +2649,6 @@ async function loadArchiveRecords(limit = 100, offset = 0, options = {}) {
   });
 
   const data = await response.json();
-  console.log("Archive response:", data);
 
   if (!response.ok || !data.ok) {
     throw new Error(data.detail || data.error || "Failed to load archive records");
@@ -2659,13 +2725,68 @@ function setArchiveResultsError(message = null) {
 
 // Results rendering
 // --------------------------------------------------------
-function handleArchiveResultOpen(record) {
+async function previewArchiveFromLightRecord(lightRecord) {
+  if (!lightRecord) return;
+  if (archiveRecordOpenInProgress) return;
+
+  setArchiveRecordOpening(true);
+  setArchiveLoading(true, t("loading_preview", "Loading preview..."));
+
+  try {
+    const fullRecord = await loadFullArchiveRecord(lightRecord);
+    archiveOpenPreview(fullRecord);
+  } catch (error) {
+    console.error("Failed to load archive preview:", error);
+    alert(
+      error.message ||
+      t("could_not_load_full_archive_record", "Could not load full archive record")
+    );
+  } finally {
+    setArchiveLoading(false);
+    setArchiveRecordOpening(false);
+  }
+}
+
+async function openArchiveLightRecordInDetails(lightRecord) {
+  if (!lightRecord) return;
+  if (archiveRecordOpenInProgress) return;
+  if (!archiveConfirmLoseChanges()) return;
+
+  setArchiveRecordOpening(true);
+  setArchiveLoading(true, t("loading_full_record", "Loading full record..."));
+
+  try {
+    const fullRecord = await loadFullArchiveRecord(lightRecord);
+
+    archivePendingNewRecord = null;
+    archiveSelectedRecord = fullRecord;
+    archiveIsEditMode = false;
+    archiveIsDirty = false;
+
+    archiveRenderRecordDetails(fullRecord);
+    archiveUpdateSelectedResultCard();
+  } catch (error) {
+    console.error("Failed to load full archive record:", error);
+    alert(
+      error.message ||
+      t("could_not_load_full_archive_record", "Could not load full archive record")
+    );
+  } finally {
+    setArchiveLoading(false);
+    setArchiveRecordOpening(false);
+  }
+}
+
+async function handleArchiveResultOpen(lightRecord) {
+  if (!lightRecord) return;
+  if (archiveRecordOpenInProgress) return;
+
   if (archiveIsEditMode) {
-    archiveOpenPreview(record);
+    await previewArchiveFromLightRecord(lightRecord);
     return;
   }
 
-  archiveRenderRecordDetails(record);
+  await openArchiveLightRecordInDetails(lightRecord);
 }
 
 function renderArchiveResultsList(records) {
@@ -2715,42 +2836,10 @@ function renderArchiveResultsList(records) {
 
     Array.from(archiveResultsList.querySelectorAll(".result-card")).forEach((card) => {
       card.addEventListener("click", async () => {
-        if (archiveRecordOpenInProgress) return;
-
         const idx = Number(card.dataset.archiveResultIndex);
         const lightRecord = records[idx];
-        if (!lightRecord) return;
 
-        setArchiveRecordOpening(true);
-
-        setArchiveLoading(
-          true,
-          archiveIsEditMode
-            ? t("loading_preview", "Loading preview...")
-            : t("loading_full_record", "Loading full record...")
-        );
-
-        try {
-          const fullRecord = await loadFullArchiveRecord(lightRecord);
-
-          if (archiveIsEditMode) {
-            archiveOpenPreview(fullRecord);
-            return;
-          }
-
-          archivePendingNewRecord = null;
-          archiveSelectedRecord = fullRecord;
-          archiveIsEditMode = false;
-
-          archiveRenderRecordDetails(fullRecord);
-          archiveUpdateSelectedResultCard();
-        } catch (error) {
-          console.error("Failed to load full archive record:", error);
-          alert(error.message || t("could_not_load_full_archive_record", "Could not load full archive record"));
-        } finally {
-          setArchiveLoading(false);
-          setArchiveRecordOpening(false);
-        }
+        await handleArchiveResultOpen(lightRecord);
       });
     });
 
@@ -3239,8 +3328,25 @@ if (archiveCancelEditBtn) {
 
 if (archiveSaveBtn) {
   archiveSaveBtn.onclick = async () => {
+    if (archiveSaveBtn.disabled) return;
+
+    archiveSaveBtn.disabled = true;
+    archiveSaveBtn.classList.add("is-disabled");
+    archiveSaveBtn.setAttribute("aria-busy", "true");
+
+    if (archiveCancelEditBtn) {
+      archiveCancelEditBtn.disabled = true;
+      archiveCancelEditBtn.classList.add("is-disabled");
+    }
+
+    if (archiveDeleteBtn) {
+      archiveDeleteBtn.disabled = true;
+      archiveDeleteBtn.classList.add("is-disabled");
+    }
+
     try {
       if (!validateArchiveAssociatedIdsBeforeSave()) return;
+
       const payload = archiveBuildSavePayload();
       const lang =
         (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
@@ -3266,7 +3372,12 @@ if (archiveSaveBtn) {
 
       if (!response.ok || !data.ok) {
         console.error("Archive save response:", data);
-        const message = data.detail || data.error || t("archive_save_failed", "Archive save failed");
+
+        const message =
+          data.detail ||
+          data.error ||
+          t("archive_save_failed", "Archive save failed");
+
         alert(message);
         showArchiveToast(message, "error");
         return;
@@ -3371,7 +3482,11 @@ if (archiveSaveBtn) {
       }, 2500);
     } catch (error) {
       console.error("Archive save failed:", error);
-      const message = error.message || t("archive_save_failed", "Archive save failed");
+
+      const message =
+        error.message ||
+        t("archive_save_failed", "Archive save failed");
+
       alert(message);
       showArchiveToast(message, "error");
 
@@ -3379,6 +3494,20 @@ if (archiveSaveBtn) {
       archiveIsEditMode = true;
       archiveIsDirty = true;
       archiveSyncModeVisualState();
+    } finally {
+      archiveSaveBtn.disabled = false;
+      archiveSaveBtn.classList.remove("is-disabled");
+      archiveSaveBtn.setAttribute("aria-busy", "false");
+
+      if (archiveCancelEditBtn) {
+        archiveCancelEditBtn.disabled = false;
+        archiveCancelEditBtn.classList.remove("is-disabled");
+      }
+
+      if (archiveDeleteBtn) {
+        archiveDeleteBtn.disabled = false;
+        archiveDeleteBtn.classList.remove("is-disabled");
+      }
     }
   };
 }
@@ -3656,6 +3785,47 @@ window.addEventListener("beforeunload", (event) => {
 document.addEventListener("DOMContentLoaded", async () => {
   const session = await requireSession();
   if (!session) return;
+
+  if (archiveUserIsCaalAdmin() && refreshArchiveCacheBtn) {
+    refreshArchiveCacheBtn.hidden = false;
+
+    refreshArchiveCacheBtn.addEventListener("click", async () => {
+      refreshArchiveCacheBtn.disabled = true;
+      refreshArchiveCacheBtn.textContent = t("refreshing", "Refreshing...");
+      setArchiveLoading(true, t("refreshing_caal_cache", "Refreshing CAAL cache..."));
+
+      try {
+        const response = await fetch("/api/archive/admin/refresh-caal-cache", {
+          method: "POST",
+          credentials: "include"
+        });
+
+        const data = await response.json();
+
+        if (!response.ok || !data.ok) {
+          alert(data.detail || data.error || t("cache_refresh_failed", "Cache refresh failed"));
+          return;
+        }
+
+        showArchiveToast(
+          t("caal_cache_refreshed", "Archive cache refreshed"),
+          "success",
+          3000
+        );
+
+        await loadArchiveRecords(archiveLimit, archiveOffset, {
+          preserveSelection: true
+        });
+      } catch (error) {
+        console.error("Archive cache refresh failed:", error);
+        alert(error.message || t("cache_refresh_failed", "Cache refresh failed"));
+      } finally {
+        refreshArchiveCacheBtn.disabled = false;
+        refreshArchiveCacheBtn.textContent = t("refresh_archive_cache", "Refresh archive cache");
+        setArchiveLoading(false);
+      }
+    });
+  }
 
   const initialCaalId = getInitialCaalIdFromUrl();
   const initialScope = getInitialScopeFromUrl();
