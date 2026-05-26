@@ -18,6 +18,7 @@ const {
   inferRecordWorkspaceCodeFromPayload,
   monumentTableForWorkspaceCode,
   storageScopeForWorkspaceCode,
+  createStorageTargetForRecord,
   enabledWorkspaceStorageConfigs
 } = require("./workspaceStorage");
 
@@ -3349,6 +3350,61 @@ function canCreateMonumentInWorkspaceCode(workspaceCode) {
   );
 }
 
+// to move to shared
+async function registerCreatedRecord({
+  sourceSchema,
+  sourceTable,
+  sourceRowId,
+  caalId,
+  recordType,
+  createdBy,
+  createdByAppUserId,
+  workspaceCode = null,
+  storageScope = null,
+  createdByWorkspaceCode = null,
+  notes = null
+}) {
+  await pool.query(
+    `
+    INSERT INTO public.record_registry (
+      source_schema,
+      source_table,
+      source_row_id,
+      caal_id,
+      created_at,
+      created_by,
+      status,
+      notes,
+      record_type,
+      created_by_app_user_id,
+      workspace_code,
+      storage_scope,
+      created_by_workspace_code
+    )
+    VALUES (
+      $1, $2, $3, $4,
+      now(), $5, 'new', $6,
+      $7, $8,
+      $9, $10, $11
+    )
+    ON CONFLICT DO NOTHING
+    `,
+    [
+      sourceSchema,
+      sourceTable,
+      sourceRowId,
+      caalId,
+      createdBy,
+      notes,
+      recordType,
+      createdByAppUserId,
+      workspaceCode,
+      storageScope,
+      createdByWorkspaceCode
+    ]
+  );
+}
+
 // ========================================================
 // CREATE
 // ========================================================
@@ -3413,24 +3469,31 @@ router.post("/monuments", async (req, res) => {
   payload["Tstamp"] = new Date();
   payload.created_by_app_user_id = appUserId;
 
-  const recordWorkspaceCode = inferRecordWorkspaceCodeFromPayload(payload, currentSession);
+  const createTarget = createStorageTargetForRecord(
+    "monument",
+    payload,
+    currentSession
+  );
 
-if (!recordWorkspaceCode) {
-  return res.status(400).json({
-    ok: false,
-    error: "A country is required so the record can be assigned to a national workspace"
-  });
-}
+  if (!createTarget.ok) {
+    return res.status(400).json({
+      ok: false,
+      error: createTarget.error
+    });
+  }
 
-// Until other schemas get added / public fallback is implemented.
-if (!canCreateMonumentInWorkspaceCode(recordWorkspaceCode)) {
-  return res.status(400).json({
-    ok: false,
-    error: `Records for this country cannot yet be saved because workspace '${recordWorkspaceCode}' is not configured for web entry.`
-  });
-}
+  const recordWorkspaceCode = createTarget.recordWorkspaceCode;
 
-payload.workspace_code = recordWorkspaceCode;
+  /*
+    This is record attribution, not physical storage.
+    For CAAL users this may be "kz", "tj", etc. even though the row is inserted into public."CAAL_Monuments".
+  */
+  payload.workspace_code = recordWorkspaceCode;
+  payload.workspace_assignment_method =
+    currentSession?.user?.workspace_code === "caal"
+      ? "caal_user_country_inference"
+      : "session_workspace";
+  payload.workspace_assigned_at = new Date();
 
   const prefix =
     currentSession?.user?.monument_id_prefix ||
@@ -3488,8 +3551,8 @@ payload.workspace_code = recordWorkspaceCode;
   try {
     const queryValues = geomSql ? [...values, Number(lng), Number(lat)] : values;
 
-    const targetTable = monumentTableForWorkspaceCode(recordWorkspaceCode);
-    const targetStorage = storageScopeForWorkspaceCode(recordWorkspaceCode);
+    const targetTable = createTarget.tableSql;
+    const targetStorage = createTarget.storageScope;
 
     const insertSql = `
       INSERT INTO ${targetTable} (${columnSql}${geomSql})
@@ -3500,7 +3563,9 @@ payload.workspace_code = recordWorkspaceCode;
     const insertResult = await pool.query(insertSql, queryValues);
     const newId = insertResult.rows[0].id;
 
-    const freshRow = await fetchWorkspaceMonumentRowById(newId, targetStorage);
+    const freshRow = createTarget.isPublicCaalStorage
+      ? await fetchPublicMonumentRowById(newId)
+      : await fetchWorkspaceMonumentRowById(newId, targetStorage);
 
     if (!freshRow) {
       return res.status(500).json({
@@ -3509,6 +3574,22 @@ payload.workspace_code = recordWorkspaceCode;
         detail: `Created id ${newId} in ${targetStorage}, but fetch returned no row`
       });
     }
+
+    await registerCreatedRecord({
+      sourceSchema: createTarget.schema,
+      sourceTable: "CAAL_Monuments",
+      sourceRowId: freshRow.id,
+      caalId: freshRow["CAAL_ID"],
+      recordType: "monument",
+      createdBy: sessionUsername,
+      createdByAppUserId: appUserId,
+      workspaceCode: recordWorkspaceCode,
+      storageScope: createTarget.storageScope,
+      createdByWorkspaceCode: getSessionWorkspaceCode(currentSession),
+      notes: createTarget.isPublicCaalStorage
+        ? `Created through CAAL web app into public CAAL table; record workspace_code=${recordWorkspaceCode}`
+        : `Created through CAAL web app into ${createTarget.storageScope}`
+    });
 
     if (freshRow["CAAL_ID"]) {
       await syncResourceRelationsForMonument(pool, {
@@ -3523,7 +3604,13 @@ payload.workspace_code = recordWorkspaceCode;
     const lang = req.query.lang || currentSession.profile?.preferred_language || "en";
 
     const record = buildMonumentRecord(
-      freshRow,
+      {
+        ...stripMonumentInternalFields(freshRow),
+        source_scope: "workspace",
+        storage_scope: targetStorage,
+        is_promoted: createTarget.isPublicCaalStorage,
+        is_editable: true
+      },
       lang,
       appUserId,
       canEditCaalMonuments(currentSession)

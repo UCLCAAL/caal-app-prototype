@@ -17,6 +17,7 @@ const {
   inferRecordWorkspaceCodeFromPayload,
   archiveTableForWorkspaceCode,
   storageScopeForWorkspaceCode,
+  createStorageTargetForRecord,
   enabledWorkspaceStorageConfigs
 } = require("./workspaceStorage");
 
@@ -908,6 +909,7 @@ async function getCurrentUserArchivePrefix(userId) {
   return result.rows[0]?.archive_id_prefix || null;
 }
 
+// to move to shared
 function canCreateArchiveInWorkspaceCode(workspaceCode) {
   const code = String(workspaceCode || "").trim().toLowerCase();
 
@@ -919,6 +921,60 @@ function canCreateArchiveInWorkspaceCode(workspaceCode) {
     storage?.enabled === true &&
     storage?.schema &&
     storage?.archiveTable
+  );
+}
+
+async function registerCreatedRecord({
+  sourceSchema,
+  sourceTable,
+  sourceRowId,
+  caalId,
+  recordType,
+  createdBy,
+  createdByAppUserId,
+  workspaceCode = null,
+  storageScope = null,
+  createdByWorkspaceCode = null,
+  notes = null
+}) {
+  await pool.query(
+    `
+    INSERT INTO public.record_registry (
+      source_schema,
+      source_table,
+      source_row_id,
+      caal_id,
+      created_at,
+      created_by,
+      status,
+      notes,
+      record_type,
+      created_by_app_user_id,
+      workspace_code,
+      storage_scope,
+      created_by_workspace_code
+    )
+    VALUES (
+      $1, $2, $3, $4,
+      now(), $5, 'new', $6,
+      $7, $8,
+      $9, $10, $11
+    )
+    ON CONFLICT DO NOTHING
+    `,
+    [
+      sourceSchema,
+      sourceTable,
+      sourceRowId,
+      caalId,
+      createdBy,
+      notes,
+      recordType,
+      createdByAppUserId,
+      workspaceCode,
+      storageScope,
+      createdByWorkspaceCode
+    ]
   );
 }
 
@@ -1336,23 +1392,27 @@ router.post("/", async (req, res) => {
     payload["Country"] = sessionCountry;
   }
 
-  const recordWorkspaceCode = inferRecordWorkspaceCodeFromPayload(payload, currentSession);
+  const createTarget = createStorageTargetForRecord(
+    "archive",
+    payload,
+    currentSession
+  );
 
-  if (!recordWorkspaceCode) {
+  if (!createTarget.ok) {
     return res.status(400).json({
       ok: false,
-      error: "A country is required so the archive record can be assigned to a national workspace"
+      error: createTarget.error ===
+        "A country is required so the record can be assigned to a national workspace"
+          ? "A country is required so the archive record can be assigned to a national workspace"
+          : createTarget.error
     });
   }
 
-  // Interim until more schemas are configured.
-  if (!canCreateArchiveInWorkspaceCode(recordWorkspaceCode)) {
-    return res.status(400).json({
-      ok: false,
-      error: `Records for this country cannot yet be saved because workspace '${recordWorkspaceCode}' is not configured for web entry.`
-    });
-  }
+  const recordWorkspaceCode = createTarget.recordWorkspaceCode;
 
+  /*
+    This is record attribution, not physical storage.
+  */
   payload.workspace_code = recordWorkspaceCode;
 
   const prefix =
@@ -1398,8 +1458,8 @@ router.post("/", async (req, res) => {
   const values = fields.map((field) => payload[field]);
 
   try {
-    const targetTable = archiveTableForWorkspaceCode(recordWorkspaceCode);
-    const targetStorage = storageScopeForWorkspaceCode(recordWorkspaceCode);
+    const targetTable = createTarget.tableSql;
+    const targetStorage = createTarget.storageScope;
 
     const result = await pool.query(
       `
@@ -1410,14 +1470,33 @@ router.post("/", async (req, res) => {
       values
     );
 
+    await registerCreatedRecord({
+      sourceSchema: createTarget.schema,
+      sourceTable: "CAAL_Archive",
+      sourceRowId: result.rows[0].id,
+      caalId: result.rows[0]["CAAL_ID"],
+      recordType: "archive",
+      createdBy: sessionUsername,
+      createdByAppUserId: appUserId,
+      workspaceCode: recordWorkspaceCode,
+      storageScope: createTarget.storageScope,
+      createdByWorkspaceCode: getSessionWorkspaceCode(currentSession),
+      notes: createTarget.isPublicCaalStorage
+        ? `Created through CAAL web app into public CAAL archive table; record workspace_code=${recordWorkspaceCode}`
+        : `Created through CAAL web app into ${createTarget.storageScope}`
+    });
+
     const lang = req.query.lang || currentSession.profile?.preferred_language || "en";
 
     const record = buildArchiveRecord(
       {
         ...result.rows[0],
         source_scope: "workspace",
+        source_scope_override: "workspace",
         storage_scope: targetStorage,
-        is_editable: true
+        is_promoted: createTarget.isPublicCaalStorage,
+        is_editable: true,
+        is_editable_override: true
       },
       lang
     );

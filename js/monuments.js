@@ -3505,7 +3505,7 @@ function mLookupOptions(lookupName, { sort = true } = {}) {
   return options.sort((a, b) => {
     return mLookupSortLabel(a).localeCompare(
       mLookupSortLabel(b),
-      monumentCurrentLanguageCode(),
+      getCurrentSortLocale(),
       {
         sensitivity: "base",
         numeric: true
@@ -10035,43 +10035,88 @@ async function saveCurrentMonumentRecord() {
     monumentIsAddMode = false;
     updateAddModeUI();
 
-    await loadMonumentMapRecords();
-    await loadMonumentListRecords();
+        /*
+          For newly created public CAAL records, do not immediately resolve by CAAL_ID.
+          /api/records/resolve may depend on the CAAL materialized view, which may not
+          include the new row until cache refresh. The POST response already contains
+          the saved record.
+        */
+        if (isNewRecord && data.record) {
+          const savedRecord = {
+            ...data.record,
+            source: {
+              ...(data.record.source || {}),
+              scope: data.record.source?.scope || "workspace",
+              storage: data.record.source?.storage || savedStorage,
+              is_promoted: data.record.source?.is_promoted === true,
+              is_editable: true
+            }
+          };
 
-    const refreshed =
-      monumentListRecords.find((item) => item?.identity?.id === data.record?.identity?.id) ||
-      monumentMapRecords.find((item) => item?.identity?.id === data.record?.identity?.id);
+          monumentSelectedRecord = savedRecord;
+          monumentPendingNewRecord = null;
+          clearRelationshipStateForNewSelection();
+          renderMonumentRecordDetails(savedRecord);
+          updateMonumentActionBar();
+          updateSelectedResultCard();
 
-    if (refreshed) {
-      const fullRecord = await loadFullMonumentRecord(refreshed);
+          if (map && savedRecord.geometry?.coordinates) {
+            drawSelectedMonumentHighlight(savedRecord);
+            ensureRecordVisibleOnMap(savedRecord);
+          }
 
-      monumentSelectedRecord = fullRecord;
-      clearRelationshipStateForNewSelection();
-      renderMonumentRecordDetails(fullRecord);
-      updateSelectedResultCard();
+          /*
+            Reloading list/map before MV refresh will not necessarily show the new public row.
+            For public CAAL records, leave the returned record open and rely on cache refresh.
+          */
+          if (!isPublicCaalRecord) {
+            await loadMonumentMapRecords();
+            await loadMonumentListRecords();
+          }
 
-      if (map && fullRecord.geometry?.coordinates) {
-        drawSelectedMonumentHighlight(fullRecord);
-        ensureRecordVisibleOnMap(fullRecord);
-      } else if (map && refreshed.geometry?.coordinates) {
-        drawSelectedMonumentHighlight(refreshed);
-        ensureRecordVisibleOnMap(refreshed);
-      }
-    } else if (data.record) {
-      const fullRecord = await loadFullMonumentRecord(data.record);
+          return;
+        }
 
-      monumentSelectedRecord = fullRecord;
-      clearRelationshipStateForNewSelection();
-      renderMonumentRecordDetails(fullRecord);
-      updateSelectedResultCard();
+        await loadMonumentMapRecords();
+        await loadMonumentListRecords();
 
-      if (map && fullRecord.geometry?.coordinates) {
-        drawSelectedMonumentHighlight(fullRecord);
-        ensureRecordVisibleOnMap(fullRecord);
-      }
-    } else {
-      renderMonumentEmptyState();
-    }
+        const refreshed =
+          monumentListRecords.find((item) => item?.identity?.id === data.record?.identity?.id) ||
+          monumentMapRecords.find((item) => item?.identity?.id === data.record?.identity?.id);
+
+        if (refreshed) {
+          const fullRecord = await loadFullMonumentRecord(refreshed);
+
+          monumentSelectedRecord = fullRecord;
+          clearRelationshipStateForNewSelection();
+          renderMonumentRecordDetails(fullRecord);
+          updateMonumentActionBar();
+          updateSelectedResultCard();
+
+          if (map && fullRecord.geometry?.coordinates) {
+            drawSelectedMonumentHighlight(fullRecord);
+            ensureRecordVisibleOnMap(fullRecord);
+          } else if (map && refreshed.geometry?.coordinates) {
+            drawSelectedMonumentHighlight(refreshed);
+            ensureRecordVisibleOnMap(refreshed);
+          }
+        } else if (data.record) {
+          /*
+            Fallback for saved records not yet available through list/map.
+          */
+          monumentSelectedRecord = data.record;
+          clearRelationshipStateForNewSelection();
+          renderMonumentRecordDetails(data.record);
+          updateMonumentActionBar();
+          updateSelectedResultCard();
+
+          if (map && data.record.geometry?.coordinates) {
+            drawSelectedMonumentHighlight(data.record);
+            ensureRecordVisibleOnMap(data.record);
+          }
+        } else {
+          renderMonumentEmptyState();
+        }
   } catch (error) {
     console.error("Monument save failed:", error);
     alert(

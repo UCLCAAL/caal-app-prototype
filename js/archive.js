@@ -2565,6 +2565,7 @@ function applyArchiveScopeUiForSession(
 
     if (setDefault && canViewAllCaal) {
       if (showArchiveWorkspace) showArchiveWorkspace.checked = true;
+      if (showArchiveNationalRef) showArchiveNationalRef.checked = false;
       if (showArchiveAllCaal) showArchiveAllCaal.checked = true;
     }
 
@@ -2578,6 +2579,7 @@ function applyArchiveScopeUiForSession(
     return;
   }
 
+  // National users and national admins.
   if (nationalWrapper) {
     nationalWrapper.hidden = false;
   }
@@ -2599,6 +2601,12 @@ function applyArchiveScopeUiForSession(
     "archive_other_records",
     t("archive_other_records", "Other CAAL records")
   );
+
+  if (setDefault) {
+    if (showArchiveWorkspace) showArchiveWorkspace.checked = true;
+    if (showArchiveNationalRef) showArchiveNationalRef.checked = true;
+    if (showArchiveAllCaal) showArchiveAllCaal.checked = false;
+  }
 
   if (workspaceWrapper) {
     workspaceWrapper.title = "";
@@ -3409,6 +3417,24 @@ if (archiveSaveBtn) {
         null;
 
       const isPublicCaalArchiveRecord = savedStorage === "public_caal";
+
+      if (isNewRecord && isPublicCaalArchiveRecord) {
+        showArchiveToast(
+          t(
+            "caal_archive_record_created_cache_pending",
+            "Archive record saved to the public CAAL table. It may not appear in search/list results until the CAAL cache refreshes."
+          ),
+          "success",
+          10000
+        );
+
+        setTimeout(() => {
+          archiveJustSavedRecordId = null;
+          archiveUpdateSelectedResultCard();
+        }, 2500);
+
+        return;
+      }
 
       if (isNewRecord) {
         showArchiveToast(

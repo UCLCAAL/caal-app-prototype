@@ -219,6 +219,86 @@ function storageScopeForWorkspaceCode(workspaceCode) {
   return storage.storageScope;
 }
 
+function isCaalWorkspaceSession(session) {
+  return getSessionWorkspaceCode(session) === "caal";
+}
+
+function createStorageTargetForRecord(resourceType, payload, currentSession) {
+  const recordWorkspaceCode = inferRecordWorkspaceCodeFromPayload(
+    payload,
+    currentSession
+  );
+
+  if (!recordWorkspaceCode) {
+    return {
+      ok: false,
+      error: "A country is required so the record can be assigned to a national workspace"
+    };
+  }
+
+  const sessionWorkspaceCode = getSessionWorkspaceCode(currentSession);
+  const isCaalUser = sessionWorkspaceCode === "caal";
+
+  const table =
+    resourceType === "monument"
+      ? "CAAL_Monuments"
+      : resourceType === "archive"
+        ? "CAAL_Archive"
+        : null;
+
+  if (!table) {
+    return {
+      ok: false,
+      error: `Unsupported resource type: ${resourceType}`
+    };
+  }
+
+  /*
+    CAAL users write directly to public CAAL tables,
+    but the record still keeps its inferred national workspace_code.
+  */
+  if (isCaalUser) {
+    return {
+      ok: true,
+      resourceType,
+      recordWorkspaceCode,
+      storageWorkspaceCode: "caal",
+      schema: "public",
+      table,
+      tableSql: tableSql("public", table),
+      storageScope: "public_caal",
+      sourceScope: "workspace",
+      isPublicCaalStorage: true
+    };
+  }
+
+  /*
+    National users continue to write to their configured national workspace.
+    Public fallback for unconfigured national workspaces can be added here later.
+  */
+  try {
+    const storage = storageForWorkspaceCode(recordWorkspaceCode);
+
+    return {
+      ok: true,
+      resourceType,
+      recordWorkspaceCode,
+      storageWorkspaceCode: recordWorkspaceCode,
+      schema: storage.schema,
+      table,
+      tableSql: tableSql(storage.schema, table),
+      storageScope: storage.storageScope,
+      sourceScope: "workspace",
+      isPublicCaalStorage: storage.storageScope === "public_caal"
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      error: `Records for this country cannot yet be saved because workspace '${recordWorkspaceCode}' is not configured for web entry.`
+    };
+  }
+}
+
 function enabledWorkspaceStorageConfigs() {
   return Object.entries(WORKSPACE_STORAGE)
     .filter(([workspaceCode, config]) => {
@@ -259,5 +339,7 @@ module.exports = {
   monumentTableForWorkspaceCode,
   archiveTableForWorkspaceCode,
   storageScopeForWorkspaceCode,
+  isCaalWorkspaceSession,
+  createStorageTargetForRecord,
   enabledWorkspaceStorageConfigs
 };
