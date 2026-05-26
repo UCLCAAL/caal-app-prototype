@@ -5641,13 +5641,42 @@ function openAdminBoundaryMiniPopup(feature, lngLat) {
   }, 0);
 }
 
-function summaryRowsHtml(rows) {
+function summaryRowsHtml(rows, filterKind = null) {
   if (!Array.isArray(rows) || rows.length === 0) {
     return `<li>${t("none_recorded", "None recorded")}</li>`;
   }
 
   return rows.map((row) => {
-    return `<li><strong>${mSafeValue(row.label)}</strong>: ${formatCount(row.count)}</li>`;
+    const label = row.label || t("unspecified", "Unspecified");
+    const value = row.value || "";
+    const count = Number(row.count || 0);
+
+    /*
+      Do not make "Unspecified" clickable yet. The existing backend filter
+      logic filters by explicit canonical values, not by missing/null values.
+    */
+    if (!filterKind || !value) {
+      return `
+        <li>
+          <strong>${mSafeValue(label)}</strong>: ${formatCount(count)}
+        </li>
+      `;
+    }
+
+    return `
+      <li>
+        <button
+          type="button"
+          class="region-summary-filter-link"
+          data-region-filter-kind="${filterKind}"
+          data-region-filter-value="${mSafeValue(value)}"
+          data-region-filter-label="${mSafeValue(label)}"
+          title="${t("filter_results_by_this_value", "Filter results by this value")}"
+        >
+          <strong>${mSafeValue(label)}</strong>: ${formatCount(count)}
+        </button>
+      </li>
+    `;
   }).join("");
 }
 
@@ -5726,17 +5755,17 @@ async function openAdminBoundarySummary(feature, lngLat) {
 
         <div class="region-summary-section">
           ${t("top_classifications_in_region", "Top classifications in region")}
-          <ul>${summaryRowsHtml(summary.top?.classifications)}</ul>
+          <ul>${summaryRowsHtml(summary.top?.classifications, "classification")}</ul>
         </div>
 
         <div class="region-summary-section">
           ${t("top_monument_types_all_caal", "Top monument types in region")}
-          <ul>${summaryRowsHtml(summary.top?.monument_types)}</ul>
+          <ul>${summaryRowsHtml(summary.top?.monument_types, "monument_type")}</ul>
         </div>
 
         <div class="region-summary-section">
           ${t("top_cultural_periods_all_caal", "Top cultural periods in region")}
-          <ul>${summaryRowsHtml(summary.top?.cultural_periods)}</ul>
+          <ul>${summaryRowsHtml(summary.top?.cultural_periods, "cultural_period")}</ul>
         </div>
 
         <div class="region-summary-actions">
@@ -5762,23 +5791,39 @@ async function openAdminBoundarySummary(feature, lngLat) {
 
     const panel = showAdminBoundarySummaryPanel(html);
 
-    setTimeout(() => {
-      const showBtn = document.getElementById("showRegionRecordsBtn");
-      if (showBtn) {
-        showBtn.addEventListener("click", async () => {
-          await applyAdminBoundaryFilter(boundaryId, boundaryName);
-          removeAdminBoundarySummaryPanel();
-        });
-      }
+        setTimeout(() => {
+          const showBtn = document.getElementById("showRegionRecordsBtn");
+          if (showBtn) {
+            showBtn.addEventListener("click", async () => {
+              await applyAdminBoundaryFilter(boundaryId, boundaryName);
+              removeAdminBoundarySummaryPanel();
+            });
+          }
 
-      const clearBtn = document.getElementById("clearRegionSelectionBtn");
-      if (clearBtn) {
-        clearBtn.addEventListener("click", async () => {
-          await clearAdminBoundaryFilter();
-          removeAdminBoundarySummaryPanel();
-        });
-      }
-    }, 0);
+          const clearBtn = document.getElementById("clearRegionSelectionBtn");
+          if (clearBtn) {
+            clearBtn.addEventListener("click", async () => {
+              await clearAdminBoundaryFilter();
+              removeAdminBoundarySummaryPanel();
+            });
+          }
+
+          document
+            .querySelectorAll(".region-summary-filter-link")
+            .forEach((btn) => {
+              btn.addEventListener("click", async () => {
+                await applyRegionSummaryValueFilter({
+                  kind: btn.dataset.regionFilterKind,
+                  value: btn.dataset.regionFilterValue,
+                  label: btn.dataset.regionFilterLabel,
+                  boundaryId,
+                  boundaryName
+                });
+
+                removeAdminBoundarySummaryPanel();
+              });
+            });
+        }, 0);
   } catch (error) {
     console.error("Could not load region summary:", error);
     alert(error.message || t("could_not_load_region_summary", "Could not load region summary"));
@@ -5860,6 +5905,110 @@ function showAdminBoundarySummaryPanel(html) {
   }
 
   return panel;
+}
+
+function setSelectValueSelected(selectEl, value, selected = true) {
+  if (!selectEl || !value) return false;
+
+  const option = Array.from(selectEl.options || []).find(
+    (opt) => String(opt.value) === String(value)
+  );
+
+  if (!option) {
+    console.warn("Could not find filter option for regional summary value:", {
+      value,
+      selectId: selectEl.id
+    });
+    return false;
+  }
+
+  option.selected = selected;
+  return true;
+}
+
+function getRegionSummaryFilterSelect(kind) {
+  switch (kind) {
+    case "classification":
+      return filterClassification;
+
+    case "monument_type":
+      return filterMonumentType;
+
+    case "cultural_period":
+      return filterCulturalPeriod;
+
+    default:
+      return null;
+  }
+}
+
+async function applyRegionSummaryValueFilter({
+  kind,
+  value,
+  label,
+  boundaryId,
+  boundaryName
+}) {
+  if (!kind || !value) return;
+
+  const selectEl = getRegionSummaryFilterSelect(kind);
+
+  if (!selectEl) {
+    console.warn("Unsupported regional summary filter kind:", kind);
+    return;
+  }
+
+  const selected = setSelectValueSelected(selectEl, value, true);
+
+  if (!selected) {
+    alert(
+      t(
+        "regional_summary_filter_value_not_available",
+        "This value is not available in the current filter list."
+      )
+    );
+    return;
+  }
+
+  /*
+    Keep or apply the region filter, then add the classification/type/period
+    filter on top of it.
+  */
+  if (boundaryId) {
+    selectedAdminBoundary = {
+      boundary_id: boundaryId,
+      admin_name: boundaryName || t("selected_region", "Selected region")
+    };
+  }
+
+  /*
+    A region filter should supersede a saved map-view bbox, otherwise the user
+    gets region AND old map extent silently.
+  */
+  activeMapViewFilterBbox = null;
+  updateFilterToMapViewButton();
+
+  monumentPageOffset = 0;
+
+  /*
+    Needed because Monument Type and Cultural Period use tree pickers as well
+    as underlying select elements.
+  */
+  syncAllAdvancedFilterTreesFromSelects();
+  renderAllFilterChips();
+  renderActiveFilterChips();
+
+  setMapStaleState(
+    true,
+    t("applying_filter", "Applying filter...")
+  );
+
+  await applyMonumentFilters({
+    includeMap: true,
+    listFirst: true
+  });
+
+  updateMapStatusLine();
 }
 
 async function applyAdminBoundaryFilter(boundaryId, boundaryName = "") {
