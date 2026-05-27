@@ -2756,7 +2756,7 @@ function mLabel(name, fallback = null) {
 
 function mSafeValue(value) {
   if (value === null || value === undefined || value === "") {
-    return `<span class="empty-value">${mLabel("Not recorded", "Not recorded")}</span>`;
+    return `<span class="empty-value">${t("not_recorded", "Not recorded")}</span>`;
   }
   return value;
 }
@@ -6295,7 +6295,7 @@ function renderMonumentPreviewModal(record) {
             <span class="detail-section-title">${mLabel("Monument type summary", "Monument type summary")}</span>
           </div>
           <div class="detail-item full-width">
-            <div class="detail-value">${monumentTypes.length ? monumentTypes.join(", ") : mLabel("Not recorded", "Not recorded")}</div>
+            <div class="detail-value">${monumentTypes.length ? monumentTypes.join(", ") : t("not_recorded", "Not recorded")}</div>
           </div>
         </div>
       </div>
@@ -6306,7 +6306,7 @@ function renderMonumentPreviewModal(record) {
             <span class="detail-section-title">${mLabel("Cultural period summary", "Cultural period summary")}</span>
           </div>
           <div class="detail-item full-width">
-            <div class="detail-value">${culturalPeriods.length ? culturalPeriods.join(", ") : mLabel("Not recorded", "Not recorded")}</div>
+            <div class="detail-value">${culturalPeriods.length ? culturalPeriods.join(", ") : t("not_recorded", "Not recorded")}</div>
           </div>
         </div>
       </div>
@@ -8162,6 +8162,60 @@ function getBasemapStyle(name) {
 
   return "https://demotiles.maplibre.org/style.json";
 }
+
+// for changing language to native maplibre controls
+function getMapLibreLocale() {
+  return {
+    "NavigationControl.ZoomIn": t("map_zoom_in", "Zoom in"),
+    "NavigationControl.ZoomOut": t("map_zoom_out", "Zoom out"),
+    "NavigationControl.ResetBearing": t(
+      "map_drag_rotate_reset_north",
+      "Drag to rotate map, click to reset north"
+    ),
+
+    "FullscreenControl.Enter": t("map_enter_fullscreen", "Enter fullscreen"),
+    "FullscreenControl.Exit": t("map_exit_fullscreen", "Exit fullscreen"),
+
+    "AttributionControl.ToggleAttribution": t(
+      "map_toggle_attribution",
+      "Toggle attribution"
+    ),
+    "AttributionControl.MapFeedback": t("map_feedback", "Map feedback"),
+
+    "Map.Title": t("map_title", "Map"),
+    "Popup.Close": t("close_popup", "Close popup")
+  };
+}
+
+function refreshMapLibreControlTooltips() {
+  const labels = {
+    ".maplibregl-ctrl-zoom-in": t("map_zoom_in", "Zoom in"),
+    ".maplibregl-ctrl-zoom-out": t("map_zoom_out", "Zoom out"),
+    ".maplibregl-ctrl-compass": t(
+      "map_drag_rotate_reset_north",
+      "Drag to rotate map, click to reset north"
+    ),
+    ".maplibregl-ctrl-fullscreen": t(
+      "map_enter_fullscreen",
+      "Enter fullscreen"
+    ),
+    ".maplibregl-ctrl-shrink": t(
+      "map_exit_fullscreen",
+      "Exit fullscreen"
+    ),
+    "#resetMapBtn": t("reset_map", "Reset map"),
+    "#downloadMapBtn": t("download_map", "Download map"),
+    "#mapOptionsBtn": t("map_options", "Map options")
+  };
+
+  Object.entries(labels).forEach(([selector, label]) => {
+    document.querySelectorAll(selector).forEach((button) => {
+      button.title = label;
+      button.setAttribute("aria-label", label);
+    });
+  });
+}
+//
 
 function monumentRecordToFeature(record) {
   if (!record?.geometry?.coordinates) return null;
@@ -10701,6 +10755,7 @@ document.addEventListener("app:languageChanged", async () => {
     await loadMonumentLabels();
     applyMonumentStaticLabels();
     applyMonumentScopeUiForSession(window.appSession);
+    refreshMapLibreControlTooltips();
     renderMonumentLegend();
     await loadMonumentLookups();
     populateMonumentFilterLookups();
@@ -10899,8 +10954,15 @@ document.addEventListener("DOMContentLoaded", async () => {
   const session = await requireSession();
   if (!session) return;
 
-  document.addEventListener("fullscreenchange", syncMapModalFullscreenPlacement);
-  document.addEventListener("webkitfullscreenchange", syncMapModalFullscreenPlacement);
+  document.addEventListener("fullscreenchange", () => {
+    syncMapModalFullscreenPlacement();
+    refreshMapLibreControlTooltips();
+  });
+
+  document.addEventListener("webkitfullscreenchange", () => {
+    syncMapModalFullscreenPlacement();
+    refreshMapLibreControlTooltips();
+  });
 
   document.addEventListener("keydown", (event) => {
     if (event.key !== "Escape") return;
@@ -11060,7 +11122,8 @@ document.addEventListener("DOMContentLoaded", async () => {
       style: getBasemapStyle(initialBasemap),
       center: directLinkedRecord?.geometry?.coordinates || [66.9, 48.2],
       zoom: directLinkedRecord?.geometry?.coordinates ? 8 : 4.2,
-      preserveDrawingBuffer: true
+      preserveDrawingBuffer: true,
+      locale: getMapLibreLocale()
     });
 
     map.addControl(new maplibregl.NavigationControl(), "top-right");
@@ -11072,9 +11135,11 @@ document.addEventListener("DOMContentLoaded", async () => {
       "top-right"
     );
 
-  addMapResetControl();
-  addMapDownloadControl();
-  addMapOptionsControl();
+    addMapResetControl();
+    addMapDownloadControl();
+    addMapOptionsControl();
+
+    refreshMapLibreControlTooltips();
 
     addMonumentLegendControl();
 

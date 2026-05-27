@@ -527,6 +527,57 @@ body {
   font-size: 0.9rem;
 }
 
+/* Compact results pagination */
+.pagination-bar {
+  display: grid;
+  grid-template-columns: minmax(5.5rem, 1fr) auto minmax(5.5rem, 1fr);
+  align-items: center;
+  gap: 0.45rem;
+  margin: 0.45rem 0 0.7rem;
+}
+
+#monumentPageInfo {
+  min-width: 0;
+  text-align: center;
+  font-size: 0.9rem;
+  line-height: 1.2;
+  color: var(--text);
+  white-space: normal;
+}
+
+.pagination-bar .action-btn {
+  width: 100%;
+  min-width: 0;
+  max-width: 9.5rem;
+  justify-self: center;
+
+  padding: 0.35rem 0.5rem;
+  border-radius: 999px;
+
+  font-size: 0.84rem;
+  line-height: 1.15;
+  font-weight: 500;
+
+  white-space: normal;
+  overflow-wrap: anywhere;
+  text-align: center;
+
+  background: #ffffff;
+  border-color: #d6dde3;
+  color: #334155;
+  box-shadow: none;
+}
+
+.pagination-bar .action-btn:hover:not(:disabled) {
+  background: #f8fafc;
+  border-color: #c6d0d7;
+}
+
+.pagination-bar .action-btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .results-empty {
   color: var(--muted);
   font-size: 0.92rem;

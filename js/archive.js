@@ -351,7 +351,7 @@ function getInitialCaalIdFromUrl() {
 
 function safeArchiveValue(value) {
   if (value === null || value === undefined || value === "") {
-    return `<span class="empty-value">${archiveLabel("Not recorded", "Not recorded")}</span>`;
+    return `<span class="empty-value">${t("not_recorded", "Not recorded")}</span>`;
   }
   return value;
 }
@@ -1951,7 +1951,7 @@ function archiveRenderAssociatedRelationChips(record) {
   const relations = archiveGetAssociatedRelations(record);
 
   if (!relations.length) {
-    return `<span class="empty-value">${archiveLabel("Not recorded", "Not recorded")}</span>`;
+    return `<span class="empty-value">${t("not_recorded", "Not recorded")}</span>`;
   }
 
   return relations.map((rel) => {
