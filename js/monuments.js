@@ -220,6 +220,8 @@ let monumentDateOverrideState = {
   lastCalculatedEnd: null
 };
 
+let monumentLastSaveSummary = null;
+
 // --------------------------------------------------------
 // MapLibre map
 // --------------------------------------------------------
@@ -9027,6 +9029,8 @@ function renderMonumentEmptyState({ preserveSelection = false } = {}) {
     monumentSelectedRecord = null;
   }
 
+  monumentLastSaveSummary = null;
+
   recordDetails.innerHTML = `
     <div class="empty-state">
       <p>${t("no_record_selected", "No record selected yet.")}</p>
@@ -9347,6 +9351,12 @@ function renderMonumentDisplayMode(record) {
       ${renderMasterIdChip(record)}
     </div>
 
+    ${
+      monumentLastSaveSummary
+        ? window.renderSaveSummaryCard(monumentLastSaveSummary)
+        : ""
+    }
+
     <div class="group-stack">
       ${mRenderGroupBlock(t("basic", "Basic"), basicHtml, true)}
       ${mRenderGroupBlock(t("nav_monuments", "Monuments"), monumentHtml, true)}
@@ -9357,6 +9367,9 @@ function renderMonumentDisplayMode(record) {
       ${mRenderGroupBlock(t("metadata", "Metadata"), metadataHtml, true)}
     </div>
   `;
+
+  window.wireSaveSummaryDismiss?.(recordDetails);
+
   const zoomBtn = document.getElementById("zoomToSelectedMonumentBtn");
 
   if (zoomBtn) {
@@ -10149,6 +10162,8 @@ async function saveCurrentMonumentRecord() {
       return;
     }
 
+    monumentLastSaveSummary = data.save_summary || null;
+
     const savedStorage =
       data?.record?.source?.storage ||
       monumentSelectedRecord?.source?.storage ||
@@ -10173,7 +10188,12 @@ async function saveCurrentMonumentRecord() {
         12000
       );
     } else {
-      showToast(t("record_saved", "Record saved"), 3000);
+      showToast(
+        monumentLastSaveSummary?.caal_id
+          ? `${t("record_saved", "Record saved")}: ${monumentLastSaveSummary.caal_id}`
+          : t("record_saved", "Record saved"),
+        3000
+      );
     }
 
     monumentPendingNewRecord = null;
@@ -10522,6 +10542,8 @@ if (addMonumentBtn) {
   addMonumentBtn.addEventListener("click", () => {
     if (!monumentConfirmLoseChanges()) return;
 
+    monumentLastSaveSummary = null;
+
     const newRecord = makeNewBlankMonumentRecord();
     monumentPendingNewRecord = newRecord;
     monumentSelectedRecord = newRecord;
@@ -10539,6 +10561,8 @@ if (monumentEditBtn) {
   monumentEditBtn.addEventListener("click", () => {
     if (!monumentSelectedRecord) return;
     if (!canEditMonumentRecord(monumentSelectedRecord)) return;
+
+    monumentLastSaveSummary = null;
 
     monumentIsEditMode = true;
     monumentSyncModeVisualState();

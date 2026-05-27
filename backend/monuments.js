@@ -3405,6 +3405,135 @@ async function registerCreatedRecord({
   );
 }
 
+const SAVE_SUMMARY_EXCLUDED_FIELDS = new Set([
+  "_storage_scope",
+  "_source_scope",
+  "Tstamp",
+  "created_by_app_user_id",
+  "workspace_code",
+  "Preferred Language"
+]);
+
+function normaliseSaveSummaryValue(value) {
+  if (value === undefined || value === null || value === "") {
+    return null;
+  }
+
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
+
+  return value;
+}
+
+function buildSavedFieldsFromPayload(payload = {}, options = {}) {
+  const {
+    exclude = SAVE_SUMMARY_EXCLUDED_FIELDS,
+    maxFields = 18
+  } = options;
+
+  const fields = Object.entries(payload)
+    .filter(([field]) => !exclude.has(field))
+    .map(([field, value]) => ({
+      field,
+      label: field,
+      value: normaliseSaveSummaryValue(value)
+    }))
+    .filter((item) => item.value !== null);
+
+  return {
+    fields_saved: fields.slice(0, maxFields),
+    saved_field_count: fields.length,
+    shown_field_count: Math.min(fields.length, maxFields)
+  };
+}
+
+function buildSavedFieldsFromChangedValues({
+  oldRow,
+  newRow,
+  submittedFields = [],
+  maxFields = 18
+}) {
+  const fields = [];
+
+  for (const field of submittedFields) {
+    const oldValue = oldRow?.[field] ?? null;
+    const newValue = newRow?.[field] ?? null;
+
+    if (!valuesDifferForLog(oldValue, newValue)) {
+      continue;
+    }
+
+    const normalisedNewValue = normaliseSaveSummaryValue(newValue);
+
+    fields.push({
+      field,
+      label: field,
+      old_value: normaliseSaveSummaryValue(oldValue),
+      new_value: normalisedNewValue,
+      value: normalisedNewValue
+    });
+  }
+
+  return {
+    fields_saved: fields.slice(0, maxFields),
+    saved_field_count: fields.length,
+    shown_field_count: Math.min(fields.length, maxFields),
+    summary_mode: "changed_fields"
+  };
+}
+
+function storageLabelForSaveSummary(storageScope, recordWorkspaceCode = null) {
+  const storage = String(storageScope || "").trim();
+
+  if (storage === "public_caal") {
+    return "Public CAAL table";
+  }
+
+  if (storage.endsWith("_workspace")) {
+    const code = storage.replace(/_workspace$/, "").toUpperCase();
+    return `${code} workspace`;
+  }
+
+  if (recordWorkspaceCode) {
+    return `${String(recordWorkspaceCode).toUpperCase()} workspace`;
+  }
+
+  return storage || "Database";
+}
+
+function buildSaveSummary({
+  action,
+  recordType,
+  caalId,
+  payload,
+  currentSession,
+  storageScope,
+  sourceScope = "workspace",
+  recordWorkspaceCode = null,
+  cacheRefreshRequired = false,
+  savedFields = null
+}) {
+  const savedFieldSummary = savedFields || buildSavedFieldsFromPayload(payload);
+
+  return {
+    action,
+    record_type: recordType,
+    caal_id: caalId || null,
+    saved_at: new Date().toISOString(),
+    saved_by:
+      currentSession?.user?.display_name ||
+      currentSession?.user?.username ||
+      currentSession?.user?.email ||
+      null,
+    storage_scope: storageScope || null,
+    source_scope: sourceScope || null,
+    storage_label: storageLabelForSaveSummary(storageScope, recordWorkspaceCode),
+    cache_refresh_required: cacheRefreshRequired,
+    ...savedFieldSummary
+  };
+}
+
 // ========================================================
 // CREATE
 // ========================================================
@@ -3618,9 +3747,22 @@ router.post("/monuments", async (req, res) => {
 
     record.relations = await getResourceRelations(pool, record.identity?.caal_id);
 
+    const save_summary = buildSaveSummary({
+      action: "create",
+      recordType: "monument",
+      caalId: record.identity?.caal_id,
+      payload,
+      currentSession,
+      storageScope: targetStorage,
+      sourceScope: "workspace",
+      recordWorkspaceCode,
+      cacheRefreshRequired: createTarget.isPublicCaalStorage
+    });
+
     return res.status(201).json({
       ok: true,
-      record
+      record,
+      save_summary
     });
   } catch (error) {
     console.error("Monument create failed:");
@@ -3756,6 +3898,7 @@ router.patch("/monuments/:id", async (req, res) => {
 
     let updateResult = { rows: [] };
     let updatedScope = requestedSourceScope || "workspace";
+    let oldRowForSummary = null;
     let oldPublicCaalRow = null;
 
     if (isPublicTarget) {
@@ -3782,6 +3925,7 @@ router.patch("/monuments/:id", async (req, res) => {
       );
 
       oldPublicCaalRow = oldPublicResult.rows[0] || null;
+      oldRowForSummary = oldPublicCaalRow;
 
       updateResult = await pool.query(
         `
@@ -3816,6 +3960,8 @@ router.patch("/monuments/:id", async (req, res) => {
       }
 
       const targetTable = tableSqlForStorageScope(requestedStorageScope, "monument");
+
+      oldRowForSummary = await fetchWorkspaceMonumentRowById(id, requestedStorageScope);
 
       updateResult = await pool.query(
         `
@@ -3891,9 +4037,32 @@ router.patch("/monuments/:id", async (req, res) => {
 
     record.relations = await getResourceRelations(pool, record.identity?.caal_id);
 
+    const changedFieldSummary = buildSavedFieldsFromChangedValues({
+      oldRow: oldRowForSummary,
+      newRow: freshRow,
+      submittedFields: fields
+    });
+
+    const save_summary = buildSaveSummary({
+      action: "update",
+      recordType: "monument",
+      caalId: record.identity?.caal_id,
+      payload,
+      currentSession,
+      storageScope: requestedStorageScope || record.source?.storage || null,
+      sourceScope: updatedScope || requestedSourceScope || record.source?.scope || "workspace",
+      recordWorkspaceCode:
+        freshRow.workspace_code ||
+        record.raw?.workspace_code ||
+        null,
+      cacheRefreshRequired: requestedStorageScope === "public_caal",
+      savedFields: changedFieldSummary
+    });
+
     return res.json({
       ok: true,
-      record
+      record,
+      save_summary
     });
   } catch (error) {
     console.error("Monument update failed:");

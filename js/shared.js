@@ -510,6 +510,193 @@ function showToast(message, durationMs = 3000) {
     toast.hidden = true;
   }, durationMs);
 }
+
+// save summary for materialised views
+function getSaveSummaryLocale() {
+  const lang =
+    typeof window.getCurrentLanguage === "function"
+      ? window.getCurrentLanguage()
+      : document.documentElement.lang || "en";
+
+  const map = {
+    en: "en-GB",
+    ru: "ru-RU",
+    zh: "zh-CN",
+    kk: "kk-KZ",
+    ky: "ky-KG",
+    tg: "tg-TJ",
+    tk: "tk-TM",
+    uz: "uz-UZ"
+  };
+
+  return map[String(lang).toLowerCase()] || "en-GB";
+}
+
+function formatSaveSummaryDate(value) {
+  if (!value) return "";
+
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return String(value);
+
+  return date.toLocaleString(getSaveSummaryLocale(), {
+    dateStyle: "medium",
+    timeStyle: "short",
+    hour12: false
+  });
+}
+
+function formatSaveSummaryValue(value) {
+  if (value === null || value === undefined || value === "") {
+    return t("not_recorded", "Not recorded");
+  }
+
+  if (Array.isArray(value)) {
+    return value.join(", ");
+  }
+
+  if (typeof value === "object") {
+    return JSON.stringify(value);
+  }
+
+  return String(value);
+}
+
+function getSaveSummaryFieldLabel(item, summary = {}) {
+  const field = item?.field || item?.label || "";
+
+  if (!field) return "";
+
+  if (
+    summary.record_type === "archive" &&
+    typeof window.archiveLabel === "function"
+  ) {
+    return window.archiveLabel(field, field);
+  }
+
+  if (
+    summary.record_type === "monument" &&
+    typeof window.mLabel === "function"
+  ) {
+    return window.mLabel(field, field);
+  }
+
+  if (
+    summary.record_type === "monument" &&
+    typeof window.monumentLabel === "function"
+  ) {
+    return window.monumentLabel(field, field);
+  }
+
+  return item?.label || field;
+}
+
+function renderSaveSummaryCard(summary, options = {}) {
+  if (!summary) return "";
+
+  const actionLabel =
+    summary.record_type === "archive"
+      ? t("archive_record_saved", "Archive record saved")
+      : t("record_saved", "Record saved");
+
+  const recordTypeLabel =
+    summary.record_type === "archive"
+      ? t("archive_record", "Archive record")
+      : t("monument_record", "Monument record");
+
+  const fields = Array.isArray(summary.fields_saved)
+    ? summary.fields_saved
+    : [];
+
+  const fieldRows = fields.map((item) => `
+    <li>
+      <strong>${getSaveSummaryFieldLabel(item, summary)}:</strong>
+      <span>${formatSaveSummaryValue(item.value)}</span>
+    </li>
+  `).join("");
+
+  const hiddenCount =
+    Number(summary.saved_field_count || 0) - Number(summary.shown_field_count || fields.length);
+
+  const hiddenText = hiddenCount > 0
+    ? `<p class="save-summary-more">${t("maximum_values_help", "Maximum: {count}.").replace("{count}", summary.shown_field_count || fields.length)}</p>`
+    : "";
+
+  const cacheText = summary.cache_refresh_required
+    ? `
+      <p class="save-summary-warning">
+        ${t(
+          "saved_cache_refresh_pending",
+          "This record was saved, but some search, list, map, or summary views may not update until the CAAL cache refreshes."
+        )}
+      </p>
+    `
+    : "";
+
+  return `
+    <div class="save-summary-card" role="status">
+      <div class="save-summary-header">
+        <strong>${actionLabel}</strong>
+        <button
+          type="button"
+          class="save-summary-dismiss"
+          aria-label="${t("hide_saved_confirmation", "Hide saved confirmation")}"
+        >
+          ×
+        </button>
+      </div>
+
+      <p class="save-summary-message">
+        <strong>
+          ${
+            summary.record_type === "archive"
+              ? t("nav_archive", "Archive")
+              : t("nav_monuments", "Monuments")
+          }:
+        </strong>
+        ${summary.caal_id || ""}
+        <br>
+        <strong>${actionLabel}:</strong>
+        ${formatSaveSummaryDate(summary.saved_at)}
+      </p>
+
+      <p class="save-summary-meta">
+        ${summary.saved_by ? `${t("login_username", "Username")}: ${summary.saved_by}. ` : ""}
+        ${summary.storage_label ? `${t("workspace", "Workspace")}: ${summary.storage_label}.` : ""}
+      </p>
+
+      ${fields.length ? `
+        <details class="save-summary-fields" open>
+          <summary>
+            ${t("record_details", "Record Details")}
+            ${summary.saved_field_count ? ` (${summary.saved_field_count})` : ""}
+          </summary>
+          <ul>
+            ${fieldRows}
+          </ul>
+          ${hiddenText}
+        </details>
+      ` : ""}
+
+      ${cacheText}
+    </div>
+  `;
+}
+
+function wireSaveSummaryDismiss(container) {
+  if (!container) return;
+
+  const button = container.querySelector(".save-summary-dismiss");
+  if (!button) return;
+
+  button.addEventListener("click", () => {
+    const card = button.closest(".save-summary-card");
+    if (card) card.remove();
+  });
+}
+
+window.renderSaveSummaryCard = renderSaveSummaryCard;
+window.wireSaveSummaryDismiss = wireSaveSummaryDismiss;
+
 // load full record from related
 // ------------------------------------
 function getInitialCaalIdFromUrl() {

@@ -917,6 +917,69 @@ body {
   border-radius: 4px;
 }
 
+.save-summary-card {
+  margin: 0.75rem 0 1rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid rgba(46, 125, 50, 0.28);
+  border-left: 4px solid #2e7d32;
+  border-radius: 10px;
+  background: #f5fbf6;
+  color: #1f2933;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
+}
+
+.save-summary-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.35rem;
+}
+
+.save-summary-dismiss {
+  border: 0;
+  background: transparent;
+  font-size: 1.2rem;
+  line-height: 1;
+  cursor: pointer;
+  color: #4b5563;
+}
+
+.save-summary-message,
+.save-summary-meta,
+.save-summary-warning,
+.save-summary-more {
+  margin: 0.35rem 0;
+}
+
+.save-summary-meta {
+  color: #4b5563;
+  font-size: 0.92rem;
+}
+
+.save-summary-warning {
+  color: #7a4b00;
+  font-size: 0.92rem;
+}
+
+.save-summary-fields {
+  margin-top: 0.55rem;
+}
+
+.save-summary-fields summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+
+.save-summary-fields ul {
+  margin: 0.45rem 0 0;
+  padding-left: 1.2rem;
+}
+
+.save-summary-fields li {
+  margin: 0.25rem 0;
+}
+
 .legacy-tree-disambiguator {
   margin-left: 0.35rem;
   font-size: 0.86em;

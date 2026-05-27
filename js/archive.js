@@ -79,6 +79,7 @@ let archiveRecordOpenInProgress = false;
 let archiveIsDirty = false;      // when entering edit mode and makign a change, save resets it to false
 let archivePreviewRecord = null;
 let archiveJustSavedRecordId = null;
+let archiveLastSaveSummary = null;
 
 let archiveMessages = {};
 
@@ -2892,6 +2893,7 @@ async function archiveOpenAssociatedRecord(caalId) {
 function renderArchiveEmptyState() {
   if (!archiveRecordDetails) return;
 
+  archiveLastSaveSummary = null;
   archiveSyncModeVisualState();
 
   archiveRecordDetails.innerHTML = `
@@ -3123,6 +3125,12 @@ function archiveRenderDisplayMode(record) {
       </div>
     </div>
 
+    ${
+      archiveLastSaveSummary
+        ? window.renderSaveSummaryCard(archiveLastSaveSummary)
+        : ""
+    }
+
     <div class="group-stack">
       ${archiveRenderGroupBlock(t("material_details", "Material Details"), materialHtml, materialHasValues)}
       ${archiveRenderGroupBlock(t("publication_details", "Publication Details"), publicationHtml, publicationHasValues)}
@@ -3136,6 +3144,7 @@ function archiveRenderDisplayMode(record) {
   if (archiveEditBtn) {
     archiveEditBtn.onclick = () => {
       if (!canEditThisRecord) return;
+      archiveLastSaveSummary = null;
       archiveIsEditMode = true;
       archiveIsDirty = false;
       archiveRenderRecordDetails(record);
@@ -3144,6 +3153,7 @@ function archiveRenderDisplayMode(record) {
 
   wireArchiveAssociatedCaalIdChips();
   archiveWireCopyFieldButtons(archiveRecordDetails);
+  window.wireSaveSummaryDismiss?.(archiveRecordDetails);
 
   archiveRenderActionBar({
     hasRecord: true,
@@ -3397,6 +3407,8 @@ if (archiveSaveBtn) {
         throw new Error("Save succeeded, but the saved record was not returned.");
       }
 
+      archiveLastSaveSummary = data.save_summary || null;
+
       // Keep the saved record visible immediately, even if list reload fails.
       archivePendingNewRecord = null;
       archiveSelectedRecord = savedRecord;
@@ -3453,7 +3465,9 @@ if (archiveSaveBtn) {
         );
       } else {
         showArchiveToast(
-          t("archive_record_saved", "Archive record saved"),
+          archiveLastSaveSummary?.caal_id
+            ? `${t("archive_record_saved", "Archive record saved")}: ${archiveLastSaveSummary.caal_id}`
+            : t("archive_record_saved", "Archive record saved"),
           "success",
           3000
         );
