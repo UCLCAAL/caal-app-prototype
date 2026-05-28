@@ -89,7 +89,7 @@ function ownedWorkspaceArchiveSql(storage, userId) {
 
   return `
     SELECT
-      v.*,
+      ${archiveBrowseColumnSql("v")},
       'workspace'::text AS source_scope,
       true AS is_editable,
       'workspace'::text AS source_scope_override,
@@ -122,7 +122,7 @@ function allWorkspaceArchivesSqlForCaalAdmin(currentSession) {
 
       return `
         SELECT
-          v.*,
+          ${archiveBrowseColumnSql("v")},
           'all_caal'::text AS source_scope,
           true AS is_editable,
           'all_caal'::text AS source_scope_override,
@@ -138,6 +138,93 @@ function allWorkspaceArchivesSqlForCaalAdmin(currentSession) {
       `;
     })
     .join("\nUNION ALL\n");
+}
+
+const ARCHIVE_BROWSE_COLUMNS = [
+  `"id"`,
+  `"Level"`,
+  `"Country"`,
+  `"Original Reference"`,
+  `"CAAL_ID"`,
+  `"Associated CAAL_ID"`,
+  `"Original Title"`,
+  `"English Title"`,
+  `"Description"`,
+  `"Description - alternative language"`,
+  `"Number and Type of Original Material"`,
+  `"Content Type"`,
+  `"Size and Dimensions of Original Material"`,
+  `"Condition of Original Material"`,
+  `"Related Countries"`,
+  `"Related Towns and Cities"`,
+  `"Related Religions"`,
+  `"Related Subjects"`,
+  `"Other Subjects"`,
+  `"Dates of Original Material"`,
+  `"Author of the Original Material"`,
+  `"Publisher of the Original Material"`,
+  `"Editor of the Original Material"`,
+  `"Volume and Issue Number"`,
+  `"Languages of Material"`,
+  `"Script of Material"`,
+  `"Writing System"`,
+  `"still_under_copyright"`,
+  `"Copyright Holder Name"`,
+  `"Copyright Attribution"`,
+  `"Digital Folder Name"`,
+  `"Digital Files Name"`,
+  `"Creation Date of Digital Files"`,
+  `"Format of Digital Files"`,
+  `"Number of Digital Files"`,
+  `"Colour"`,
+  `"Resolution"`,
+  `"Archive Recorder"`,
+  `"Date of Recording"`,
+  `"Resource"`,
+  `"created_by_app_user_id"`,
+  `"workspace_code"`,
+
+  `"level_en"`,
+  `"level_ru"`,
+  `"level_zh"`,
+  `"level_kk"`,
+  `"level_ky"`,
+  `"level_tg"`,
+  `"level_tk"`,
+  `"level_uz"`,
+
+  `"country_en"`,
+  `"country_ru"`,
+  `"country_zh"`,
+  `"country_kk"`,
+  `"country_ky"`,
+  `"country_tg"`,
+  `"country_tk"`,
+  `"country_uz"`,
+
+  `"content_type_en"`,
+  `"content_type_ru"`,
+  `"content_type_zh"`,
+  `"content_type_kk"`,
+  `"content_type_ky"`,
+  `"content_type_tg"`,
+  `"content_type_tk"`,
+  `"content_type_uz"`,
+
+  `"search_blob_en"`,
+  `"search_blob_ru"`,
+  `"search_blob_zh"`,
+  `"search_blob_kk"`,
+  `"search_blob_ky"`,
+  `"search_blob_tg"`,
+  `"search_blob_tk"`,
+  `"search_blob_uz"`
+];
+
+function archiveBrowseColumnSql(alias) {
+  return ARCHIVE_BROWSE_COLUMNS
+    .map((column) => `${alias}.${column}`)
+    .join(",\n      ");
 }
 
 function makeArchiveBrowseScopeConfig(currentSession) {
@@ -178,7 +265,7 @@ function makeArchiveBrowseScopeConfig(currentSession) {
 
   const workspacePublicOwnedSql = `
     SELECT
-      m.*,
+      ${archiveBrowseColumnSql("m")},
       'workspace'::text AS source_scope,
       true AS is_editable,
       'workspace'::text AS source_scope_override,
@@ -208,7 +295,7 @@ function makeArchiveBrowseScopeConfig(currentSession) {
     national_ref: {
       sql: `
         SELECT
-          m.*,
+          ${archiveBrowseColumnSql("m")},
           'national_ref'::text AS source_scope,
           ${publicEditableSql} AS is_editable,
           'national_ref'::text AS source_scope_override,
@@ -227,7 +314,7 @@ function makeArchiveBrowseScopeConfig(currentSession) {
       sql: [
         `
           SELECT
-            m.*,
+            ${archiveBrowseColumnSql("m")},
             'all_caal'::text AS source_scope,
             ${allCaalEditableSql} AS is_editable,
             'all_caal'::text AS source_scope_override,
@@ -396,10 +483,16 @@ function buildArchiveRecord(row, lang) {
       ? row.is_editable_override
       : row.is_editable;
 
+  const caalId = firstDefined(
+    row.caal_id_normalized,
+    row["CAAL_ID"],
+    row.caal_id
+  );
+
   return {
     identity: {
       id: row.id,
-      caal_id: firstDefined(row["CAAL_ID"], row.caal_id),
+      caal_id: caalId,
       associated_caal_id: firstDefined(row["Associated CAAL_ID"], row.associated_caal_id)
     },
     summary: {
@@ -461,16 +554,6 @@ router.get("/", async (req, res) => {
   const allowedScopes = getAllowedScopes(currentSession);
   const scopes = normalizedScopes.filter((scope) => allowedScopes.includes(scope));
 
-  console.log("[Archive browse debug]", {
-    username: currentSession?.user?.username,
-    userId: currentSession?.user?.user_id,
-    accessLevel: getAccessLevel(currentSession),
-    workspaceCode: getSessionWorkspaceCode(currentSession),
-    requestedScopes,
-    normalizedScopes,
-    allowedScopes,
-    scopes
-  });
 
   if (scopes.length === 0) {
     return res.status(403).json({
@@ -555,7 +638,9 @@ router.get("/", async (req, res) => {
   const offsetParam = values.length;
 
   const dataSql = `
-    SELECT *
+    SELECT
+      combined.*,
+      combined."CAAL_ID" AS caal_id_normalized
     FROM (
       ${unionSql}
     ) combined

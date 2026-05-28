@@ -218,6 +218,116 @@ function monumentHelperColumnsSql(alias = "") {
   `;
 }
 
+const MONUMENT_BROWSE_RAW_COLUMNS = [
+  `"id"`,
+  `"CAAL_ID"`,
+  `"Primary Name"`,
+  `"Primary Name (English)"`,
+  `"Other Names"`,
+  `"Country"`,
+  `"Region"`,
+  `"Classification"`,
+  `"Designation"`,
+  `"Monument Type1"`,
+  `"Monument Type2"`,
+  `"Monument Type3"`,
+  `"Monument Type4"`,
+  `"Monument Type5"`,
+  `"Monument Type6"`,
+  `"Religion1"`,
+  `"Religion2"`,
+  `"Religion3"`,
+  `"Cultural Period1"`,
+  `"Cultural Period2"`,
+  `"Cultural Period3"`,
+  `"Cultural Period4"`,
+  `"Cultural Period5"`,
+  `"Cultural Period6"`,
+  `"Longitude"`,
+  `"Latitude"`,
+  `"Tstamp"`,
+  `"created_by_app_user_id"`,
+  `"workspace_code"`,
+
+  `"country_en"`,
+  `"country_ru"`,
+  `"country_zh"`,
+  `"country_kk"`,
+  `"country_ky"`,
+  `"country_tg"`,
+  `"country_tk"`,
+  `"country_uz"`,
+
+  `"classification_en"`,
+  `"classification_ru"`,
+  `"classification_zh"`,
+  `"classification_kk"`,
+  `"classification_ky"`,
+  `"classification_tg"`,
+  `"classification_tk"`,
+  `"classification_uz"`,
+
+  `"designation_en"`,
+  `"designation_ru"`,
+  `"designation_zh"`,
+  `"designation_kk"`,
+  `"designation_ky"`,
+  `"designation_tg"`,
+  `"designation_tk"`,
+  `"designation_uz"`,
+
+  `"monument_type1_en"`,
+  `"monument_type1_ru"`,
+  `"monument_type1_zh"`,
+  `"monument_type1_kk"`,
+  `"monument_type1_ky"`,
+  `"monument_type1_tg"`,
+  `"monument_type1_tk"`,
+  `"monument_type1_uz"`,
+
+  `"cultural_period1_en"`,
+  `"cultural_period1_ru"`,
+  `"cultural_period1_zh"`,
+  `"cultural_period1_kk"`,
+  `"cultural_period1_ky"`,
+  `"cultural_period1_tg"`,
+  `"cultural_period1_tk"`,
+  `"cultural_period1_uz"`,
+
+  `"religion1_en"`,
+  `"religion1_ru"`,
+  `"religion1_zh"`,
+  `"religion1_kk"`,
+  `"religion1_ky"`,
+  `"religion1_tg"`,
+  `"religion1_tk"`,
+  `"religion1_uz"`
+];
+
+function monumentBrowseRawColumnsSql(alias) {
+  return MONUMENT_BROWSE_RAW_COLUMNS
+    .map((column) => `${alias}.${column}`)
+    .join(",\n      ");
+}
+
+function monumentExistingHelperColumnsSql(alias) {
+  const p = alias ? `${alias}.` : "";
+
+  return `
+    ${p}search_blob_en,
+    ${p}search_blob_ru,
+    ${p}search_blob_zh,
+    ${p}search_blob_kk,
+    ${p}search_blob_ky,
+    ${p}search_blob_tg,
+    ${p}search_blob_tk,
+    ${p}search_blob_uz,
+    ${p}monument_types_arr,
+    ${p}religions_arr,
+    ${p}cultural_periods_arr
+  `;
+}
+
 function ownedWorkspaceStorageConfigs(currentSession) {
   const ws = getWorkspaceStorage(currentSession);
 
@@ -245,7 +355,7 @@ function ownedWorkspaceMonumentFullSql(storage, userId) {
 
   return `
     SELECT
-      v.*,
+      ${monumentBrowseRawColumnsSql("v")},
       ${monumentHelperColumnsSql("v")},
       'workspace'::text AS source_scope,
       ${storageScope}::text AS storage_scope,
@@ -374,7 +484,8 @@ function allWorkspaceMonumentsSqlForCaalAdmin(currentSession) {
 
       return `
         SELECT
-          v.*,
+          ${monumentBrowseRawColumnsSql("v")},
+          ${monumentHelperColumnsSql("v")},
           ${monumentHelperColumnsSql("v")},
           'all_caal'::text AS source_scope,
           ${storageScope}::text AS storage_scope,
@@ -417,7 +528,8 @@ function makeBrowseScopeConfig(currentSession, options = {}) {
 
   const workspacePublicOwnedSql = `
     SELECT
-      m.*,
+      ${monumentBrowseRawColumnsSql("m")},
+      ${monumentExistingHelperColumnsSql("m")},
       'workspace'::text AS source_scope,
       'public_caal'::text AS storage_scope,
       true AS is_promoted,
@@ -457,7 +569,8 @@ function makeBrowseScopeConfig(currentSession, options = {}) {
     national_ref: {
       sql: `
         SELECT
-          m.*,
+          ${monumentBrowseRawColumnsSql("m")},
+          ${monumentExistingHelperColumnsSql("m")},
           'national_ref'::text AS source_scope,
           'public_caal'::text AS storage_scope,
           true AS is_promoted,
@@ -479,7 +592,8 @@ function makeBrowseScopeConfig(currentSession, options = {}) {
       sql: [
         `
           SELECT
-            m.*,
+            ${monumentBrowseRawColumnsSql("m")},
+            ${monumentExistingHelperColumnsSql("m")},
             'all_caal'::text AS source_scope,
             'public_caal'::text AS storage_scope,
             true AS is_promoted,
@@ -692,44 +806,6 @@ function workspaceFastRegistryJoinSql(currentSession, alias = "m") {
   `;
 }
 
-function buildWorkspaceOnlyUnionSql(currentSession) {
-  const currentAppUserId = currentAppUserIdFromSession(currentSession);
-  const userId = currentAppUserId ?? -1;
-
-  return `
-    SELECT
-      v.*,
-      ${monumentHelperColumnsSql("v")},
-      'workspace'::text AS source_scope,
-      ${workspaceStorageScopeSql(currentSession)}::text AS storage_scope,
-      false AS is_promoted,
-      true AS is_editable
-    FROM ${workspaceMonumentViewSql(currentSession)} v
-    LEFT JOIN public.record_registry rr
-      ON rr.source_schema = ${workspaceSourceSchemaSql(currentSession)}
-     AND rr.source_table = 'CAAL_Monuments'
-     AND rr.source_row_id = v.id
-    WHERE v.created_by_app_user_id = ${userId}
-      AND COALESCE(rr.status, '') <> 'deleted'
-
-    UNION ALL
-
-    SELECT
-      m.*,
-      'workspace'::text AS source_scope,
-      'public_caal'::text AS storage_scope,
-      true AS is_promoted,
-      true AS is_editable
-    FROM ${MONUMENTS_CAAL_MV} m
-    LEFT JOIN public.record_registry rr
-      ON rr.caal_id = m."CAAL_ID"
-    WHERE (
-        rr.created_by_app_user_id = ${userId}
-        OR m.created_by_app_user_id = ${userId}
-      )
-      AND COALESCE(rr.status, '') <> 'deleted'
-  `;
-}
 
 function firstDefined(...values) {
   for (const value of values) {
@@ -4029,7 +4105,13 @@ router.patch("/monuments/:id", async (req, res) => {
     const lang = req.query.lang || currentSession.profile?.preferred_language || "en";
 
     const record = buildMonumentRecord(
-      stripMonumentInternalFields(freshRow),
+      {
+        ...stripMonumentInternalFields(freshRow),
+        source_scope: updatedScope || requestedSourceScope || freshRow.source_scope,
+        storage_scope: requestedStorageScope || freshRow.storage_scope,
+        is_promoted: isPublicTarget ? true : freshRow.is_promoted,
+        is_editable: true
+      },
       lang,
       userId,
       canEditCaalMonuments(currentSession)

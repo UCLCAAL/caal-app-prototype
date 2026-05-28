@@ -2825,6 +2825,18 @@ function renderArchiveResultsList(records) {
   archiveResultsList.innerHTML = records
     .map((record, index) => {
       const s = record.summary || {};
+
+      const caalId =
+        record.identity?.caal_id ||
+        record.raw?.["CAAL_ID"] ||
+        record.raw?.caal_id ||
+        "";
+
+      const title =
+        s.original_title ||
+        s.english_title ||
+        caalId;
+
       return `
         <div
           class="result-card ${archiveSelectedRecord?.identity?.id === record.identity?.id ? "is-selected" : ""}"
@@ -2832,11 +2844,11 @@ function renderArchiveResultsList(records) {
           data-archive-record-id="${record.identity?.id ?? ""}"
         >
           <div class="result-card-topline">
-            <strong>${safeArchiveValue(s.original_title || s.english_title)}</strong>
+            <strong>${safeArchiveValue(title)}</strong>
             <span class="scope-badge">${safeArchiveValue(archiveScopeLabel(record.source?.scope))}</span>
           </div>
 
-          <div class="result-card-meta">${safeArchiveValue(record.identity?.caal_id)}</div>
+          <div class="result-card-meta">${safeArchiveValue(caalId)}</div>
           <div class="result-card-meta">${safeArchiveValue(s.content_type)}</div>
         </div>
       `;
@@ -2955,7 +2967,21 @@ function archiveRenderDisplayMode(record) {
 
   const s = record.summary || {};
 
+  const caalId =
+    archiveIdentity(record, "caal_id") ||
+    archiveRaw(record, "CAAL_ID") ||
+    archiveRaw(record, "caal_id");
+
+  const title =
+    s.original_title ||
+    s.english_title ||
+    caalId;
+
   let materialHtml = "";
+  materialHtml += archiveCopyableDetailItem(
+    archiveLabel("CAAL_ID", "CAAL_ID"),
+    caalId
+  );
   materialHtml += archiveRenderDetailItem(archiveLabel("Level", "Level"), s.level);
   materialHtml += archiveRenderDetailItem(archiveLabel("Original Reference", "Original Reference"), s.original_reference);
   materialHtml += archiveRenderDetailItem(archiveLabel("Original Title", "Original Title"), s.original_title, true);
@@ -3035,6 +3061,7 @@ function archiveRenderDisplayMode(record) {
   );
 
   const materialHasValues = archiveSectionHasValues([
+    caalId,
     s.level,
     s.original_reference,
     //archiveIdentity(record, "associated_caal_id"),
@@ -3097,18 +3124,18 @@ function archiveRenderDisplayMode(record) {
     <div class="${archiveRecordTitleClass(record)}">
       <div class="record-title-row">
         <div>
-          <h3>${safeArchiveValue(s.original_title || s.english_title)}</h3>
+          <h3>${safeArchiveValue(title)}</h3>
           <p class="copyable-field archive-title-caal-id">
-            <span class="copyable-field-text">${safeArchiveValue(archiveIdentity(record, "caal_id"))}</span>
+            <span class="copyable-field-text">${safeArchiveValue(caalId)}</span>
             ${
-              archiveIdentity(record, "caal_id")
+              caalId
                 ? `
                   <button
                     type="button"
                     class="copy-field-btn"
-                    data-copy-value="${safeArchiveValue(archiveIdentity(record, "caal_id"))}"
+                    data-copy-value="${safeArchiveValue(caalId)}"
                     title="${t("copy_to_clipboard", "Copy to clipboard")}"
-                    aria-label="${t("copy_to_clipboard", "Copy to clipboard")}: ${safeArchiveValue(archiveIdentity(record, "caal_id"))}"
+                    aria-label="${t("copy_to_clipboard", "Copy to clipboard")}: ${safeArchiveValue(caalId)}"
                   >
                     ${archiveSvgCopyIcon()}
                   </button>
