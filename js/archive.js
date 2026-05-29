@@ -2670,11 +2670,99 @@ function archiveRenderInstitutionPreview(inst) {
           ${archiveRenderDetailItem(t("external_reference", "External Reference"), inst.external_reference, true)}
         </div>
       </div>
+
+      <div class="group-block">
+        <div class="group-grid">
+          <div class="detail-item full-width section-header">
+            <span class="detail-section-title">${t("institution_location", "Institution Location")}</span>
+          </div>
+
+          ${archiveRenderDetailItem(archiveLabel("Longitude", "Longitude"), inst.longitude)}
+          ${archiveRenderDetailItem(archiveLabel("Latitude", "Latitude"), inst.latitude)}
+
+          <div class="detail-item full-width">
+            <div
+              id="archiveInstitutionMiniMap"
+              class="institution-mini-map"
+              data-longitude="${inst.longitude ?? ""}"
+              data-latitude="${inst.latitude ?? ""}"
+            ></div>
+          </div>
+        </div>
+      </div>
     </div>
   `;
 
   archivePreviewModal.hidden = false;
   archiveWireCopyFieldButtons(archivePreviewModal);
+  setTimeout(() => {
+    archiveRenderInstitutionMiniMap(inst);
+  }, 50);
+}
+
+let archiveInstitutionMiniMap = null;
+
+function archiveRenderInstitutionMiniMap(inst) {
+  const mapEl = document.getElementById("archiveInstitutionMiniMap");
+  if (!mapEl) return;
+
+  const lon = Number(inst?.longitude);
+  const lat = Number(inst?.latitude);
+
+  if (!Number.isFinite(lon) || !Number.isFinite(lat)) {
+    mapEl.innerHTML = `
+      <div class="section-empty">
+        ${t("no_location_recorded", "No location recorded")}
+      </div>
+    `;
+    return;
+  }
+
+  if (archiveInstitutionMiniMap) {
+    try {
+      archiveInstitutionMiniMap.remove();
+    } catch (error) {
+      console.warn("Could not remove previous institution mini map:", error);
+    }
+    archiveInstitutionMiniMap = null;
+  }
+
+  if (typeof maplibregl === "undefined") {
+    mapEl.innerHTML = `
+      <div class="section-empty">
+        ${t("map_unavailable", "Map unavailable")}
+      </div>
+    `;
+    return;
+  }
+
+  archiveInstitutionMiniMap = new maplibregl.Map({
+    container: mapEl,
+    style: "https://api.maptiler.com/maps/streets/style.json?key=wZNaIRIPfJrrJLopqgo0",
+    center: [lon, lat],
+    zoom: 13,
+    interactive: true,
+    attributionControl: false
+  });
+
+  archiveInstitutionMiniMap.addControl(
+    new maplibregl.NavigationControl({
+      showCompass: false
+    }),
+    "top-right"
+  );
+
+  new maplibregl.Marker()
+    .setLngLat([lon, lat])
+    .addTo(archiveInstitutionMiniMap);
+
+  archiveInstitutionMiniMap.once("load", () => {
+    archiveInstitutionMiniMap.resize();
+  });
+
+  setTimeout(() => {
+    archiveInstitutionMiniMap?.resize();
+  }, 150);
 }
 
 function archiveWireHoldingInstitutionChips() {
@@ -2765,6 +2853,16 @@ function archiveOpenPreview(record) {
 
 function archiveClosePreview() {
   if (!archivePreviewModal) return;
+
+  if (archiveInstitutionMiniMap) {
+    try {
+      archiveInstitutionMiniMap.remove();
+    } catch (error) {
+      console.warn("Could not remove institution mini map:", error);
+    }
+    archiveInstitutionMiniMap = null;
+  }
+
   archivePreviewModal.hidden = true;
   archivePreviewRecord = null;
 }
