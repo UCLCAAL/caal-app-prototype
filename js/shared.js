@@ -561,6 +561,32 @@ function formatSaveSummaryValue(value) {
   return String(value);
 }
 
+function renderSaveSummaryFieldValue(item, summary = {}) {
+  const isChangedFieldsSummary = summary.summary_mode === "changed_fields";
+
+  if (!isChangedFieldsSummary) {
+    return `<span>${formatSaveSummaryValue(item.value)}</span>`;
+  }
+
+  const hasOldValue = Object.prototype.hasOwnProperty.call(item, "old_value");
+  const hasNewValue = Object.prototype.hasOwnProperty.call(item, "new_value");
+
+  const oldValue = hasOldValue ? item.old_value : null;
+  const newValue = hasNewValue ? item.new_value : item.value;
+
+  return `
+    <span class="save-summary-change">
+      <span class="save-summary-old-value">
+        ${formatSaveSummaryValue(oldValue)}
+      </span>
+      <span class="save-summary-arrow" aria-hidden="true">→</span>
+      <span class="save-summary-new-value">
+        ${formatSaveSummaryValue(newValue)}
+      </span>
+    </span>
+  `;
+}
+
 function getSaveSummaryFieldLabel(item, summary = {}) {
   const field = item?.field || item?.label || "";
 
@@ -610,7 +636,7 @@ function renderSaveSummaryCard(summary, options = {}) {
   const fieldRows = fields.map((item) => `
     <li>
       <strong>${getSaveSummaryFieldLabel(item, summary)}:</strong>
-      <span>${formatSaveSummaryValue(item.value)}</span>
+      ${renderSaveSummaryFieldValue(item, summary)}
     </li>
   `).join("");
 

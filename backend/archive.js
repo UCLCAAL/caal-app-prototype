@@ -534,6 +534,140 @@ function buildArchiveRecord(row, lang) {
   };
 }
 
+router.get("/institutions", async (req, res) => {
+  const currentSession = req.session?.appSession || null;
+
+  if (!currentSession) {
+    return res.status(401).json({
+      ok: false,
+      error: "No active session"
+    });
+  }
+
+  const q = normaliseInstitutionSearchText(req.query.q);
+  const country = normaliseInstitutionSearchText(req.query.country);
+  const limit = Math.min(Number(req.query.limit) || 50, 100);
+
+  const values = [];
+  const clauses = [];
+
+  if (q) {
+    values.push(`%${q}%`);
+    clauses.push(`
+      (
+        "CAAL_ID" ILIKE $${values.length}
+        OR "Primary Name" ILIKE $${values.length}
+        OR "Other Names" ILIKE $${values.length}
+        OR "Actor Type" ILIKE $${values.length}
+      )
+    `);
+  }
+
+  if (country) {
+    values.push(country);
+    clauses.push(`"Country" = $${values.length}`);
+  }
+
+  values.push(limit);
+
+  const whereSql = clauses.length ? `WHERE ${clauses.join(" AND ")}` : "";
+
+  try {
+    const result = await pool.query(
+      `
+      SELECT
+        id,
+        "CAAL_ID",
+        "Primary Name",
+        "Other Names",
+        "Country",
+        "Actor Type",
+        "Description",
+        "Address",
+        "External Reference",
+        "Longitude",
+        "Latitude"
+      FROM public."CAAL_Institution"
+      ${whereSql}
+      ORDER BY
+        "Primary Name" NULLS LAST,
+        "CAAL_ID"
+      LIMIT $${values.length}
+      `,
+      values
+    );
+
+    return res.json({
+      ok: true,
+      institutions: result.rows.map(buildInstitutionRecord)
+    });
+  } catch (error) {
+    console.error("Institution lookup failed:", error);
+
+    return res.status(500).json({
+      ok: false,
+      error: "Institution lookup failed",
+      detail: error.message
+    });
+  }
+});
+
+router.get("/institutions/:caalId", async (req, res) => {
+  const currentSession = req.session?.appSession || null;
+
+  if (!currentSession) {
+    return res.status(401).json({
+      ok: false,
+      error: "No active session"
+    });
+  }
+
+  try {
+    const result = await pool.query(
+      `
+      SELECT
+        id,
+        "CAAL_ID",
+        "Primary Name",
+        "Other Names",
+        "Country",
+        "Actor Type",
+        "Description",
+        "Address",
+        "External Reference",
+        "Longitude",
+        "Latitude"
+      FROM public."CAAL_Institution"
+      WHERE "CAAL_ID" = $1
+      LIMIT 1
+      `,
+      [req.params.caalId]
+    );
+
+    const institution = buildInstitutionRecord(result.rows[0]);
+
+    if (!institution) {
+      return res.status(404).json({
+        ok: false,
+        error: "Institution not found"
+      });
+    }
+
+    return res.json({
+      ok: true,
+      institution
+    });
+  } catch (error) {
+    console.error("Institution fetch failed:", error);
+
+    return res.status(500).json({
+      ok: false,
+      error: "Institution fetch failed",
+      detail: error.message
+    });
+  }
+});
+
 router.get("/", async (req, res) => {
   //console.log("ARCHIVE route session:", JSON.stringify(req.session, null, 2));
   const currentSession = req.session?.appSession || null;
@@ -740,6 +874,217 @@ const ARCHIVE_EDITABLE_FIELDS = [
   "still_under_copyright",
   "Country"
 ];
+
+function getSubmittedHoldingInstitutionCaalId(body = {}) {
+  return String(
+    body?._holding_institution_caal_id ||
+    body?.holding_institution_caal_id ||
+    ""
+  ).trim();
+}
+
+async function validateHoldingInstitution(pool, caalId) {
+  if (!caalId) return null;
+
+  const result = await pool.query(
+    `
+    SELECT
+      id,
+      "CAAL_ID",
+      "Primary Name",
+      "Other Names",
+      "Country",
+      "Actor Type",
+      "Description",
+      "Address",
+      "External Reference",
+      "Longitude",
+      "Latitude"
+    FROM public."CAAL_Institution"
+    WHERE "CAAL_ID" = $1
+    LIMIT 1
+    `,
+    [caalId]
+  );
+
+  return buildInstitutionRecord(result.rows[0]);
+}
+
+async function getArchiveHoldingInstitution(pool, archiveCaalId) {
+  if (!archiveCaalId) return null;
+
+  const result = await pool.query(
+    `
+    SELECT
+      i.id,
+      i."CAAL_ID",
+      i."Primary Name",
+      i."Other Names",
+      i."Country",
+      i."Actor Type",
+      i."Description",
+      i."Address",
+      i."External Reference",
+      i."Longitude",
+      i."Latitude"
+    FROM public."CAAL_Resource_Relations_edges" e
+    JOIN public."CAAL_Institution" i
+      ON i."CAAL_ID" = e.child_id
+    WHERE e.parent_id = $1
+      AND e.child_id_found_in = 'CAAL_Institution'
+      AND COALESCE(e.edge_status, 'active') = 'active'
+      AND e.relation_type_norm IN (
+        'is created by / created',
+        'holding_institution'
+      )
+    ORDER BY e.updated_at DESC NULLS LAST, e.created_at DESC NULLS LAST
+    LIMIT 1
+    `,
+    [archiveCaalId]
+  );
+
+  return buildInstitutionRecord(result.rows[0]);
+}
+
+function institutionSummaryLabel(instOrId) {
+  if (!instOrId) return null;
+
+  if (typeof instOrId === "string") {
+    return instOrId.trim() || null;
+  }
+
+  return (
+    instOrId.primary_name ||
+    instOrId.other_names ||
+    instOrId.caal_id ||
+    null
+  );
+}
+
+function appendSaveSummaryField(saveSummary, item) {
+  if (!saveSummary || !item) return saveSummary;
+
+  const fields = Array.isArray(saveSummary.fields_saved)
+    ? saveSummary.fields_saved
+    : [];
+
+  saveSummary.fields_saved = [item, ...fields];
+  saveSummary.saved_field_count = Number(saveSummary.saved_field_count || fields.length) + 1;
+  saveSummary.shown_field_count = saveSummary.fields_saved.length;
+
+  return saveSummary;
+}
+
+async function replaceArchiveHoldingInstitutionRelation(pool, {
+  archiveCaalId,
+  archiveRowId,
+  institutionCaalId,
+  currentSession,
+  storageScope
+}) {
+  if (!archiveCaalId) return;
+
+  /*
+    Replace only the archive-to-institution provenance relation.
+    This treats the existing imported relation type and any earlier web-test
+    holding_institution rows as the same UI concept.
+  */
+  await pool.query(
+    `
+    DELETE FROM public."CAAL_Resource_Relations_edges"
+    WHERE parent_id = $1
+      AND child_id_found_in = 'CAAL_Institution'
+      AND relation_type_norm IN (
+        'is created by / created',
+        'holding_institution'
+      )
+    `,
+    [archiveCaalId]
+  );
+
+  if (!institutionCaalId) return;
+
+  await pool.query(
+    `
+    INSERT INTO public."CAAL_Resource_Relations_edges" (
+      parent_id,
+      child_id,
+      relation_type,
+      source_kinds,
+      source_tables,
+      source_fields,
+      source_row_ids,
+      source_parent_ids,
+      source_child_ids,
+      source_relation_types,
+      source_recorders,
+      source_timestamps,
+      parent_id_exists,
+      child_id_exists,
+      parent_id_found_in,
+      child_id_found_in,
+      validation_status,
+      edge_status,
+      created_by,
+      updated_by,
+      notes
+    )
+    VALUES (
+      $1,
+      $2,
+      'is created by / created',
+      ARRAY['web_app'],
+      ARRAY['CAAL_Archive'],
+      ARRAY['Holding Institution'],
+      ARRAY[$3::text],
+      ARRAY[$1],
+      ARRAY[$2],
+      ARRAY['is created by / created'],
+      ARRAY[$4::text],
+      ARRAY[now()],
+      true,
+      true,
+      'CAAL_Archive',
+      'CAAL_Institution',
+      'both_ids_found',
+      'active',
+      $4,
+      $4,
+      $5
+    )
+    ON CONFLICT (edge_key_a, edge_key_b, relation_type_norm)
+    DO UPDATE SET
+      parent_id = EXCLUDED.parent_id,
+      child_id = EXCLUDED.child_id,
+      relation_type = EXCLUDED.relation_type,
+      source_kinds = EXCLUDED.source_kinds,
+      source_tables = EXCLUDED.source_tables,
+      source_fields = EXCLUDED.source_fields,
+      source_row_ids = EXCLUDED.source_row_ids,
+      source_parent_ids = EXCLUDED.source_parent_ids,
+      source_child_ids = EXCLUDED.source_child_ids,
+      source_relation_types = EXCLUDED.source_relation_types,
+      source_recorders = EXCLUDED.source_recorders,
+      source_timestamps = EXCLUDED.source_timestamps,
+      parent_id_exists = EXCLUDED.parent_id_exists,
+      child_id_exists = EXCLUDED.child_id_exists,
+      parent_id_found_in = EXCLUDED.parent_id_found_in,
+      child_id_found_in = EXCLUDED.child_id_found_in,
+      validation_status = EXCLUDED.validation_status,
+      edge_status = 'active',
+      updated_at = now(),
+      updated_by = EXCLUDED.updated_by,
+      notes = EXCLUDED.notes
+    `,
+    [
+      archiveCaalId,
+      institutionCaalId,
+      String(archiveRowId || ""),
+      currentSession?.user?.username || currentSession?.user?.email || "web_app",
+      `Archive holding/source institution relation saved through CAAL web app; storage_scope=${storageScope || ""}`
+    ]
+  );
+}
 
 function getAccessLevel(session) {
   return Number(
@@ -994,6 +1339,29 @@ async function getCurrentUserArchivePrefix(userId) {
   return result.rows[0]?.archive_id_prefix || null;
 }
 
+// Institution relations
+function normaliseInstitutionSearchText(value) {
+  return String(value || "").trim();
+}
+
+function buildInstitutionRecord(row) {
+  if (!row) return null;
+
+  return {
+    id: row.id,
+    caal_id: row["CAAL_ID"],
+    primary_name: row["Primary Name"],
+    other_names: row["Other Names"],
+    country: row["Country"],
+    actor_type: row["Actor Type"],
+    description: row["Description"],
+    address: row["Address"],
+    external_reference: row["External Reference"],
+    longitude: row["Longitude"],
+    latitude: row["Latitude"]
+  };
+}
+
 // to move to shared
 function canCreateArchiveInWorkspaceCode(workspaceCode) {
   const code = String(workspaceCode || "").trim().toLowerCase();
@@ -1225,6 +1593,23 @@ router.patch("/:id", async (req, res) => {
   const payload = normaliseArchivePayload(req.body || {});
   const fields = Object.keys(payload);
 
+  const holdingInstitutionCaalId = getSubmittedHoldingInstitutionCaalId(req.body || {});
+  let holdingInstitution = null;
+
+  const holdingInstitutionWasSubmitted =
+    Object.prototype.hasOwnProperty.call(req.body || {}, "_holding_institution_caal_id");
+
+  if (holdingInstitutionWasSubmitted && holdingInstitutionCaalId) {
+    holdingInstitution = await validateHoldingInstitution(pool, holdingInstitutionCaalId);
+
+    if (!holdingInstitution) {
+      return res.status(400).json({
+        ok: false,
+        error: "The selected holding institution could not be found."
+      });
+    }
+  }
+
   if (fields.length === 0) {
     return res.status(400).json({
       ok: false,
@@ -1381,13 +1766,59 @@ router.patch("/:id", async (req, res) => {
       storageScope: requestedStorageScope
     });
 
+    let oldHoldingInstitution = null;
+
+    if (holdingInstitutionWasSubmitted) {
+      oldHoldingInstitution = await getArchiveHoldingInstitution(
+        pool,
+        result.rows[0]["CAAL_ID"]
+      );
+    }
+
+    if (holdingInstitutionWasSubmitted) {
+      await replaceArchiveHoldingInstitutionRelation(pool, {
+        archiveCaalId: result.rows[0]["CAAL_ID"],
+        archiveRowId: result.rows[0].id,
+        institutionCaalId: holdingInstitutionCaalId || null,
+        currentSession,
+        storageScope: requestedStorageScope
+      });
+    }
+
     record.relations = await getResourceRelations(pool, record.identity?.caal_id);
+    if (holdingInstitution) {
+      record.holding_institution = holdingInstitution;
+    }
 
     const changedFieldSummary = buildSavedFieldsFromChangedValues({
       oldRow: oldRowForSummary,
       newRow: result.rows[0],
       submittedFields: fields
     });
+
+    if (holdingInstitutionWasSubmitted) {
+      const oldInstitutionId = oldHoldingInstitution?.caal_id || null;
+      const newInstitutionId = holdingInstitutionCaalId || null;
+
+      if (oldInstitutionId !== newInstitutionId) {
+        changedFieldSummary.fields_saved = [
+          {
+            field: "Holding Institution",
+            label: "Holding Institution",
+            old_value: institutionSummaryLabel(oldHoldingInstitution),
+            new_value: institutionSummaryLabel(holdingInstitution) || newInstitutionId,
+            value: institutionSummaryLabel(holdingInstitution) || newInstitutionId
+          },
+          ...(changedFieldSummary.fields_saved || [])
+        ];
+
+        changedFieldSummary.saved_field_count =
+          Number(changedFieldSummary.saved_field_count || 0) + 1;
+
+        changedFieldSummary.shown_field_count =
+          changedFieldSummary.fields_saved.length;
+      }
+    }
 
     const save_summary = buildSaveSummary({
       action: "update",
@@ -1624,6 +2055,25 @@ router.post("/", async (req, res) => {
 
   const payload = normaliseArchivePayload(req.body || {});
   delete payload["CAAL_ID"];
+
+  const holdingInstitutionCaalId = getSubmittedHoldingInstitutionCaalId(req.body || {});
+
+  if (!holdingInstitutionCaalId) {
+    return res.status(400).json({
+      ok: false,
+      error: "A holding institution is required for archive records."
+    });
+  }
+
+  const holdingInstitution = await validateHoldingInstitution(pool, holdingInstitutionCaalId);
+
+  if (!holdingInstitution) {
+    return res.status(400).json({
+      ok: false,
+      error: "The selected holding institution could not be found."
+    });
+  }
+
   const appUserId = currentSession?.user?.user_id ?? null;
   const sessionUsername = currentSession?.user?.username ?? null;
   const preferredLanguage = currentSession?.profile?.preferred_language ?? null;
@@ -1733,6 +2183,14 @@ router.post("/", async (req, res) => {
         : `Created through CAAL web app into ${createTarget.storageScope}`
     });
 
+    await replaceArchiveHoldingInstitutionRelation(pool, {
+      archiveCaalId: result.rows[0]["CAAL_ID"],
+      archiveRowId: result.rows[0].id,
+      institutionCaalId: holdingInstitutionCaalId,
+      currentSession,
+      storageScope: targetStorage
+    });
+
     const lang = req.query.lang || currentSession.profile?.preferred_language || "en";
 
     const record = buildArchiveRecord(
@@ -1759,6 +2217,7 @@ router.post("/", async (req, res) => {
     }
 
     record.relations = await getResourceRelations(pool, record.identity?.caal_id);
+    record.holding_institution = holdingInstitution;
 
     const save_summary = buildSaveSummary({
       action: "create",
@@ -1770,6 +2229,12 @@ router.post("/", async (req, res) => {
       sourceScope: "workspace",
       recordWorkspaceCode,
       cacheRefreshRequired: createTarget.isPublicCaalStorage
+    });
+
+    appendSaveSummaryField(save_summary, {
+      field: "Holding Institution",
+      label: "Holding Institution",
+      value: institutionSummaryLabel(holdingInstitution) || holdingInstitutionCaalId
     });
 
     return res.status(201).json({

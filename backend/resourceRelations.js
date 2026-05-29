@@ -22,67 +22,88 @@ async function getResourceRelations(db, caalId) {
     `
     WITH q AS (
       SELECT lower(trim($1::text)) AS caal_id_norm
+    ),
+    relation_rows AS (
+      SELECT
+        e.edge_id,
+        e.parent_id AS source_caal_id,
+        e.child_id AS related_caal_id,
+        e.relation_type,
+        e.relation_type_norm,
+        'forward'::text AS relation_direction,
+
+        e.parent_id_exists AS source_id_exists,
+        e.child_id_exists AS related_id_exists,
+        e.parent_id_found_in AS source_id_found_in,
+        e.child_id_found_in AS related_id_found_in,
+
+        e.validation_status,
+        e.edge_status,
+        e.source_kinds,
+        e.source_tables,
+        e.source_fields,
+        e.source_row_ids,
+        e.source_relation_ids,
+        e.created_at,
+        e.created_by,
+        e.updated_at,
+        e.updated_by,
+        e.notes
+      FROM public."CAAL_Resource_Relations_edges" e, q
+      WHERE lower(trim(e.parent_id)) = q.caal_id_norm
+        AND COALESCE(e.edge_status, 'active') = 'active'
+
+      UNION ALL
+
+      SELECT
+        e.edge_id,
+        e.child_id AS source_caal_id,
+        e.parent_id AS related_caal_id,
+        e.relation_type,
+        e.relation_type_norm,
+        'reverse'::text AS relation_direction,
+
+        e.child_id_exists AS source_id_exists,
+        e.parent_id_exists AS related_id_exists,
+        e.child_id_found_in AS source_id_found_in,
+        e.parent_id_found_in AS related_id_found_in,
+
+        e.validation_status,
+        e.edge_status,
+        e.source_kinds,
+        e.source_tables,
+        e.source_fields,
+        e.source_row_ids,
+        e.source_relation_ids,
+        e.created_at,
+        e.created_by,
+        e.updated_at,
+        e.updated_by,
+        e.notes
+      FROM public."CAAL_Resource_Relations_edges" e, q
+      WHERE lower(trim(e.child_id)) = q.caal_id_norm
+        AND COALESCE(e.edge_status, 'active') = 'active'
     )
-
     SELECT
-      e.edge_id,
-      e.parent_id AS source_caal_id,
-      e.child_id AS related_caal_id,
-      e.relation_type,
-      'forward'::text AS relation_direction,
+      r.*,
 
-      e.parent_id_exists AS source_id_exists,
-      e.child_id_exists AS related_id_exists,
-      e.parent_id_found_in AS source_id_found_in,
-      e.child_id_found_in AS related_id_found_in,
+      inst."Primary Name" AS related_primary_name,
+      inst."Other Names" AS related_other_names,
+      inst."Actor Type" AS related_actor_type,
+      inst."Country" AS related_country,
+      inst."Description" AS related_description,
+      inst."Address" AS related_address,
+      inst."External Reference" AS related_external_reference,
 
-      e.validation_status,
-      e.edge_status,
-      e.source_kinds,
-      e.source_tables,
-      e.source_fields,
-      e.source_row_ids,
-      e.source_relation_ids,
-      e.created_at,
-      e.created_by,
-      e.updated_at,
-      e.updated_by,
-      e.notes
-    FROM public."CAAL_Resource_Relations_edges" e, q
-    WHERE lower(trim(e.parent_id)) = q.caal_id_norm
-      AND COALESCE(e.edge_status, 'active') = 'active'
-
-    UNION ALL
-
-    SELECT
-      e.edge_id,
-      e.child_id AS source_caal_id,
-      e.parent_id AS related_caal_id,
-      e.relation_type,
-      'reverse'::text AS relation_direction,
-
-      e.child_id_exists AS source_id_exists,
-      e.parent_id_exists AS related_id_exists,
-      e.child_id_found_in AS source_id_found_in,
-      e.parent_id_found_in AS related_id_found_in,
-
-      e.validation_status,
-      e.edge_status,
-      e.source_kinds,
-      e.source_tables,
-      e.source_fields,
-      e.source_row_ids,
-      e.source_relation_ids,
-      e.created_at,
-      e.created_by,
-      e.updated_at,
-      e.updated_by,
-      e.notes
-    FROM public."CAAL_Resource_Relations_edges" e, q
-    WHERE lower(trim(e.child_id)) = q.caal_id_norm
-      AND COALESCE(e.edge_status, 'active') = 'active'
-
-    ORDER BY relation_type, related_caal_id
+      COALESCE(
+        inst."Primary Name",
+        inst."Other Names",
+        r.related_caal_id
+      ) AS related_label
+    FROM relation_rows r
+    LEFT JOIN public."CAAL_Institution" inst
+      ON lower(trim(inst."CAAL_ID")) = lower(trim(r.related_caal_id))
+    ORDER BY r.relation_type, related_label, r.related_caal_id
     `,
     [caalId]
   );
@@ -92,11 +113,22 @@ async function getResourceRelations(db, caalId) {
     source_caal_id: row.source_caal_id,
     related_caal_id: row.related_caal_id,
     relation_type: row.relation_type,
+    relation_type_norm: row.relation_type_norm,
     relation_direction: row.relation_direction,
     source_id_exists: row.source_id_exists,
     related_id_exists: row.related_id_exists,
     source_id_found_in: row.source_id_found_in,
     related_id_found_in: row.related_id_found_in,
+
+    related_primary_name: row.related_primary_name,
+    related_other_names: row.related_other_names,
+    related_actor_type: row.related_actor_type,
+    related_country: row.related_country,
+    related_description: row.related_description,
+    related_address: row.related_address,
+    related_external_reference: row.related_external_reference,
+    related_label: row.related_label,
+
     validation_status: row.validation_status,
     edge_status: row.edge_status,
     source_kinds: row.source_kinds || [],

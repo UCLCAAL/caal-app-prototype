@@ -775,6 +775,246 @@ function archiveWireCaalIdChipInputs() {
   });
 }
 
+function archiveRenderInstitutionPicker(record) {
+  const inst = archiveGetHoldingInstitutionRelation(record);
+  const selectedId = inst?.caal_id || "";
+  const selectedLabel = inst?.primary_name || selectedId || "";
+
+  return `
+    <div class="detail-item full-width archive-institution-picker" data-field-name="Holding Institution">
+      <label class="detail-label" for="archiveHoldingInstitutionSearch">
+        ${t("holding_institution", "Holding Institution")}
+      </label>
+
+      <div class="caal-chip-input-box institution-picker-box">
+        <span
+          class="related-id-chip institution-chip archive-selected-institution-chip"
+          id="archiveSelectedInstitutionChip"
+          ${selectedId ? "" : "hidden"}
+          data-institution-caal-id="${selectedId}"
+        >
+          <span class="related-id-chip-text">
+            ${safeArchiveValue(selectedLabel)}
+          </span>
+          <button
+            type="button"
+            class="related-id-chip-remove"
+            id="archiveClearHoldingInstitutionBtn"
+            aria-label="${t("remove_holding_institution", "Remove holding institution")}"
+          >
+            ×
+          </button>
+        </span>
+
+        <input
+          type="text"
+          id="archiveHoldingInstitutionSearch"
+          class="caal-chip-input"
+          placeholder="${t("search_institutions", "Search institutions...")}"
+          autocomplete="off"
+          spellcheck="false"
+        >
+      </div>
+
+      <input
+        type="hidden"
+        id="archiveHoldingInstitutionCaalId"
+        value="${selectedId}"
+      >
+
+      <div
+        id="archiveInstitutionSuggestions"
+        class="related-caal-id-suggest-list institution-suggest-list"
+        hidden
+      ></div>
+
+      <p class="filter-help">
+        ${t(
+          "holding_institution_help",
+          "Required for new records; recommended for existing records. Select the institution that holds or supplied this archive material."
+        )}
+      </p>
+    </div>
+  `;
+}
+
+let archiveInstitutionSearchTimer = null;
+
+async function archiveSearchInstitutions(query) {
+  const params = new URLSearchParams();
+  params.set("q", query || "");
+  params.set("limit", "30");
+
+  const institutionCountry =
+    window.appSession?.profile?.country ||
+    window.appSession?.profile?.country_display ||
+    window.appSession?.user?.country ||
+    window.appSession?.user?.country_display ||
+    archiveGetInputValue("Country") ||
+    archiveRaw(archiveSelectedRecord, "Country") ||
+    "";
+
+  if (institutionCountry) {
+    params.set("country", institutionCountry);
+  }
+
+  const response = await fetch(`/api/archive/institutions?${params.toString()}`, {
+    method: "GET",
+    credentials: "include"
+  });
+
+  const data = await response.json();
+
+  if (!response.ok || !data.ok) {
+    throw new Error(data.detail || data.error || "Institution lookup failed");
+  }
+
+  return data.institutions || [];
+}
+
+function archiveSetHoldingInstitution(inst) {
+  const hidden = document.getElementById("archiveHoldingInstitutionCaalId");
+  const chip = document.getElementById("archiveSelectedInstitutionChip");
+  const text = chip?.querySelector(".related-id-chip-text");
+  const input = document.getElementById("archiveHoldingInstitutionSearch");
+  const suggestions = document.getElementById("archiveInstitutionSuggestions");
+
+  if (!hidden || !chip || !text) return;
+
+  hidden.value = inst?.caal_id || "";
+  chip.dataset.institutionCaalId = inst?.caal_id || "";
+  text.innerHTML = safeArchiveValue(inst?.primary_name || inst?.caal_id || "");
+
+  chip.hidden = !inst?.caal_id;
+
+  if (input) input.value = "";
+
+  if (suggestions) {
+    suggestions.hidden = true;
+    suggestions.innerHTML = "";
+  }
+
+  archiveIsDirty = true;
+}
+
+function archiveRenderInstitutionSuggestions(items) {
+  const suggestions = document.getElementById("archiveInstitutionSuggestions");
+  if (!suggestions) return;
+
+  if (!Array.isArray(items) || items.length === 0) {
+    suggestions.innerHTML = `
+      <div class="related-caal-id-suggest-empty">
+        ${t("no_matching_institutions", "No matching institutions")}
+      </div>
+    `;
+    suggestions.hidden = false;
+    return;
+  }
+
+  suggestions.innerHTML = items.map((inst, index) => {
+    const subtitle = [inst.caal_id, inst.actor_type, inst.country]
+      .filter(Boolean)
+      .join(" - ");
+
+    return `
+      <button
+        type="button"
+        class="related-caal-id-suggest-item institution-suggest-item"
+        data-institution-index="${index}"
+      >
+        <strong>${safeArchiveValue(inst.primary_name || inst.caal_id)}</strong>
+        <span>${safeArchiveValue(subtitle)}</span>
+      </button>
+    `;
+  }).join("");
+
+  suggestions.hidden = false;
+
+  Array.from(suggestions.querySelectorAll(".institution-suggest-item")).forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const index = Number(btn.dataset.institutionIndex);
+      archiveSetHoldingInstitution(items[index]);
+    });
+  });
+}
+
+function archiveWireInstitutionPicker() {
+  const input = document.getElementById("archiveHoldingInstitutionSearch");
+  const clearBtn = document.getElementById("archiveClearHoldingInstitutionBtn");
+  const suggestions = document.getElementById("archiveInstitutionSuggestions");
+
+  if (!input || input.dataset.institutionWired === "true") return;
+
+  input.addEventListener("input", () => {
+    window.clearTimeout(archiveInstitutionSearchTimer);
+
+    archiveInstitutionSearchTimer = window.setTimeout(async () => {
+      const q = input.value.trim();
+
+      if (q.length < 2) {
+        if (suggestions) {
+          suggestions.hidden = true;
+          suggestions.innerHTML = "";
+        }
+        return;
+      }
+
+      try {
+        const items = await archiveSearchInstitutions(q);
+        archiveRenderInstitutionSuggestions(items);
+      } catch (error) {
+        console.error("Institution search failed:", error);
+      }
+    }, 250);
+  });
+
+  input.addEventListener("focus", async () => {
+    if (input.value.trim().length >= 2) return;
+
+    try {
+      const items = await archiveSearchInstitutions("");
+      archiveRenderInstitutionSuggestions(items);
+    } catch (error) {
+      console.error("Institution initial lookup failed:", error);
+    }
+  });
+
+  if (clearBtn) {
+    clearBtn.addEventListener("click", (event) => {
+      event.preventDefault();
+      archiveSetHoldingInstitution(null);
+    });
+  }
+
+  input.dataset.institutionWired = "true";
+}
+
+function validateArchiveHoldingInstitutionBeforeSave({ isNewRecord = false } = {}) {
+  const value =
+    document.getElementById("archiveHoldingInstitutionCaalId")?.value || "";
+
+  if (String(value).trim()) {
+    return true;
+  }
+
+  if (isNewRecord) {
+    alert(
+      t(
+        "holding_institution_required_error",
+        "Please select a Holding Institution before saving this new archive record."
+      )
+    );
+    return false;
+  }
+
+  return window.confirm(
+    t(
+      "holding_institution_missing_warning",
+      "No Holding Institution has been selected for this archive record. This should be added where possible so the origin of the archive material is clear. Save anyway?"
+    )
+  );
+}
+
 function archiveArrayValue(value) {
   if (Array.isArray(value)) return value.filter(archiveHasRealValue);
 
@@ -1531,6 +1771,9 @@ function archiveBuildSavePayload() {
   payload._storage_scope = archiveSelectedRecord?.source?.storage || null;
   payload._source_scope = archiveSelectedRecord?.source?.scope || null;
 
+  payload._holding_institution_caal_id =
+    document.getElementById("archiveHoldingInstitutionCaalId")?.value || "";
+
   return payload;
 }
 
@@ -1976,6 +2219,85 @@ function archiveRenderAssociatedRelationChips(record) {
   }).join("");
 }
 
+function archiveGetHoldingInstitutionRelation(record) {
+  const direct = record?.holding_institution;
+  if (direct?.caal_id) return direct;
+
+  const relations = Array.isArray(record?.relations) ? record.relations : [];
+
+  const rel = relations.find((item) => {
+    const relationType = String(
+      item.relation_type_norm ||
+      item.relation_type ||
+      ""
+    ).trim().toLowerCase();
+
+    const relatedId = String(item.related_caal_id || "").trim();
+
+    return (
+      relationType === "holding_institution" ||
+      relationType === "holding institution" ||
+      relationType === "is created by / created" ||
+      relatedId.startsWith("Act_")
+    );
+  });
+
+  if (!rel) return null;
+
+  return {
+    caal_id: rel.related_caal_id,
+    primary_name:
+      rel.related_primary_name ||
+      rel.related_label ||
+      rel.related_title ||
+      rel.related_name ||
+      rel.related_caal_id,
+    actor_type: rel.related_actor_type || "",
+    country: rel.related_country || ""
+  };
+}
+
+function archiveRenderHoldingInstitutionChip(record) {
+  const inst = archiveGetHoldingInstitutionRelation(record);
+
+  if (!inst?.caal_id) {
+    return `
+      <span class="empty-value">
+        ${t("holding_institution_missing", "No holding institution recorded")}
+      </span>
+    `;
+  }
+
+  const label = inst.primary_name || inst.caal_id;
+  const subtitle = [inst.actor_type, inst.country, inst.caal_id]
+    .filter(Boolean)
+    .join(" - ");
+
+  return `
+    <button
+      type="button"
+      class="related-id-chip institution-chip archive-holding-institution-chip"
+      data-institution-caal-id="${inst.caal_id}"
+      title="${subtitle || ""}"
+    >
+      ${safeArchiveValue(label)}
+    </button>
+  `;
+}
+
+function archiveRenderHoldingInstitutionDetail(record, { fullWidth = false } = {}) {
+  return `
+    <div class="detail-item${fullWidth ? " full-width" : ""} holding-institution-detail">
+      <span class="detail-label">
+        ${t("holding_institution", "Holding Institution")}
+      </span>
+      <div class="detail-value related-id-list archive-institution-chip-list">
+        ${archiveRenderHoldingInstitutionChip(record)}
+      </div>
+    </div>
+  `;
+}
+
 function archiveRenderTitleCard(record, statusBadge = "") {
   const caalId =
     archiveIdentity(record, "caal_id") ||
@@ -2276,6 +2598,95 @@ function archiveRenderAssociatedMonumentPreview(record, caalId, fullRecordUrl) {
 
   archivePreviewModal.hidden = false;
   archiveWireAssociatedPreviewButtons(fullRecordUrl);
+}
+
+async function archiveOpenInstitutionPreview(caalId) {
+  if (!caalId) return;
+
+  setArchiveLoading(true, t("loading_preview", "Loading preview..."));
+
+  try {
+    const response = await fetch(
+      `/api/archive/institutions/${encodeURIComponent(caalId)}`,
+      {
+        method: "GET",
+        credentials: "include"
+      }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok || !data.ok || !data.institution) {
+      alert(
+        data.detail ||
+        data.error ||
+        t("could_not_load_institution", "Could not load institution")
+      );
+      return;
+    }
+
+    archiveRenderInstitutionPreview(data.institution);
+  } catch (error) {
+    console.error("Could not load institution:", error);
+    alert(error.message || t("could_not_load_institution", "Could not load institution"));
+  } finally {
+    setArchiveLoading(false);
+  }
+}
+
+function archiveRenderInstitutionPreview(inst) {
+  if (!archivePreviewModal || !archivePreviewBody || !archivePreviewTitle) return;
+
+  const title = inst.primary_name || inst.caal_id;
+
+  archivePreviewTitle.textContent = title;
+
+  archivePreviewBody.innerHTML = `
+    <div class="record-title related-record-title">
+      <div>
+        <h3>${safeArchiveValue(title)}</h3>
+        <p>${safeArchiveValue(inst.caal_id)}</p>
+      </div>
+
+      <span class="related-record-type-badge">
+        ${t("institution", "Institution")}
+      </span>
+    </div>
+
+    <div class="group-stack">
+      <div class="group-block">
+        <div class="group-grid">
+          <div class="detail-item full-width section-header">
+            <span class="detail-section-title">${t("institution_details", "Institution Details")}</span>
+          </div>
+
+          ${archiveCopyableDetailItem(archiveLabel("CAAL_ID", "CAAL_ID"), inst.caal_id)}
+          ${archiveRenderDetailItem(t("primary_name", "Primary Name"), inst.primary_name, true)}
+          ${archiveRenderDetailItem(t("other_names", "Other Names"), inst.other_names, true)}
+          ${archiveRenderDetailItem(t("actor_type", "Actor Type"), inst.actor_type)}
+          ${archiveRenderDetailItem(archiveLabel("Country", "Country"), inst.country)}
+          ${archiveRenderDetailItem(t("address", "Address"), inst.address, true)}
+          ${archiveRenderDetailItem(archiveLabel("Description", "Description"), inst.description, true)}
+          ${archiveRenderDetailItem(t("external_reference", "External Reference"), inst.external_reference, true)}
+        </div>
+      </div>
+    </div>
+  `;
+
+  archivePreviewModal.hidden = false;
+  archiveWireCopyFieldButtons(archivePreviewModal);
+}
+
+function archiveWireHoldingInstitutionChips() {
+  Array.from(document.querySelectorAll(".archive-holding-institution-chip")).forEach((btn) => {
+    if (btn.dataset.institutionChipWired === "true") return;
+
+    btn.dataset.institutionChipWired = "true";
+
+    btn.addEventListener("click", async () => {
+      await archiveOpenInstitutionPreview(btn.dataset.institutionCaalId);
+    });
+  });
 }
 
 function archiveWireAssociatedPreviewButtons(fullRecordUrl) {
@@ -2982,6 +3393,8 @@ function archiveRenderDisplayMode(record) {
     archiveLabel("CAAL_ID", "CAAL_ID"),
     caalId
   );
+
+  materialHtml += archiveRenderHoldingInstitutionDetail(record);
   materialHtml += archiveRenderDetailItem(archiveLabel("Level", "Level"), s.level);
   materialHtml += archiveRenderDetailItem(archiveLabel("Original Reference", "Original Reference"), s.original_reference);
   materialHtml += archiveRenderDetailItem(archiveLabel("Original Title", "Original Title"), s.original_title, true);
@@ -3060,11 +3473,13 @@ function archiveRenderDisplayMode(record) {
     archiveRaw(record, "Resource")
   );
 
+  const holdingInstitution = archiveGetHoldingInstitutionRelation(record);
+
   const materialHasValues = archiveSectionHasValues([
     caalId,
+    holdingInstitution?.caal_id,
     s.level,
     s.original_reference,
-    //archiveIdentity(record, "associated_caal_id"),
     s.original_title,
     s.english_title,
     s.content_type,
@@ -3180,6 +3595,7 @@ function archiveRenderDisplayMode(record) {
 
   wireArchiveAssociatedCaalIdChips();
   archiveWireCopyFieldButtons(archiveRecordDetails);
+  archiveWireHoldingInstitutionChips();
   window.wireSaveSummaryDismiss?.(archiveRecordDetails);
 
   archiveRenderActionBar({
@@ -3197,12 +3613,15 @@ function archiveRenderEditMode(record) {
 
   let materialHtml = "";
 
+  materialHtml += archiveRenderInstitutionPicker(record);
+
   materialHtml += archiveRenderSelect(
     "Level",
     archiveLabel("Level", "Level"),
     "level",
     archiveRaw(record, "Level")
   );
+
   materialHtml += archiveRenderTextInput("Original Reference", archiveLabel("Original Reference", "Original Reference"), archiveRaw(record, "Original Reference"));
   let relatedHtml = "";
   relatedHtml += archiveRenderCaalIdChipInput(
@@ -3392,13 +3811,15 @@ if (archiveSaveBtn) {
     try {
       if (!validateArchiveAssociatedIdsBeforeSave()) return;
 
+      const isNewRecord = !record?.identity?.id;
+
+      if (!validateArchiveHoldingInstitutionBeforeSave({ isNewRecord })) return;
+
       const payload = archiveBuildSavePayload();
       const lang =
         (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
         window.appSession?.profile?.preferred_language ||
         "en";
-
-      const isNewRecord = !record?.identity?.id;
 
       const url = isNewRecord
         ? `/api/archive?lang=${encodeURIComponent(lang)}`
@@ -3585,6 +4006,7 @@ if (archiveDeleteBtn) {
 
   archiveWireEditMultiSelects();
   archiveWireCaalIdChipInputs();
+  archiveWireInstitutionPicker();
 
   Array.from(archiveRecordDetails.querySelectorAll("input, textarea, select")).forEach((el) => {
     el.addEventListener("input", () => {
