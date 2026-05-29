@@ -2521,6 +2521,22 @@ router.get("/monuments/map", async (req, res) => {
         ? `${workspaceWhere} AND ${extraClauses.join(" AND ")}`
         : `WHERE ${extraClauses.join(" AND ")}`;
 
+      const promotedExtraClauses = [
+        `
+        rr.created_by_app_user_id = $1
+        AND COALESCE(rr.status, '') <> 'deleted'
+        `
+      ];
+
+      let promotedWhere = `WHERE ${promotedExtraClauses.join(" AND ")}`;
+
+      if (bbox) {
+        promotedWhere += `
+          AND m."Longitude" BETWEEN $${nextIndex - 4} AND $${nextIndex - 3}
+          AND m."Latitude" BETWEEN $${nextIndex - 2} AND $${nextIndex - 1}
+        `;
+      }
+
       const dataSql = `
         WITH workspace_rows AS (
           SELECT
@@ -2537,8 +2553,7 @@ router.get("/monuments/map", async (req, res) => {
           FROM ${MONUMENTS_CAAL_MV} m
           JOIN public.record_registry rr
             ON rr.caal_id = m."CAAL_ID"
-          WHERE rr.created_by_app_user_id = $1
-            AND COALESCE(rr.status, '') <> 'deleted'
+          ${promotedWhere}
         )
         SELECT *
         FROM workspace_rows

@@ -4289,6 +4289,15 @@ if (archivePreviewModal) {
   });
 }
 
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+
+  if (!archivePreviewModal || archivePreviewModal.hidden) return;
+
+  event.preventDefault();
+  archiveClosePreview();
+});
+
 if (addArchiveBtn) {
   addArchiveBtn.addEventListener("click", () => {
     if (!archiveConfirmLoseChanges()) return;
