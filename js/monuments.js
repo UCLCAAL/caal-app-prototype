@@ -306,6 +306,8 @@ function drawSelectedMonumentHighlight(record) {
   renderMonumentLegend();
 }
 
+let monumentResultFocusTimer = null;
+
 function drawFocusedResultHighlight(record) {
   if (!map || !mapLoaded || !record?.geometry?.coordinates) return;
 
@@ -355,10 +357,25 @@ function drawFocusedResultHighlight(record) {
     });
   }
 
-  bringMonumentOverlaysToFront();
+    bringMonumentOverlaysToFront();
+
+  if (monumentResultFocusTimer) {
+    clearTimeout(monumentResultFocusTimer);
+  }
+
+  monumentResultFocusTimer = setTimeout(() => {
+    clearFocusedResultHighlight();
+    monumentResultFocusTimer = null;
+  }, 3500);
 }
 
+
 function clearFocusedResultHighlight() {
+  if (monumentResultFocusTimer) {
+    clearTimeout(monumentResultFocusTimer);
+    monumentResultFocusTimer = null;
+  }
+
   if (!map || !mapLoaded) return;
 
   if (map.getLayer("monument-result-focus-ring")) {
@@ -533,12 +550,14 @@ function resetMapOptionsPanelState() {
   }
 }
 
-function closeMapOptionsPanel() {
+function closeMapOptionsPanel({ resetOptions = false } = {}) {
   if (!mapOptionsPanel) return;
 
   mapOptionsPanel.hidden = true;
 
-  resetMapOptionsPanelState();
+  if (resetOptions) {
+    resetMapOptionsPanelState();
+  }
 
   if (mapOptionsBtn) {
     mapOptionsBtn.classList.remove("is-active");
@@ -8362,7 +8381,7 @@ function bindMonumentLayerEvents() {
 
     if (!record) return;
 
-    await openMapMonumentPreview(record);
+    await handleMapMonumentOpen(record);
   }
 
   let monumentHoverPopup = null;
@@ -8383,6 +8402,30 @@ function bindMonumentLayerEvents() {
       setMonumentsLoading(false);
     }
   }
+
+  async function handleMapMonumentOpen(record) {
+  if (!record) return;
+  if (monumentRecordOpenInProgress) return;
+
+  /*
+    Keep the existing safety behaviour while editing:
+    map clicks open a preview modal instead of replacing the edited record.
+  */
+  if (monumentIsEditMode) {
+    await openMapMonumentPreview(record);
+    return;
+  }
+
+  clearMonumentPointHover();
+
+  /*
+    If the map is fullscreen, the details pane will not be visible.
+    Exit fullscreen before opening the record directly.
+  */
+  await exitMapFullscreenIfActive();
+
+  await openLightRecordInDetails(record);
+}
 
   function handleMonumentPointHover(e) {
     cancelClearMonumentPointHover();
@@ -8446,9 +8489,10 @@ function bindMonumentLayerEvents() {
       popupTitleBtn.dataset.previewWired = "true";
 
       popupTitleBtn.addEventListener("click", async (event) => {
+        event.preventDefault();
         event.stopPropagation();
-        clearMonumentPointHover();
-        await openMapMonumentPreview(record);
+
+        await handleMapMonumentOpen(record);
       });
     }, 0);
   }

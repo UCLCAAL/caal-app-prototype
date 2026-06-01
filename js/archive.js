@@ -124,6 +124,79 @@ function archiveCurrentLanguageCode(eventOrOverride = null) {
   return window.appSession?.profile?.preferred_language || "en";
 }
 
+function archiveInstitutionDisplayName(inst) {
+  if (!inst) return "";
+
+  const lang = archiveCurrentLanguageCode();
+
+  if (lang === "ru") {
+    return (
+      inst.name_ru ||
+      inst.primary_name ||
+      inst.other_names ||
+      inst.caal_id ||
+      ""
+    );
+  }
+
+  if (lang === "kk") {
+    return (
+      inst.primary_name ||
+      inst.name_ru ||
+      inst.other_names ||
+      inst.caal_id ||
+      ""
+    );
+  }
+
+  return (
+    inst.primary_name ||
+    inst.name_ru ||
+    inst.other_names ||
+    inst.caal_id ||
+    ""
+  );
+}
+
+function archiveInstitutionSecondaryName(inst) {
+  if (!inst) return "";
+
+  const lang = archiveCurrentLanguageCode();
+  const values = [];
+
+  /*
+    In Russian UI:
+    Main label = name_ru.
+    Secondary line = Kazakh/local canonical name first, then English/other names.
+  */
+  if (lang === "ru") {
+    if (inst.primary_name) values.push(inst.primary_name);
+    if (inst.other_names) values.push(inst.other_names);
+    return values.join(" - ");
+  }
+
+  /*
+    In Kazakh UI:
+    Main label = Primary Name.
+    Secondary line = Russian official name first, then English/other names.
+  */
+  if (lang === "kk") {
+    if (inst.name_ru) values.push(inst.name_ru);
+    if (inst.other_names) values.push(inst.other_names);
+    return values.join(" - ");
+  }
+
+  /*
+    Other UI languages:
+    Main label = Primary Name.
+    Secondary line = Russian official name, then English/other names.
+  */
+  if (inst.name_ru) values.push(inst.name_ru);
+  if (inst.other_names) values.push(inst.other_names);
+
+  return values.join(" - ");
+}
+
 // labels translation loader 
 function archiveText(key, fallback = null) {
   return archiveMessages[key] || archiveLabels[key] || fallback || key;
@@ -778,7 +851,7 @@ function archiveWireCaalIdChipInputs() {
 function archiveRenderInstitutionPicker(record) {
   const inst = archiveGetHoldingInstitutionRelation(record);
   const selectedId = inst?.caal_id || "";
-  const selectedLabel = inst?.primary_name || selectedId || "";
+  const selectedLabel = archiveInstitutionDisplayName(inst) || selectedId || "";
 
   return `
     <div class="detail-item full-width archive-institution-picker" data-field-name="Holding Institution">
@@ -883,7 +956,9 @@ function archiveSetHoldingInstitution(inst) {
 
   hidden.value = inst?.caal_id || "";
   chip.dataset.institutionCaalId = inst?.caal_id || "";
-  text.innerHTML = safeArchiveValue(inst?.primary_name || inst?.caal_id || "");
+  text.innerHTML = safeArchiveValue(
+    archiveInstitutionDisplayName(inst) || inst?.caal_id || ""
+  );
 
   chip.hidden = !inst?.caal_id;
 
@@ -912,7 +987,12 @@ function archiveRenderInstitutionSuggestions(items) {
   }
 
   suggestions.innerHTML = items.map((inst, index) => {
-    const subtitle = [inst.caal_id, inst.actor_type, inst.country]
+    const subtitle = [
+      archiveInstitutionSecondaryName(inst),
+      inst.caal_id,
+      inst.actor_type,
+      inst.country
+    ]
       .filter(Boolean)
       .join(" - ");
 
@@ -922,7 +1002,7 @@ function archiveRenderInstitutionSuggestions(items) {
         class="related-caal-id-suggest-item institution-suggest-item"
         data-institution-index="${index}"
       >
-        <strong>${safeArchiveValue(inst.primary_name || inst.caal_id)}</strong>
+        <strong>${safeArchiveValue(archiveInstitutionDisplayName(inst) || inst.caal_id)}</strong>
         <span>${safeArchiveValue(subtitle)}</span>
       </button>
     `;
@@ -2252,6 +2332,7 @@ function archiveGetHoldingInstitutionRelation(record) {
       rel.related_title ||
       rel.related_name ||
       rel.related_caal_id,
+    name_ru: rel.related_name_ru || "",
     actor_type: rel.related_actor_type || "",
     country: rel.related_country || ""
   };
@@ -2268,10 +2349,13 @@ function archiveRenderHoldingInstitutionChip(record) {
     `;
   }
 
-  const label = inst.primary_name || inst.caal_id;
-  const subtitle = [inst.actor_type, inst.country, inst.caal_id]
-    .filter(Boolean)
-    .join(" - ");
+  const label = archiveInstitutionDisplayName(inst) || inst.caal_id;
+  const subtitle = [
+    archiveInstitutionSecondaryName(inst),
+    inst.actor_type,
+    inst.country,
+    inst.caal_id
+  ]
 
   return `
     <button
@@ -2637,7 +2721,7 @@ async function archiveOpenInstitutionPreview(caalId) {
 function archiveRenderInstitutionPreview(inst) {
   if (!archivePreviewModal || !archivePreviewBody || !archivePreviewTitle) return;
 
-  const title = inst.primary_name || inst.caal_id;
+  const title = archiveInstitutionDisplayName(inst) || inst.caal_id;
 
   archivePreviewTitle.textContent = title;
 
@@ -2662,6 +2746,7 @@ function archiveRenderInstitutionPreview(inst) {
 
           ${archiveCopyableDetailItem(archiveLabel("CAAL_ID", "CAAL_ID"), inst.caal_id)}
           ${archiveRenderDetailItem(t("primary_name", "Primary Name"), inst.primary_name, true)}
+          ${archiveRenderDetailItem(t("name_ru", "Russian Name"), inst.name_ru, true)}
           ${archiveRenderDetailItem(t("other_names", "Other Names"), inst.other_names, true)}
           ${archiveRenderDetailItem(t("actor_type", "Actor Type"), inst.actor_type)}
           ${archiveRenderDetailItem(archiveLabel("Country", "Country"), inst.country)}

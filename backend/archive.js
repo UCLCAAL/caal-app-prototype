@@ -557,6 +557,7 @@ router.get("/institutions", async (req, res) => {
       (
         "CAAL_ID" ILIKE $${values.length}
         OR "Primary Name" ILIKE $${values.length}
+        OR name_ru ILIKE $${values.length}
         OR "Other Names" ILIKE $${values.length}
         OR "Actor Type" ILIKE $${values.length}
       )
@@ -580,6 +581,7 @@ router.get("/institutions", async (req, res) => {
         "CAAL_ID",
         "Primary Name",
         "Other Names",
+        name_ru,
         "Country",
         "Actor Type",
         "Description",
@@ -591,6 +593,7 @@ router.get("/institutions", async (req, res) => {
       ${whereSql}
       ORDER BY
         "Primary Name" NULLS LAST,
+        name_ru NULLS LAST,
         "CAAL_ID"
       LIMIT $${values.length}
       `,
@@ -630,6 +633,7 @@ router.get("/institutions/:caalId", async (req, res) => {
         "CAAL_ID",
         "Primary Name",
         "Other Names",
+        name_ru,
         "Country",
         "Actor Type",
         "Description",
@@ -893,6 +897,7 @@ async function validateHoldingInstitution(pool, caalId) {
       "CAAL_ID",
       "Primary Name",
       "Other Names",
+      name_ru,
       "Country",
       "Actor Type",
       "Description",
@@ -920,6 +925,7 @@ async function getArchiveHoldingInstitution(pool, archiveCaalId) {
       i."CAAL_ID",
       i."Primary Name",
       i."Other Names",
+      i.name_ru,
       i."Country",
       i."Actor Type",
       i."Description",
@@ -1351,6 +1357,7 @@ function buildInstitutionRecord(row) {
     id: row.id,
     caal_id: row["CAAL_ID"],
     primary_name: row["Primary Name"],
+    name_ru: row.name_ru,
     other_names: row["Other Names"],
     country: row["Country"],
     actor_type: row["Actor Type"],

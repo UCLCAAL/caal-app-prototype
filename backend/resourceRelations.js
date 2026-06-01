@@ -88,6 +88,7 @@ async function getResourceRelations(db, caalId) {
       r.*,
 
       inst."Primary Name" AS related_primary_name,
+      inst.name_ru AS related_name_ru,
       inst."Other Names" AS related_other_names,
       inst."Actor Type" AS related_actor_type,
       inst."Country" AS related_country,
@@ -97,6 +98,7 @@ async function getResourceRelations(db, caalId) {
 
       COALESCE(
         inst."Primary Name",
+        inst.name_ru,
         inst."Other Names",
         r.related_caal_id
       ) AS related_label
@@ -121,6 +123,7 @@ async function getResourceRelations(db, caalId) {
     related_id_found_in: row.related_id_found_in,
 
     related_primary_name: row.related_primary_name,
+    related_name_ru: row.related_name_ru,
     related_other_names: row.related_other_names,
     related_actor_type: row.related_actor_type,
     related_country: row.related_country,
