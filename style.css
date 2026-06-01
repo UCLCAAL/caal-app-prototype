@@ -674,6 +674,11 @@ body {
   box-shadow: 0 0 0 2px rgba(183, 121, 31, 0.18) !important;
 }
 
+.coordinate-invalid {
+  border-color: #b91c1c !important;
+  box-shadow: 0 0 0 2px rgba(185, 28, 28, 0.16) !important;
+}
+
 .results-empty {
   color: var(--muted);
   font-size: 0.92rem;

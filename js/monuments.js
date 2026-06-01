@@ -3863,10 +3863,19 @@ function mRenderTextarea(fieldName, label, value, fullWidth = true) {
 function mRenderNumberInput(fieldName, label, value, step = "any", fullWidth = false) {
   const inputId = mInputId(fieldName);
   const fullWidthClass = fullWidth ? " full-width" : "";
+
   return `
     <div class="detail-item${fullWidthClass}">
       <label class="detail-label" for="${inputId}">${label}</label>
-      <input type="number" id="${inputId}" class="form-control" step="${step}" value="${value ?? ""}">
+      <input
+        type="number"
+        id="${inputId}"
+        class="form-control"
+        step="${step}"
+        value="${mAttributeValue(value ?? "")}"
+        data-field-name="${mAttributeValue(fieldName)}"
+        data-original-value="${mAttributeValue(value ?? "")}"
+      >
     </div>
   `;
 }
@@ -9981,6 +9990,7 @@ function renderMonumentEditMode(record) {
 
   wireInlineLocationButtons();
   wireMonumentChangedFieldHighlights(recordDetails);
+  wireMonumentCoordinateInputs();
 
   const zoomBtn = document.getElementById("zoomToSelectedMonumentBtn");
 
@@ -10223,6 +10233,141 @@ function updateCoordinateInputs(lng, lat) {
 
   if (lngInput) lngInput.value = lng;
   if (latInput) latInput.value = lat;
+}
+
+function getTypedMonumentCoordinates() {
+  const lngInput = document.getElementById(mInputId("Longitude"));
+  const latInput = document.getElementById(mInputId("Latitude"));
+
+  const lngText = String(lngInput?.value || "").trim();
+  const latText = String(latInput?.value || "").trim();
+
+  if (!lngText && !latText) {
+    return {
+      status: "empty",
+      lng: null,
+      lat: null
+    };
+  }
+
+  if (!lngText || !latText) {
+    return {
+      status: "partial",
+      lng: null,
+      lat: null
+    };
+  }
+
+  const lng = Number(lngText);
+  const lat = Number(latText);
+
+  if (!Number.isFinite(lng) || !Number.isFinite(lat)) {
+    return {
+      status: "invalid",
+      lng: null,
+      lat: null
+    };
+  }
+
+  if (lng < -180 || lng > 180 || lat < -90 || lat > 90) {
+    return {
+      status: "out_of_range",
+      lng,
+      lat
+    };
+  }
+
+  return {
+    status: "valid",
+    lng: Number(lng.toFixed(6)),
+    lat: Number(lat.toFixed(6))
+  };
+}
+
+function applyTypedCoordinatesToSelectedRecord({ panIfOutside = true } = {}) {
+  if (!monumentSelectedRecord) return;
+
+  const parsed = getTypedMonumentCoordinates();
+
+  const lngInput = document.getElementById(mInputId("Longitude"));
+  const latInput = document.getElementById(mInputId("Latitude"));
+
+  [lngInput, latInput].forEach((input) => {
+    if (!input) return;
+    input.classList.remove("coordinate-invalid");
+  });
+
+  if (parsed.status === "empty") {
+    clearPendingPickPoint();
+    return;
+  }
+
+  if (parsed.status !== "valid") {
+    [lngInput, latInput].forEach((input) => {
+      if (!input) return;
+      input.classList.add("coordinate-invalid");
+    });
+    return;
+  }
+
+  const { lng, lat } = parsed;
+
+  monumentSelectedRecord.raw = monumentSelectedRecord.raw || {};
+  monumentSelectedRecord.summary = monumentSelectedRecord.summary || {};
+
+  monumentSelectedRecord.raw["Longitude"] = lng;
+  monumentSelectedRecord.raw["Latitude"] = lat;
+
+  monumentSelectedRecord.summary.longitude = lng;
+  monumentSelectedRecord.summary.latitude = lat;
+
+  monumentSelectedRecord.geometry = {
+    type: "Point",
+    coordinates: [lng, lat]
+  };
+
+  drawPendingPickPoint(lng, lat);
+  drawSelectedMonumentHighlight(monumentSelectedRecord);
+
+  if (panIfOutside) {
+    ensureRecordVisibleOnMap(monumentSelectedRecord);
+  }
+
+  renderMonumentLegend();
+  updateMapOptionsState();
+
+  monumentIsDirty = true;
+}
+
+let monumentCoordinateInputTimer = null;
+
+function wireMonumentCoordinateInputs() {
+  const lngInput = document.getElementById(mInputId("Longitude"));
+  const latInput = document.getElementById(mInputId("Latitude"));
+
+  if (!lngInput || !latInput) return;
+
+  [lngInput, latInput].forEach((input) => {
+    if (input.dataset.coordinateMapWired === "true") return;
+
+    input.addEventListener("input", () => {
+      window.clearTimeout(monumentCoordinateInputTimer);
+
+      monumentCoordinateInputTimer = window.setTimeout(() => {
+        applyTypedCoordinatesToSelectedRecord({
+          panIfOutside: true
+        });
+      }, 250);
+    });
+
+    input.addEventListener("blur", () => {
+      applyTypedCoordinatesToSelectedRecord({
+        panIfOutside: true
+      });
+    });
+
+    input.dataset.coordinateMapWired = "true";
+  });
 }
 
 function applyMapClickToSelectedRecord(latlng) {
