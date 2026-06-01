@@ -11216,7 +11216,12 @@ document.addEventListener("DOMContentLoaded", async () => {
       setMonumentsLoading(true, t("loading_records", "Loading records..."));
 
       try {
-        await loadCentralAsiaBorders();
+        try {
+          await loadCentralAsiaBorders();
+        } catch (borderError) {
+          console.warn("Administrative boundaries could not be loaded:", borderError);
+        }
+
         await loadMonumentMapRecords();
         await loadMonumentListRecords();
 

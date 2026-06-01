@@ -486,7 +486,6 @@ function allWorkspaceMonumentsSqlForCaalAdmin(currentSession) {
         SELECT
           ${monumentBrowseRawColumnsSql("v")},
           ${monumentHelperColumnsSql("v")},
-          ${monumentHelperColumnsSql("v")},
           'all_caal'::text AS source_scope,
           ${storageScope}::text AS storage_scope,
           false AS is_promoted,
