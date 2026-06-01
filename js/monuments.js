@@ -3041,8 +3041,10 @@ function mRenderLegacyMultiSelect({
         class="form-control chip-multiselect monument-edit-multiselect"
         multiple
         data-chip-target="${chipsId}"
-        data-field-base="${fieldBase}"
+        data-field-name="${mAttributeValue(fieldBase)}"
+        data-field-base="${mAttributeValue(fieldBase)}"
         data-field-count="${count}"
+        data-original-value="${mAttributeValue(selectedValues.join(", "))}"
       >
         ${optionsHtml}
       </select>
@@ -3281,8 +3283,9 @@ function mRenderLegacyTreePicker({
   return `
     <div
       class="detail-item${fullWidth ? " full-width" : ""} legacy-tree-picker"
-      data-field-base="${fieldBase}"
+      data-field-base="${mAttributeValue(fieldBase)}"
       data-field-count="${count}"
+      data-original-value="${mAttributeValue(selectedValues.join(", "))}"
     >
       <span class="detail-label">${label}</span>
 
@@ -3333,6 +3336,8 @@ function mRenderEditMultiSelectChips(selectEl) {
     empty.className = "filter-chip-empty";
     empty.textContent = t("no_values_selected", "No values selected");
     chipsEl.appendChild(empty);
+
+    updateMonumentChangedFieldState(selectEl);
     return;
   }
 
@@ -3367,6 +3372,7 @@ function mRenderEditMultiSelectChips(selectEl) {
 
     chipsEl.appendChild(chip);
   });
+  updateMonumentChangedFieldState(selectEl);
 }
 
 function mSelectedOptionCount(selectEl) {
@@ -4520,7 +4526,9 @@ function mRenderRelatedCaalIdChipInput(fieldName, label, value, fullWidth = true
       <input
         type="hidden"
         id="${inputId}"
-        value="${ids.join(", ")}"
+        value="${mAttributeValue(ids.join(", "))}"
+        data-field-name="${mAttributeValue(fieldName)}"
+        data-original-value="${mAttributeValue(ids.join(", "))}"
       >
 
       <p class="filter-help">
@@ -4575,6 +4583,8 @@ function mSyncRelatedChipHiddenInput(fieldEl, { markDirty = true } = {}) {
   if (!hiddenInput) return;
 
   hiddenInput.value = Array.from(new Set(mEditableRelatedChipIds(fieldEl))).join(", ");
+
+  updateMonumentChangedFieldState(hiddenInput);
 
   if (markDirty) {
     monumentIsDirty = true;
@@ -7057,6 +7067,8 @@ function renderLegacyTreeChips(picker) {
     empty.className = "filter-chip-empty";
     empty.textContent = t("no_values_selected", "No values selected");
     chipContainer.appendChild(empty);
+
+    updateLegacyTreeChangedState(picker);
     return;
   }
 
@@ -7086,6 +7098,37 @@ function renderLegacyTreeChips(picker) {
 
     chipContainer.appendChild(chip);
   });
+  updateLegacyTreeChangedState(picker);
+}
+
+function updateLegacyTreeChangedState(picker) {
+  if (!picker) return;
+
+  const original = String(picker.dataset.originalValue || "")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .sort()
+    .join(", ");
+
+  const current = getSelectedLegacyTreeValues(picker)
+    .map((value) => String(value).trim())
+    .filter(Boolean)
+    .sort()
+    .join(", ");
+
+  const changed = original !== current;
+
+  picker.classList.toggle("field-changed", changed);
+
+  const visualBox =
+    picker.querySelector(".selected-filter-chips") ||
+    picker.querySelector(".legacy-tree") ||
+    picker.querySelector(".legacy-tree-search");
+
+  if (visualBox) {
+    visualBox.classList.toggle("field-changed-input", changed);
+  }
 }
 
 function filterLegacyTree(picker, queryValue) {
