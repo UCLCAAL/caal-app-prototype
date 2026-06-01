@@ -657,6 +657,23 @@ body {
   padding: 1rem;
 }
 
+.detail-item.field-changed {
+  border-color: #b7791f !important;
+  background: #fff8e6 !important;
+}
+
+.detail-item.field-changed .form-control,
+.detail-item.field-changed .caal-chip-input-box,
+.detail-item.field-changed .selected-filter-chips {
+  border-color: #b7791f !important;
+  box-shadow: 0 0 0 2px rgba(183, 121, 31, 0.18) !important;
+}
+
+.field-changed-input {
+  border-color: #b7791f !important;
+  box-shadow: 0 0 0 2px rgba(183, 121, 31, 0.18) !important;
+}
+
 .results-empty {
   color: var(--muted);
   font-size: 0.92rem;

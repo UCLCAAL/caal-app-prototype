@@ -81,6 +81,32 @@ let archivePreviewRecord = null;
 let archiveJustSavedRecordId = null;
 let archiveLastSaveSummary = null;
 
+const archiveSaveSummaryByCaalId = new Map();
+
+function archiveRecordCaalId(record) {
+  return String(
+    archiveIdentity(record, "caal_id") ||
+    archiveRaw(record, "CAAL_ID") ||
+    archiveRaw(record, "caal_id") ||
+    ""
+  ).trim();
+}
+
+function getArchiveSaveSummaryForRecord(record) {
+  const caalId = archiveRecordCaalId(record);
+  if (!caalId) return null;
+
+  return archiveSaveSummaryByCaalId.get(caalId.toLowerCase()) || null;
+}
+
+function rememberArchiveSaveSummary(summary) {
+  const caalId = String(summary?.caal_id || "").trim();
+  if (!caalId) return;
+
+  archiveSaveSummaryByCaalId.set(caalId.toLowerCase(), summary);
+  archiveLastSaveSummary = summary;
+}
+
 let archiveMessages = {};
 
 let archiveFilterDebounceTimer = null;
@@ -1233,9 +1259,11 @@ function archiveRenderFilterChipsForSelect(selectEl, chipsId) {
     empty.className = "filter-chip-empty";
     empty.textContent = t("no_values_selected", "No values selected");
     chipsEl.appendChild(empty);
+
+    updateArchiveChangedFieldState(selectEl);
     return;
   }
-
+  
   selected.forEach((item) => {
     const chip = document.createElement("button");
     chip.type = "button";
@@ -1566,13 +1594,29 @@ function archiveInputId(fieldName) {
   return "archive_fld_" + fieldName.replace(/[^a-zA-Z0-9]+/g, "_");
 }
 
+function archiveAttributeValue(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 function archiveRenderTextInput(fieldName, label, value, fullWidth = false) {
   const inputId = archiveInputId(fieldName);
   const fullWidthClass = fullWidth ? " full-width" : "";
+
   return `
     <div class="detail-item${fullWidthClass}">
       <label class="detail-label" for="${inputId}">${label}</label>
-      <input type="text" id="${inputId}" class="form-control" value="${value ?? ""}">
+      <input
+        type="text"
+        id="${inputId}"
+        class="form-control"
+        value="${archiveAttributeValue(value ?? "")}"
+        data-field-name="${archiveAttributeValue(fieldName)}"
+        data-original-value="${archiveAttributeValue(value ?? "")}"
+      >
     </div>
   `;
 }
@@ -1580,10 +1624,17 @@ function archiveRenderTextInput(fieldName, label, value, fullWidth = false) {
 function archiveRenderTextarea(fieldName, label, value, fullWidth = true) {
   const inputId = archiveInputId(fieldName);
   const fullWidthClass = fullWidth ? " full-width" : "";
+
   return `
     <div class="detail-item${fullWidthClass}">
       <label class="detail-label" for="${inputId}">${label}</label>
-      <textarea id="${inputId}" class="form-control" rows="4">${value ?? ""}</textarea>
+      <textarea
+        id="${inputId}"
+        class="form-control"
+        rows="4"
+        data-field-name="${archiveAttributeValue(fieldName)}"
+        data-original-value="${archiveAttributeValue(value ?? "")}"
+      >${archiveAttributeValue(value ?? "")}</textarea>
     </div>
   `;
 }
@@ -1650,7 +1701,12 @@ function archiveRenderSelect(fieldName, label, lookupName, currentValue, fullWid
   return `
     <div class="detail-item${fullWidthClass}">
       <label class="detail-label" for="${inputId}">${label}</label>
-      <select id="${inputId}" class="form-control">
+      <select
+        id="${inputId}"
+        class="form-control"
+        data-field-name="${archiveAttributeValue(fieldName)}"
+        data-original-value="${archiveAttributeValue(currentValue ?? "")}"
+      >
         <option value=""></option>
         ${optionsHtml}
       </select>
@@ -1681,6 +1737,8 @@ function archiveRenderMultiSelect(fieldName, label, lookupName, currentValue, fu
         class="form-control chip-multiselect archive-edit-multiselect"
         multiple
         data-chip-target="${chipsId}"
+        data-field-name="${archiveAttributeValue(fieldName)}"
+        data-original-value="${archiveAttributeValue(selectedValues.join(", "))}"
       >
         ${optionsHtml}
       </select>
@@ -1745,6 +1803,7 @@ function archiveRenderEditMultiSelectChips(selectEl) {
 
     chipsEl.appendChild(chip);
   });
+  updateArchiveChangedFieldState(selectEl);
 }
 
 function archiveWireEditMultiSelects() {
@@ -1785,6 +1844,67 @@ function archiveWireEditMultiSelects() {
 
     selectEl.dataset.editChipWired = "true";
     archiveRenderEditMultiSelectChips(selectEl);
+  });
+}
+
+function normaliseArchiveEditCompareValue(value) {
+  return String(value ?? "").trim();
+}
+
+function getArchiveFieldCurrentCompareValue(fieldEl) {
+  if (!fieldEl) return "";
+
+  if (fieldEl.multiple) {
+    return Array.from(fieldEl.selectedOptions || [])
+      .map((option) => option.value)
+      .filter(Boolean)
+      .join(", ");
+  }
+
+  return fieldEl.value;
+}
+
+function updateArchiveChangedFieldState(fieldEl) {
+  if (!fieldEl) return;
+
+  const original = normaliseArchiveEditCompareValue(fieldEl.dataset.originalValue);
+  const current = normaliseArchiveEditCompareValue(
+    getArchiveFieldCurrentCompareValue(fieldEl)
+  );
+
+  const changed = original !== current;
+
+  const wrapper = fieldEl.closest(".detail-item");
+
+  if (wrapper) {
+    wrapper.classList.toggle("field-changed", changed);
+  }
+
+  fieldEl.classList.toggle("field-changed-input", changed);
+}
+
+function wireArchiveChangedFieldHighlights(root = archiveRecordDetails) {
+  if (!root) return;
+
+  const fields = root.querySelectorAll(
+    "input[data-field-name], textarea[data-field-name], select[data-field-name]"
+  );
+
+  fields.forEach((field) => {
+    if (field.dataset.changeHighlightWired === "true") {
+      updateArchiveChangedFieldState(field);
+      return;
+    }
+
+    const handler = () => {
+      updateArchiveChangedFieldState(field);
+    };
+
+    field.addEventListener("input", handler);
+    field.addEventListener("change", handler);
+
+    field.dataset.changeHighlightWired = "true";
+    updateArchiveChangedFieldState(field);
   });
 }
 
@@ -2570,7 +2690,10 @@ function archiveRenderAssociatedArchivePreview(record, caalId, fullRecordUrl) {
             <span class="detail-section-title">${t("material_details", "Material Details")}</span>
           </div>
 
-          ${archiveRenderDetailItem(archiveLabel("CAAL_ID", "CAAL_ID"), record.identity?.caal_id)}
+          ${archiveCopyableDetailItem(
+            archiveLabel("CAAL_ID", "CAAL_ID"),
+            record.identity?.caal_id || caalId
+          )}
           ${archiveRenderAssociatedCaalIdChips(
             archiveLabel("Associated CAAL_ID", "Associated CAAL_ID"),
             record.identity?.associated_caal_id || archiveRaw(record, "Associated CAAL_ID"),
@@ -2603,6 +2726,7 @@ function archiveRenderAssociatedArchivePreview(record, caalId, fullRecordUrl) {
   `;
 
   archivePreviewModal.hidden = false;
+  archiveWireCopyFieldButtons(archivePreviewModal);
   archiveWireAssociatedPreviewButtons(fullRecordUrl);
   wireArchiveAssociatedCaalIdChips();
 }
@@ -2643,7 +2767,10 @@ function archiveRenderAssociatedMonumentPreview(record, caalId, fullRecordUrl) {
             <span class="detail-section-title">${t("basic", "Basic")}</span>
           </div>
 
-          ${archiveRenderDetailItem(archiveLabel("CAAL_ID", "CAAL_ID"), caalId)}
+          ${archiveCopyableDetailItem(
+            archiveLabel("CAAL_ID", "CAAL_ID"),
+            record.identity?.caal_id || caalId
+          )}
           ${archiveRenderDetailItem(archiveLabel("Primary Name", "Primary Name"), record.summary?.primary_name, true)}
           ${archiveRenderDetailItem(archiveLabel("Primary Name (English)", "Primary Name (English)"), record.summary?.primary_name_english, true)}
           ${archiveRenderDetailItem(archiveLabel("Country", "Country"), record.summary?.country)}
@@ -2681,6 +2808,7 @@ function archiveRenderAssociatedMonumentPreview(record, caalId, fullRecordUrl) {
   `;
 
   archivePreviewModal.hidden = false;
+  archiveWireCopyFieldButtons(archivePreviewModal);
   archiveWireAssociatedPreviewButtons(fullRecordUrl);
 }
 
@@ -3499,7 +3627,6 @@ async function archiveOpenAssociatedRecord(caalId) {
 function renderArchiveEmptyState() {
   if (!archiveRecordDetails) return;
 
-  archiveLastSaveSummary = null;
   archiveSyncModeVisualState();
 
   archiveRecordDetails.innerHTML = `
@@ -3547,6 +3674,7 @@ function archiveUpdateSelectedResultCard() {
 
 function archiveRenderRecordDetails(record) {
   archiveSelectedRecord = record;
+
   archiveSyncModeVisualState();
 
   if (archiveIsEditMode) {
@@ -3714,6 +3842,8 @@ function archiveRenderDisplayMode(record) {
 
   const canEditThisRecord = canEditArchiveRecord(record);
 
+  const saveSummary = getArchiveSaveSummaryForRecord(record);
+
   const statusBadge = canEditThisRecord
   ? `<span class="record-status-badge record-status-editable">${archiveLabel("Editable", "Editable")}</span>`
   : `<span class="record-status-badge record-status-readonly">${archiveLabel("Read only", "Read only")}</span>`;
@@ -3751,8 +3881,8 @@ function archiveRenderDisplayMode(record) {
     </div>
 
     ${
-      archiveLastSaveSummary
-        ? window.renderSaveSummaryCard(archiveLastSaveSummary)
+      saveSummary && typeof window.renderSaveSummaryCard === "function"
+        ? window.renderSaveSummaryCard(saveSummary)
         : ""
     }
 
@@ -4038,7 +4168,8 @@ if (archiveSaveBtn) {
         throw new Error("Save succeeded, but the saved record was not returned.");
       }
 
-      archiveLastSaveSummary = data.save_summary || null;
+      const saveSummary = data.save_summary || null;
+      rememberArchiveSaveSummary(saveSummary);
 
       // Keep the saved record visible immediately, even if list reload fails.
       archivePendingNewRecord = null;
@@ -4096,8 +4227,8 @@ if (archiveSaveBtn) {
         );
       } else {
         showArchiveToast(
-          archiveLastSaveSummary?.caal_id
-            ? `${t("archive_record_saved", "Archive record saved")}: ${archiveLastSaveSummary.caal_id}`
+          saveSummary?.caal_id
+            ? `${t("archive_record_saved", "Archive record saved")}: ${saveSummary.caal_id}`
             : t("archive_record_saved", "Archive record saved"),
           "success",
           3000
@@ -4190,6 +4321,7 @@ if (archiveDeleteBtn) {
   archiveWireEditMultiSelects();
   archiveWireCaalIdChipInputs();
   archiveWireInstitutionPicker();
+  wireArchiveChangedFieldHighlights(archiveRecordDetails);
 
   Array.from(archiveRecordDetails.querySelectorAll("input, textarea, select")).forEach((el) => {
     el.addEventListener("input", () => {

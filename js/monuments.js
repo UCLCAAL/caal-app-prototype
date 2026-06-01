@@ -222,6 +222,31 @@ let monumentDateOverrideState = {
 
 let monumentLastSaveSummary = null;
 
+const monumentSaveSummaryByCaalId = new Map();
+
+function monumentRecordCaalId(record) {
+  return String(
+    mIdentity(record, "caal_id") ||
+    mRaw(record, "CAAL_ID") ||
+    ""
+  ).trim();
+}
+
+function getMonumentSaveSummaryForRecord(record) {
+  const caalId = monumentRecordCaalId(record);
+  if (!caalId) return null;
+
+  return monumentSaveSummaryByCaalId.get(caalId.toLowerCase()) || null;
+}
+
+function rememberMonumentSaveSummary(summary) {
+  const caalId = String(summary?.caal_id || "").trim();
+  if (!caalId) return;
+
+  monumentSaveSummaryByCaalId.set(caalId.toLowerCase(), summary);
+  monumentLastSaveSummary = summary;
+}
+
 // --------------------------------------------------------
 // MapLibre map
 // --------------------------------------------------------
@@ -3792,13 +3817,28 @@ function mRenderGroupBlock(title, innerHtml, hasValues = true) {
   `;
 }
 
+function mAttributeValue(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
 function mRenderTextInput(fieldName, label, value, fullWidth = false) {
   const inputId = mInputId(fieldName);
   const fullWidthClass = fullWidth ? " full-width" : "";
   return `
     <div class="detail-item${fullWidthClass}">
       <label class="detail-label" for="${inputId}">${label}</label>
-      <input type="text" id="${inputId}" class="form-control" value="${value ?? ""}">
+      <input
+        type="text"
+        id="${inputId}"
+        class="form-control"
+        value="${value ?? ""}"
+        data-field-name="${fieldName}"
+        data-original-value="${mAttributeValue(value ?? "")}"
+      >
     </div>
   `;
 }
@@ -3809,7 +3849,13 @@ function mRenderTextarea(fieldName, label, value, fullWidth = true) {
   return `
     <div class="detail-item${fullWidthClass}">
       <label class="detail-label" for="${inputId}">${label}</label>
-      <textarea id="${inputId}" class="form-control" rows="4">${value ?? ""}</textarea>
+      <textarea
+        id="${inputId}"
+        class="form-control"
+        rows="4"
+        data-field-name="${fieldName}"
+        data-original-value="${mAttributeValue(value ?? "")}"
+      >${value ?? ""}</textarea>
     </div>
   `;
 }
@@ -3844,7 +3890,12 @@ function mRenderSelect(fieldName, label, lookupName, currentValue, fullWidth = f
   return `
     <div class="detail-item${fullWidthClass}">
       <label class="detail-label" for="${inputId}">${label}</label>
-      <select id="${inputId}" class="form-control">
+      <select
+        id="${inputId}"
+        class="form-control"
+        data-field-name="${fieldName}"
+        data-original-value="${mAttributeValue(currentValue ?? "")}"
+      >
         <option value=""></option>
         ${optionsHtml}
       </select>
@@ -6535,6 +6586,10 @@ function renderRelatedMonumentModal(record, caalId, fullRecordUrl) {
             <span class="detail-section-title">${mLabel("Basic", "Basic")}</span>
           </div>
           ${renderPreviewRows(basicFields)}
+          ${copyablePreviewValue(
+            mLabel("CAAL_ID", "CAAL_ID"),
+            record.identity?.caal_id || caalId
+          )}
         </div>
       </div>
 
@@ -6582,6 +6637,7 @@ function renderRelatedMonumentModal(record, caalId, fullRecordUrl) {
 
   monumentPreviewModal.hidden = false;
 
+  wireCopyFieldButtons(monumentPreviewModal);
   wireOpenRelatedFullRecordButton(fullRecordUrl);
   wireRelatedRecordChips();
   wireRelatedPreviewBackButton();
@@ -6638,8 +6694,10 @@ function renderRelatedArchiveModal(record, caalId, fullRecordUrl) {
             <span class="detail-section-title">${mLabel("Material Details", "Material Details")}</span>
           </div>
 
-          ${mRenderDetailItem(mLabel("CAAL_ID", "CAAL_ID"), record.identity?.caal_id)}
-
+          ${copyablePreviewValue(
+            mLabel("CAAL_ID", "CAAL_ID"),
+            record.identity?.caal_id || caalId
+          )}
           ${mRenderDetailItem(mLabel("Original Reference", "Original Reference"), s.original_reference)}
           ${mRenderDetailItem(mLabel("Content Type", "Content Type"), s.content_type)}
           ${mRenderDetailItem(mLabel("Country", "Country"), s.country)}
@@ -6687,6 +6745,7 @@ function renderRelatedArchiveModal(record, caalId, fullRecordUrl) {
 
   monumentPreviewModal.hidden = false;
 
+  wireCopyFieldButtons(monumentPreviewModal);
   wireOpenRelatedFullRecordButton(fullRecordUrl);
   wireRelatedRecordChips();
   wireRelatedPreviewBackButton();
@@ -9127,8 +9186,6 @@ function renderMonumentEmptyState({ preserveSelection = false } = {}) {
     monumentSelectedRecord = null;
   }
 
-  monumentLastSaveSummary = null;
-
   recordDetails.innerHTML = `
     <div class="empty-state">
       <p>${t("no_record_selected", "No record selected yet.")}</p>
@@ -9187,6 +9244,25 @@ async function moveSelection(direction) {
   }
 }
 
+function monumentRecordCaalId(record) {
+  return String(
+    mIdentity(record, "caal_id") ||
+    mRaw(record, "CAAL_ID") ||
+    ""
+  ).trim();
+}
+
+function monumentSaveSummaryMatchesRecord(record) {
+  if (!monumentLastSaveSummary) return false;
+
+  const summaryId = String(monumentLastSaveSummary.caal_id || "").trim();
+  const recordId = monumentRecordCaalId(record);
+
+  if (!summaryId || !recordId) return false;
+
+  return summaryId.toLowerCase() === recordId.toLowerCase();
+}
+
 function renderMonumentRecordDetails(record) {
   monumentSelectedRecord = record;
 
@@ -9227,6 +9303,8 @@ function renderMonumentDisplayMode(record) {
     record.source?.scope === "all_caal";
 
   const canEditThisRecord = canEditMonumentRecord(record);
+
+  const saveSummary = getMonumentSaveSummaryForRecord(record);
 
   const statusBadge = canEditThisRecord
     ? `<span class="record-status-badge record-status-editable">${t("editable", "Editable")}</span>`
@@ -9450,11 +9528,11 @@ function renderMonumentDisplayMode(record) {
     </div>
 
     ${
-      monumentLastSaveSummary
-        ? window.renderSaveSummaryCard(monumentLastSaveSummary)
+      saveSummary && typeof window.renderSaveSummaryCard === "function"
+        ? window.renderSaveSummaryCard(saveSummary)
         : ""
     }
-
+    
     <div class="group-stack">
       ${mRenderGroupBlock(t("basic", "Basic"), basicHtml, true)}
       ${mRenderGroupBlock(t("nav_monuments", "Monuments"), monumentHtml, true)}
@@ -9467,6 +9545,17 @@ function renderMonumentDisplayMode(record) {
   `;
 
   window.wireSaveSummaryDismiss?.(recordDetails);
+
+  const saveSummaryCloseBtn = recordDetails.querySelector(".save-summary-card button, .save-summary-dismiss");
+  if (saveSummaryCloseBtn) {
+    saveSummaryCloseBtn.addEventListener("click", () => {
+      const caalId = monumentRecordCaalId(record);
+      if (caalId) {
+        monumentSaveSummaryByCaalId.delete(caalId.toLowerCase());
+      }
+      monumentLastSaveSummary = null;
+    });
+  }
 
   const zoomBtn = document.getElementById("zoomToSelectedMonumentBtn");
 
@@ -9891,6 +9980,7 @@ function renderMonumentEditMode(record) {
   mWireRelatedCaalIdChipInputs();
 
   wireInlineLocationButtons();
+  wireMonumentChangedFieldHighlights(recordDetails);
 
   const zoomBtn = document.getElementById("zoomToSelectedMonumentBtn");
 
@@ -10260,7 +10350,8 @@ async function saveCurrentMonumentRecord() {
       return;
     }
 
-    monumentLastSaveSummary = data.save_summary || null;
+    const saveSummary = data.save_summary || null;
+    rememberMonumentSaveSummary(saveSummary);
 
     const savedStorage =
       data?.record?.source?.storage ||
@@ -10287,8 +10378,8 @@ async function saveCurrentMonumentRecord() {
       );
     } else {
       showToast(
-        monumentLastSaveSummary?.caal_id
-          ? `${t("record_saved", "Record saved")}: ${monumentLastSaveSummary.caal_id}`
+        saveSummary?.caal_id
+          ? `${t("record_saved", "Record saved")}: ${saveSummary.caal_id}`
           : t("record_saved", "Record saved"),
         3000
       );
@@ -10864,6 +10955,52 @@ document.addEventListener("app:languageChanged", async () => {
     setMonumentsLoading(false);
   }
 });
+
+function normaliseEditCompareValue(value) {
+  return String(value ?? "").trim();
+}
+
+function updateMonumentChangedFieldState(inputEl) {
+  if (!inputEl) return;
+
+  const original = normaliseEditCompareValue(inputEl.dataset.originalValue);
+  const current = normaliseEditCompareValue(inputEl.value);
+
+  const changed = original !== current;
+
+  const wrapper = inputEl.closest(".detail-item");
+
+  if (wrapper) {
+    wrapper.classList.toggle("field-changed", changed);
+  }
+
+  inputEl.classList.toggle("field-changed-input", changed);
+}
+
+function wireMonumentChangedFieldHighlights(root = recordDetails) {
+  if (!root) return;
+
+  const fields = root.querySelectorAll(
+    "input[data-field-name], textarea[data-field-name], select[data-field-name]"
+  );
+
+  fields.forEach((field) => {
+    if (field.dataset.changeHighlightWired === "true") {
+      updateMonumentChangedFieldState(field);
+      return;
+    }
+
+    const handler = () => {
+      updateMonumentChangedFieldState(field);
+    };
+
+    field.addEventListener("input", handler);
+    field.addEventListener("change", handler);
+
+    field.dataset.changeHighlightWired = "true";
+    updateMonumentChangedFieldState(field);
+  });
+}
 
 [showWorkspaceRecords, showNationalRecords, showAllCaalRecords].forEach((el) => {
   if (!el) return;
