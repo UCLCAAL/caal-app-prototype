@@ -4480,6 +4480,40 @@ function wireMonumentCulturalPeriodDateRecalc() {
   });
 }
 
+function renderLocationStackWarning(record) {
+  const stackedRecords = getMonumentRecordsAtSameCoordinate(record);
+
+  if (stackedRecords.length <= 1) return "";
+
+  return `
+    <div class="detail-item full-width location-stack-warning">
+      <div class="detail-warning">
+        <strong>${t("location_needs_review", "Location may need review")}</strong>
+        <div>
+          ${t(
+            "record_shares_coordinate_warning",
+            "This record shares its mapped coordinate with {count} records currently shown on the map. This may indicate an interim location."
+          ).replace("{count}", stackedRecords.length)}
+        </div>
+        <button type="button" class="action-btn" id="showStackedLocationRecordsBtn">
+          ${t("show_records_at_this_location", "Show records at this location")}
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+function wireLocationStackWarningButtons(record) {
+  const btn = document.getElementById("showStackedLocationRecordsBtn");
+  if (!btn) return;
+
+  btn.addEventListener("click", () => {
+    const records = getMonumentRecordsAtSameCoordinate(record);
+    if (records.length > 1) {
+      showStackedRecordsInResults(records);
+    }
+  });
+}
 
 /// related resource helpers
 // ----------------------------------------------
@@ -8362,8 +8396,494 @@ function monumentRecordToFeature(record) {
   };
 }
 
+function monumentCoordKeyFromCoords(coords, decimals = 6) {
+  if (!Array.isArray(coords) || coords.length !== 2) return "";
+
+  const lng = Number(coords[0]);
+  const lat = Number(coords[1]);
+
+  if (!Number.isFinite(lng) || !Number.isFinite(lat)) return "";
+
+  return `${lng.toFixed(decimals)},${lat.toFixed(decimals)}`;
+}
+
+function monumentCoordKey(record, decimals = 6) {
+  return monumentCoordKeyFromCoords(record?.geometry?.coordinates, decimals);
+}
+
+function dedupeMonumentRecords(records) {
+  const seen = new Set();
+
+  return (records || []).filter((record) => {
+    const key = [
+      record?.source?.scope || "",
+      record?.source?.storage || "",
+      record?.identity?.id || "",
+      record?.identity?.caal_id || ""
+    ].join(":");
+
+    if (!record?.identity?.caal_id || seen.has(key)) return false;
+
+    seen.add(key);
+    return true;
+  });
+}
+
+function getMonumentRecordsAtSameCoordinate(record, decimals = 6) {
+  const key = monumentCoordKey(record, decimals);
+  if (!key) return [];
+
+  return dedupeMonumentRecords(
+    monumentMapRecords.filter((candidate) =>
+      monumentCoordKey(candidate, decimals) === key
+    )
+  );
+}
+
+function getMonumentRecordsNearClick(point, layerIds, pixelTolerance = 8) {
+  if (!map || !point) return [];
+
+  const bbox = [
+    [point.x - pixelTolerance, point.y - pixelTolerance],
+    [point.x + pixelTolerance, point.y + pixelTolerance]
+  ];
+
+  const features = map.queryRenderedFeatures(bbox, {
+    layers: layerIds.filter((layerId) => map.getLayer(layerId))
+  });
+
+  const records = features
+    .map((feature) => {
+      const clickedId = Number(feature.properties?.id);
+      const clickedScope = feature.properties?.source_scope;
+
+      return (
+        monumentMapRecords.find(
+          (record) =>
+            Number(record.identity?.id) === clickedId &&
+            String(record.source?.scope || "") === String(clickedScope || "")
+        ) ||
+        monumentMapRecords.find(
+          (record) => Number(record.identity?.id) === clickedId
+        )
+      );
+    })
+    .filter(Boolean);
+
+  return dedupeMonumentRecords(records);
+}
+
+let monumentClickPopup = null;
+
+function renderStackedCoordinateWarning(records) {
+  if (!Array.isArray(records) || records.length <= 1) return "";
+
+  return `
+    <div class="map-popup-warning">
+      ${t(
+        "stacked_coordinate_warning",
+        "{count} records share this mapped coordinate. This may be an interim location."
+      ).replace("{count}", records.length)}
+    </div>
+  `;
+}
+
+function closeMonumentClickPopup() {
+  if (monumentClickPopup) {
+    monumentClickPopup.remove();
+    monumentClickPopup = null;
+  }
+}
+
+function getMonumentPopupPixelTolerance() {
+  if (!map) return 8;
+
+  const zoom = map.getZoom();
+
+  /*
+    At low/mid zoom, points close on screen should be grouped.
+    At high zoom, the tolerance shrinks so nearby but distinct graves/sites
+    can behave as individual records again.
+  */
+  if (zoom >= 17) return 2;
+  if (zoom >= 15) return 4;
+  if (zoom >= 13) return 6;
+
+  return 10;
+}
+
+function getMonumentPopupRecordsForPoint(point) {
+  const clickablePointLayers = [
+    "national-cluster-points",
+    "monuments-national-layer",
+    "monuments-all-caal-layer",
+    "monuments-workspace-layer"
+  ].filter((layerId) => map?.getLayer(layerId));
+
+  const clickedRecords = getMonumentRecordsNearClick(
+    point,
+    clickablePointLayers,
+    getMonumentPopupPixelTolerance()
+  );
+
+  if (!clickedRecords.length) return [];
+
+  /*
+    Identical coordinates should always remain a stack, even at high zoom.
+    Nearby but distinct records stop grouping once the zoom/tolerance makes
+    them separable.
+  */
+  const sameCoordRecords = getMonumentRecordsAtSameCoordinate(clickedRecords[0]);
+
+  return sameCoordRecords.length > clickedRecords.length
+    ? sameCoordRecords
+    : clickedRecords;
+}
+
+function getStackPopupPlacement(lngLat, recordCount = 1) {
+  if (!map) {
+    return {
+      anchor: "bottom",
+      offset: [0, -14]
+    };
+  }
+
+  const point = map.project(lngLat);
+  const mapCanvas = map.getCanvas();
+  const mapHeight = mapCanvas?.clientHeight || 500;
+
+  /*
+    Estimate enough height for the warning, button, and several list rows.
+    It does not need to be exact because resizeMonumentStackPopupToMap()
+    still limits the final height.
+  */
+  const estimatedHeight = Math.min(
+    520,
+    130 + Math.min(Number(recordCount || 1), 6) * 74
+  );
+
+  const hasEnoughSpaceAbove = point.y > estimatedHeight + 24;
+  const hasMoreSpaceBelow = mapHeight - point.y > point.y;
+
+  if (hasEnoughSpaceAbove) {
+    return {
+      anchor: "bottom",
+      offset: [0, -14]
+    };
+  }
+
+  /*
+    If there is not enough room above, put it below the point rather than
+    letting the top be cut off.
+  */
+  if (hasMoreSpaceBelow || point.y < estimatedHeight + 24) {
+    return {
+      anchor: "top",
+      offset: [0, 14]
+    };
+  }
+
+  return {
+    anchor: "bottom",
+    offset: [0, -14]
+  };
+}
+
+function renderMonumentStackPopupHtml(records) {
+  const safeRecords = dedupeMonumentRecords(records);
+  const isStack = safeRecords.length > 1;
+
+  const listHtml = safeRecords
+    .slice(0, 50)
+    .map((record, index) => `
+      <button
+        type="button"
+        class="map-popup-record-row"
+        data-popup-record-index="${index}"
+      >
+        <span class="map-popup-record-title">
+          ${mSafeValue(
+            mSummary(record, "primary_name") ||
+            mSummary(record, "primary_name_english") ||
+            mIdentity(record, "caal_id")
+          )}
+        </span>
+        <span class="map-popup-record-id">${mSafeValue(mIdentity(record, "caal_id"))}</span>
+        <span class="map-popup-record-meta">${mSafeValue(mSummary(record, "monument_type1"))}</span>
+      </button>
+    `)
+    .join("");
+
+  const overflowHtml =
+    safeRecords.length > 50
+      ? `<div class="map-popup-overflow">
+          ${t(
+            "popup_record_limit_notice",
+            "Showing first 50 records in the popup. Use Open all in results to view the full set."
+          )}
+        </div>`
+      : "";
+
+  return `
+    <div class="map-popup map-popup-stack">
+      <div class="map-popup-stack-header">
+        <strong>
+          ${
+            isStack
+              ? t("records_at_this_location", "{count} records at this location")
+                  .replace("{count}", safeRecords.length)
+              : t("record_at_this_location", "1 record at this location")
+          }
+        </strong>
+      </div>
+
+      ${renderStackedCoordinateWarning(safeRecords)}
+
+      ${
+        isStack
+          ? `<button type="button" class="action-btn primary map-popup-open-all">
+              ${t("open_all_in_results", "Open all in results")}
+            </button>`
+          : ""
+      }
+
+      <div class="map-popup-record-list">
+        ${listHtml}
+        ${overflowHtml}
+      </div>
+    </div>
+  `;
+}
+
+function wireMonumentStackPopupRows(popup, records, options = {}) {
+  const safeRecords = dedupeMonumentRecords(records);
+
+  const openRecord =
+    typeof options.openRecord === "function"
+      ? options.openRecord
+      : null;
+
+  const closePopup =
+    typeof options.closePopup === "function"
+      ? options.closePopup
+      : () => popup?.remove?.();
+
+  const keepOpen =
+    typeof options.keepOpen === "function"
+      ? options.keepOpen
+      : null;
+
+  setTimeout(() => {
+    const popupEl = popup?.getElement?.();
+    if (!popupEl) return;
+
+    // Remove any previous document-level wiring for this popup element.
+    if (popupEl.__stackPopupAbortController) {
+      popupEl.__stackPopupAbortController.abort();
+    }
+
+    const controller = new AbortController();
+    popupEl.__stackPopupAbortController = controller;
+
+    function getElementFromEvent(event) {
+      const path = typeof event.composedPath === "function"
+        ? event.composedPath()
+        : [];
+
+      const pathElement = path.find((item) => item instanceof Element);
+      if (pathElement) return pathElement;
+
+      return event.target instanceof Element
+        ? event.target
+        : event.target?.parentElement || null;
+    }
+
+    function getActionTarget(event) {
+      const target = getElementFromEvent(event);
+
+      if (!target || !popupEl.contains(target)) {
+        return { openAllBtn: null, rowBtn: null, listEl: null };
+      }
+
+      return {
+        openAllBtn: target.closest(".map-popup-open-all"),
+        rowBtn: target.closest(".map-popup-record-row"),
+        listEl: target.closest(".map-popup-record-list")
+      };
+    }
+
+    async function runStackPopupAction(event) {
+      const { openAllBtn, rowBtn } = getActionTarget(event);
+
+      if (!openAllBtn && !rowBtn) return;
+
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (keepOpen) {
+        keepOpen();
+      }
+
+      if (openAllBtn) {
+        showStackedRecordsInResults(safeRecords);
+        closePopup();
+        controller.abort();
+        return;
+      }
+
+      const idx = Number(rowBtn.dataset.popupRecordIndex);
+      const record = safeRecords[idx];
+
+      if (record && openRecord) {
+        await openRecord(record);
+        closePopup();
+        controller.abort();
+      }
+    }
+
+    function keepPopupInteractionInside(event) {
+      const { openAllBtn, rowBtn, listEl } = getActionTarget(event);
+
+      if (!openAllBtn && !rowBtn && !listEl) return;
+
+      event.stopPropagation();
+
+      if (keepOpen) {
+        keepOpen();
+      }
+    }
+
+    document.addEventListener("pointerdown", keepPopupInteractionInside, {
+      capture: true,
+      signal: controller.signal
+    });
+
+    document.addEventListener("pointerup", runStackPopupAction, {
+      capture: true,
+      signal: controller.signal
+    });
+
+    document.addEventListener("click", runStackPopupAction, {
+      capture: true,
+      signal: controller.signal
+    });
+
+    // Also keep direct button listeners as a fallback.
+    popupEl.querySelector(".map-popup-open-all")?.addEventListener(
+      "click",
+      runStackPopupAction,
+      { signal: controller.signal }
+    );
+
+    popupEl.querySelectorAll(".map-popup-record-row").forEach((btn) => {
+      btn.addEventListener("click", runStackPopupAction, {
+        signal: controller.signal
+      });
+    });
+  }, 0);
+}
+
+function showMonumentStackPopup(lngLat, records, options = {}) {
+  if (!map || !Array.isArray(records) || records.length === 0) return;
+
+  const safeRecords = dedupeMonumentRecords(records);
+
+  const openRecord =
+    typeof options.openRecord === "function"
+      ? options.openRecord
+      : null;
+
+  closeMonumentClickPopup();
+
+  const placement = getStackPopupPlacement(lngLat, safeRecords.length);
+
+  monumentClickPopup = new maplibregl.Popup({
+    closeButton: true,
+    closeOnClick: true,
+    focusAfterOpen: false,
+    anchor: placement.anchor,
+    offset: placement.offset,
+    maxWidth: "min(520px, calc(100vw - 32px))",
+    className: "monument-stack-map-popup"
+  });
+
+  monumentClickPopup.on("close", () => {
+    monumentClickPopup = null;
+  });
+
+  monumentClickPopup
+    .setLngLat(lngLat)
+    .setHTML(renderMonumentStackPopupHtml(safeRecords))
+    .addTo(map);
+
+  resizeMonumentStackPopupToAvailableSpace(
+    monumentClickPopup,
+    lngLat,
+    placement.anchor
+  );
+
+  wireMonumentStackPopupRows(monumentClickPopup, safeRecords, {
+    openRecord,
+    closePopup: closeMonumentClickPopup
+  });
+}
+
+function resizeMonumentStackPopupToAvailableSpace(popup, lngLat, anchor = "bottom") {
+  const popupEl = popup?.getElement?.();
+  const mapContainer = map?.getContainer?.();
+
+  if (!popupEl || !mapContainer || !lngLat) return;
+
+  const contentEl = popupEl.querySelector(".map-popup-stack");
+  const listEl = popupEl.querySelector(".map-popup-record-list");
+
+  if (!contentEl || !listEl) return;
+
+  const mapHeight = mapContainer.clientHeight || 500;
+  const point = map.project(lngLat);
+
+  const margin = 28;
+
+  const availableHeight =
+    anchor === "top"
+      ? Math.max(180, mapHeight - point.y - margin)
+      : Math.max(180, point.y - margin);
+
+  const maxPopupHeight = Math.min(500, availableHeight);
+
+  contentEl.style.maxHeight = `${maxPopupHeight}px`;
+  contentEl.style.overflow = "hidden";
+
+  const nonListHeight = contentEl.offsetHeight - listEl.offsetHeight;
+  const maxListHeight = Math.max(90, maxPopupHeight - nonListHeight - 16);
+
+  listEl.style.maxHeight = `${maxListHeight}px`;
+  listEl.style.overflowY = "auto";
+}
+
+function showStackedRecordsInResults(records) {
+  const safeRecords = dedupeMonumentRecords(records);
+
+  monumentListRecords = safeRecords;
+  monumentTotalCount = safeRecords.length;
+  monumentTotalIsExact = true;
+  monumentPageOffset = 0;
+
+  renderMonumentResultsList(monumentListRecords);
+  updateShowResultsOnMapButton();
+  renderActiveFilterChips();
+  updateMapStatusLine();
+
+  if (resultsList) {
+    resultsList.scrollIntoView({
+      behavior: "smooth",
+      block: "nearest"
+    });
+  }
+}
+
 function bindMonumentLayerEvents() {
- if (!map || monumentsLayerEventsBound) return;
+  if (!map || monumentsLayerEventsBound) return;
 
   function handleClusterClick(sourceId, clusterLayerIds) {
     clusterLayerIds.forEach((clusterLayerId) => {
@@ -8447,56 +8967,131 @@ function bindMonumentLayerEvents() {
 
   // Backend-generated national clusters.
   // These are not MapLibre client clusters, so do not use getClusterExpansionZoom().
-    [
-      "national-cluster-circles",
-      "national-cluster-counts"
-    ].forEach((layerId) => {
-      if (!map.getLayer(layerId)) return;
+  [
+    "national-cluster-circles",
+    "national-cluster-counts"
+  ].forEach((layerId) => {
+    if (!map.getLayer(layerId)) return;
 
-      map.on("click", layerId, (event) => {
-        const feature = event.features?.[0];
-        const coords = feature?.geometry?.coordinates;
+    map.on("click", layerId, (event) => {
+      const feature = event.features?.[0];
+      const coords = feature?.geometry?.coordinates;
 
-        if (!Array.isArray(coords)) return;
+      if (!Array.isArray(coords)) return;
 
-        map.easeTo({
-          center: coords,
-          zoom: Math.min(map.getZoom() + 2, 10),
-          duration: 500
-        });
-      });
-
-      map.on("mouseenter", layerId, () => {
-        map.getCanvas().style.cursor = "pointer";
-      });
-
-      map.on("mouseleave", layerId, () => {
-        map.getCanvas().style.cursor = "";
+      map.easeTo({
+        center: coords,
+        zoom: Math.min(map.getZoom() + 2, 10),
+        duration: 500
       });
     });
 
-  async function handleMonumentPointClick(e) {
-    const feature = e.features?.[0];
-    if (!feature) return;
+    map.on("mouseenter", layerId, () => {
+      map.getCanvas().style.cursor = "pointer";
+    });
 
-    const clickedId = Number(feature.properties?.id);
-    const clickedScope = feature.properties?.source_scope;
-
-    const record = monumentMapRecords.find(
-      (r) =>
-        Number(r.identity?.id) === clickedId &&
-        String(r.source?.scope || "") === String(clickedScope || "")
-    ) || monumentMapRecords.find(
-      (r) => Number(r.identity?.id) === clickedId
-    );
-
-    if (!record) return;
-
-    await handleMapMonumentOpen(record);
-  }
+    map.on("mouseleave", layerId, () => {
+      map.getCanvas().style.cursor = "";
+    });
+  });
 
   let monumentHoverPopup = null;
   let monumentHoverCloseTimer = null;
+  let monumentHoverStackKey = "";
+
+  function monumentStackRecordsKey(records) {
+    return dedupeMonumentRecords(records)
+      .map((record) => [
+        record?.source?.scope || "",
+        record?.identity?.id || "",
+        record?.identity?.caal_id || ""
+      ].join(":"))
+      .sort()
+      .join("|");
+  }
+
+  function isHoverPopupActuallyHovered() {
+    const popupEl = monumentHoverPopup?.getElement?.();
+    if (!popupEl) return false;
+
+    return popupEl.matches(":hover");
+  }
+
+  function scheduleClearMonumentPointHover(delay = 350) {
+    if (monumentHoverCloseTimer) {
+      clearTimeout(monumentHoverCloseTimer);
+    }
+
+    monumentHoverCloseTimer = setTimeout(() => {
+      monumentHoverCloseTimer = null;
+
+      if (isHoverPopupActuallyHovered()) {
+        return;
+      }
+
+      clearMonumentPointHover();
+    }, delay);
+  }
+
+  function cancelClearMonumentPointHover() {
+    if (monumentHoverCloseTimer) {
+      clearTimeout(monumentHoverCloseTimer);
+      monumentHoverCloseTimer = null;
+    }
+  }
+
+  function clearMonumentPointHover() {
+    if (monumentHoverCloseTimer) {
+      clearTimeout(monumentHoverCloseTimer);
+      monumentHoverCloseTimer = null;
+    }
+
+    if (monumentHoverPopup) {
+      monumentHoverPopup.remove();
+      monumentHoverPopup = null;
+    }
+
+    monumentHoverStackKey = "";
+  }
+
+  function wireHoverPopupPersistence(popupEl) {
+    if (!popupEl || popupEl.dataset.hoverPersistenceWired === "true") return;
+
+    popupEl.dataset.hoverPersistenceWired = "true";
+
+    const keepOpen = (event) => {
+      if (event) {
+        event.stopPropagation();
+      }
+
+      cancelClearMonumentPointHover();
+    };
+
+    const allowClose = (event) => {
+      if (event) {
+        event.stopPropagation();
+      }
+
+      scheduleClearMonumentPointHover();
+    };
+
+    popupEl.addEventListener("mouseenter", keepOpen);
+    popupEl.addEventListener("mouseover", keepOpen);
+    popupEl.addEventListener("mousemove", keepOpen);
+    popupEl.addEventListener("pointerenter", keepOpen);
+    popupEl.addEventListener("pointermove", keepOpen);
+
+    popupEl.addEventListener("mouseleave", allowClose);
+    popupEl.addEventListener("pointerleave", allowClose);
+
+    const listEl = popupEl.querySelector(".map-popup-record-list");
+
+    if (listEl) {
+      ["wheel", "touchmove", "mousemove", "pointermove"].forEach((eventName) => {
+        listEl.addEventListener(eventName, keepOpen);
+      });
+    }
+  }
 
   async function openMapMonumentPreview(record) {
     if (!record) return;
@@ -8515,46 +9110,123 @@ function bindMonumentLayerEvents() {
   }
 
   async function handleMapMonumentOpen(record) {
-  if (!record) return;
-  if (monumentRecordOpenInProgress) return;
+    if (!record) return;
+    if (monumentRecordOpenInProgress) return;
 
-  /*
-    Keep the existing safety behaviour while editing:
-    map clicks open a preview modal instead of replacing the edited record.
-  */
-  if (monumentIsEditMode) {
-    await openMapMonumentPreview(record);
-    return;
+    /*
+      Keep the existing safety behaviour while editing:
+      map clicks open a preview modal instead of replacing the edited record.
+    */
+    if (monumentIsEditMode) {
+      await openMapMonumentPreview(record);
+      return;
+    }
+
+    clearMonumentPointHover();
+
+    /*
+      If the map is fullscreen, the details pane will not be visible.
+      Exit fullscreen before opening the record directly.
+    */
+    await exitMapFullscreenIfActive();
+
+    await openLightRecordInDetails(record);
   }
 
-  clearMonumentPointHover();
+  async function handleMonumentPointClick(e) {
+    if (!e?.point) return;
 
-  /*
-    If the map is fullscreen, the details pane will not be visible.
-    Exit fullscreen before opening the record directly.
-  */
-  await exitMapFullscreenIfActive();
+    const popupRecords = getMonumentPopupRecordsForPoint(e.point);
+    if (!popupRecords.length) return;
 
-  await openLightRecordInDetails(record);
-}
+    clearMonumentPointHover();
+
+    if (popupRecords.length > 1) {
+      const lngLat = popupRecords[0]?.geometry?.coordinates || e.lngLat;
+
+      showMonumentStackPopup(lngLat, popupRecords, {
+        openRecord: handleMapMonumentOpen
+      });
+
+      return;
+    }
+
+    await handleMapMonumentOpen(popupRecords[0]);
+  }
 
   function handleMonumentPointHover(e) {
+    if (monumentClickPopup) {
+      clearMonumentPointHover();
+      return;
+    }
+
     cancelClearMonumentPointHover();
 
-    const feature = e.features?.[0];
-    if (!feature || !feature.geometry?.coordinates) return;
+    if (!e?.point) return;
 
-    const clickedId = Number(feature.properties?.id);
-    const clickedScope = feature.properties?.source_scope;
+    const popupRecords = getMonumentPopupRecordsForPoint(e.point);
+    if (!popupRecords.length) return;
 
-    const record = monumentMapRecords.find(
-      (r) =>
-        Number(r.identity?.id) === clickedId &&
-        String(r.source?.scope || "") === String(clickedScope || "")
-    ) || monumentMapRecords.find(
-      (r) => Number(r.identity?.id) === clickedId
-    );
+    /*
+      If there is more than one nearby/same-coordinate record, use the same
+      scrollable list popup as click, but without treating it as a permanent
+      click popup.
+    */
+    if (popupRecords.length > 1) {
+      const nextStackKey = monumentStackRecordsKey(popupRecords);
 
+      if (monumentHoverPopup && monumentHoverStackKey === nextStackKey) {
+        return;
+      }
+
+      clearMonumentPointHover();
+      monumentHoverStackKey = nextStackKey;
+
+      const placement = getStackPopupPlacement(
+        popupRecords[0]?.geometry?.coordinates || e.lngLat,
+        popupRecords.length
+      );
+
+      monumentHoverPopup = new maplibregl.Popup({
+        closeButton: false,
+        closeOnClick: false,
+        focusAfterOpen: false,
+        anchor: placement.anchor,
+        offset: placement.offset,
+        maxWidth: "min(520px, calc(100vw - 32px))",
+        className: "monument-stack-map-popup monument-stack-hover-popup"
+      });
+
+      const lngLat = popupRecords[0]?.geometry?.coordinates || e.lngLat;
+
+      monumentHoverPopup
+        .setLngLat(lngLat)
+        .setHTML(renderMonumentStackPopupHtml(popupRecords))
+        .addTo(map);
+
+      resizeMonumentStackPopupToAvailableSpace(
+        monumentHoverPopup,
+        lngLat,
+        placement.anchor
+      );
+
+      wireMonumentStackPopupRows(monumentHoverPopup, popupRecords, {
+        openRecord: handleMapMonumentOpen,
+        closePopup: clearMonumentPointHover,
+        keepOpen: cancelClearMonumentPointHover
+      });
+
+      const popupEl = monumentHoverPopup?.getElement?.();
+      wireHoverPopupPersistence(popupEl);
+
+      return;
+    }
+
+    /*
+      Only fall back to single-record hover once the current zoom/tolerance
+      makes the point separable.
+    */
+    const record = popupRecords[0];
     if (!record) return;
 
     if (!monumentHoverPopup) {
@@ -8566,7 +9238,7 @@ function bindMonumentLayerEvents() {
     }
 
     monumentHoverPopup
-      .setLngLat(feature.geometry.coordinates)
+      .setLngLat(record.geometry?.coordinates || e.lngLat)
       .setHTML(`
         <div class="map-popup">
           <button
@@ -8588,8 +9260,7 @@ function bindMonumentLayerEvents() {
       const popupEl = monumentHoverPopup?.getElement?.();
       if (!popupEl) return;
 
-      popupEl.addEventListener("mouseenter", cancelClearMonumentPointHover);
-      popupEl.addEventListener("mouseleave", scheduleClearMonumentPointHover);
+      wireHoverPopupPersistence(popupEl);
 
       const popupTitleBtn = popupEl.querySelector(
         `.map-hover-preview-btn[data-monument-id="${record.identity?.id}"][data-monument-scope="${record.source?.scope || ""}"]`
@@ -8608,40 +9279,14 @@ function bindMonumentLayerEvents() {
     }, 0);
   }
 
-  function scheduleClearMonumentPointHover() {
-    if (monumentHoverCloseTimer) {
-      clearTimeout(monumentHoverCloseTimer);
-    }
-
-    monumentHoverCloseTimer = setTimeout(() => {
-      clearMonumentPointHover();
-    }, 250);
-  }
-
-  function cancelClearMonumentPointHover() {
-    if (monumentHoverCloseTimer) {
-      clearTimeout(monumentHoverCloseTimer);
-      monumentHoverCloseTimer = null;
-    }
-  }
-
-  function clearMonumentPointHover() {
-    if (monumentHoverCloseTimer) {
-      clearTimeout(monumentHoverCloseTimer);
-      monumentHoverCloseTimer = null;
-    }
-
-    if (monumentHoverPopup) {
-      monumentHoverPopup.remove();
-    }
-  }
-
   [
     "national-cluster-points",
     "monuments-national-layer",
     "monuments-all-caal-layer",
     "monuments-workspace-layer"
   ].forEach((layerId) => {
+    if (!map.getLayer(layerId)) return;
+
     map.on("click", layerId, handleMonumentPointClick);
 
     map.on("mouseenter", layerId, (e) => {
@@ -8653,12 +9298,22 @@ function bindMonumentLayerEvents() {
 
     map.on("mouseleave", layerId, () => {
       map.getCanvas().style.cursor = "";
-      scheduleClearMonumentPointHover();
+      scheduleClearMonumentPointHover(800);
     });
   });
+
   monumentsLayerEventsBound = true;
 }
 
+function closeMonumentClickPopup() {
+  if (monumentClickPopup) {
+    monumentClickPopup.remove();
+    monumentClickPopup = null;
+  }
+}
+
+
+//
 function drawMonumentRecords(records) {
   if (!map || !mapLoaded) return;
 
@@ -9363,6 +10018,7 @@ function renderMonumentDisplayMode(record) {
     : `<span class="record-status-badge record-status-readonly">${t("read_only", "Read-only")}</span>`;
     
   const locationHtml = [
+    renderLocationStackWarning(record),
     mRenderDetailItem(mLabel("Longitude", "Longitude"), mDisplayLongitude(record)),
     mRenderDetailItem(mLabel("Latitude", "Latitude"), mDisplayLatitude(record)),
     mRenderDetailItem(mLabel("Altitude", "Altitude"), mRaw(record, "Altitude")),
@@ -9622,6 +10278,7 @@ function renderMonumentDisplayMode(record) {
 
   wireRelatedRecordChips();
   wireMasterIdChip();
+  wireLocationStackWarningButtons(record);
 
   const showRelatedMapBtn = document.getElementById("showRelatedMonumentsOnMapBtn");
   const clearRelatedMapBtn = document.getElementById("clearRelatedMonumentsMapBtn");
@@ -9835,6 +10492,8 @@ function renderMonumentEditMode(record) {
             <span class="detail-section-title">${t("location", "Location")}</span>
           </div>
 
+          ${renderLocationStackWarning(record)}
+
           <div class="detail-item full-width">
             <button type="button" class="action-btn primary" id="monumentInlinePickPointBtn">
               ${mLabel("Select point on map", "Select point on map")}
@@ -10034,6 +10693,7 @@ function renderMonumentEditMode(record) {
   wireInlineLocationButtons();
   wireMonumentChangedFieldHighlights(recordDetails);
   wireMonumentCoordinateInputs();
+  wireLocationStackWarningButtons(record);
 
   const zoomBtn = document.getElementById("zoomToSelectedMonumentBtn");
 

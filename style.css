@@ -679,6 +679,141 @@ body {
   box-shadow: 0 0 0 2px rgba(185, 28, 28, 0.16) !important;
 }
 
+.map-popup-stack {
+  min-width: 300px;
+  max-width: 420px;
+}
+
+.map-popup-stack-header {
+  margin-bottom: 0.45rem;
+  color: #263238;
+}
+
+.map-popup-warning {
+  margin: 0.45rem 0;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid #b7791f;
+  border-radius: 0.5rem;
+  background: #fff8e6;
+  color: #5f3b00;
+  font-size: 0.9rem;
+}
+
+.map-popup-warning.compact {
+  font-size: 0.85rem;
+}
+
+.map-popup-record-list {
+  margin-top: 0.5rem;
+  max-height: 280px;
+  overflow-y: auto;
+}
+
+.map-popup-record-row {
+  display: block;
+  width: 100%;
+  padding: 0.5rem 0;
+  border: 0;
+  border-bottom: 1px solid rgba(0, 0, 0, 0.08);
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.map-popup-record-row:hover {
+  background: rgba(0, 0, 0, 0.04);
+}
+
+.map-popup-record-title,
+.map-popup-record-id,
+.map-popup-record-meta {
+  display: block;
+}
+
+.map-popup-record-title {
+  font-weight: 600;
+  color: #334e7d;
+}
+
+.map-popup-record-id,
+.map-popup-record-meta {
+  font-size: 0.85rem;
+  color: #445;
+}
+
+.location-stack-warning .detail-warning {
+  padding: 0.7rem 0.8rem;
+  border: 1px solid #b7791f;
+  border-radius: 0.6rem;
+  background: #fff8e6;
+}
+
+.monument-stack-map-popup .maplibregl-popup-close-button {
+  width: 34px;
+  height: 34px;
+  font-size: 22px;
+  line-height: 30px;
+  border-radius: 999px;
+  color: #263238;
+  background: rgba(255, 255, 255, 0.92);
+  z-index: 5;
+}
+
+.monument-stack-map-popup .maplibregl-popup-close-button:hover {
+  background: #eef3f2;
+}
+
+.monument-stack-map-popup .maplibregl-popup-content {
+  padding: 0;
+  border-radius: 12px;
+  overflow: visible;
+}
+
+.monument-stack-map-popup .maplibregl-popup-close-button {
+  width: 34px;
+  height: 34px;
+  font-size: 22px;
+  line-height: 30px;
+  border-radius: 999px;
+  color: #263238;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+  z-index: 10;
+}
+
+.monument-stack-map-popup .maplibregl-popup-close-button:hover {
+  background: #eef3f2;
+}
+
+.map-popup-stack {
+  width: min(520px, calc(100vw - 32px));
+  padding: 1rem;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.map-popup-record-list {
+  margin-top: 0.75rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.monument-stack-hover-popup .map-popup-record-list {
+  pointer-events: auto;
+}
+
+.monument-stack-hover-popup .map-popup-record-row {
+  pointer-events: auto;
+}
+
+.monument-stack-hover-popup,
+.monument-stack-hover-popup .maplibregl-popup-content,
+.monument-stack-hover-popup .map-popup-stack,
+.monument-stack-hover-popup .map-popup-record-list,
+.monument-stack-hover-popup .map-popup-record-row {
+  pointer-events: auto !important;
+}
+
 .results-empty {
   color: var(--muted);
   font-size: 0.92rem;
