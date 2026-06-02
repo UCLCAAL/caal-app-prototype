@@ -8619,7 +8619,7 @@ function renderMonumentStackPopupHtml(records) {
       ? `<div class="map-popup-overflow">
           ${t(
             "popup_record_limit_notice",
-            "Showing first 50 records in the popup. Use Open all in results to view the full set."
+            "Showing first 50 records in the popup. Use Show in results list to view the full set."
           )}
         </div>`
       : "";
@@ -8642,7 +8642,7 @@ function renderMonumentStackPopupHtml(records) {
       ${
         isStack
           ? `<button type="button" class="action-btn primary map-popup-open-all">
-              ${t("open_all_in_results", "Open all in results")}
+              ${t("show_in_results_list", "Show in results list")}
             </button>`
           : ""
       }
