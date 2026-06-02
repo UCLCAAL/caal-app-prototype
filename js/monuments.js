@@ -3736,6 +3736,9 @@ function mBuildSavePayload() {
       )
   );
 
+  mApplyAdminSubdivisionRowsToPayload(payload);
+  mApplyMeasurementRowsToPayload(payload);
+
   /*
   Recalculate only where the date fields are blank or still system-generated.
   User-edited Start Date and End Date must not be overwritten.
@@ -3904,7 +3907,17 @@ function mRenderSelect(fieldName, label, lookupName, currentValue, fullWidth = f
     .map((item) => {
       const value = item.value ?? "";
       const selected = String(value) === String(currentValue ?? "") ? "selected" : "";
-      return `<option value="${value}" ${selected}>${item.label ?? value}</option>`;
+      const label = item.label ?? value;
+
+      return `
+        <option
+          value="${mAttributeValue(value)}"
+          title="${mAttributeValue(label)}"
+          ${selected}
+        >
+          ${label}
+        </option>
+      `;
     })
     .join("");
 
@@ -3916,12 +3929,545 @@ function mRenderSelect(fieldName, label, lookupName, currentValue, fullWidth = f
         class="form-control"
         data-field-name="${fieldName}"
         data-original-value="${mAttributeValue(currentValue ?? "")}"
+        title="${mAttributeValue(mLookupLabel(lookupName, currentValue) || "")}"
       >
         <option value=""></option>
         ${optionsHtml}
       </select>
     </div>
   `;
+}
+
+const MONUMENT_REPEATABLE_MAX = 4;
+
+function mRepeatableHasAnyValue(...values) {
+  return values.some((value) => {
+    return value !== null &&
+      value !== undefined &&
+      String(value).trim() !== "";
+  });
+}
+
+function mBlankAdminSubdivisionRow() {
+  return {
+    name: "",
+    type: ""
+  };
+}
+
+function mBlankMeasurementRow() {
+  return {
+    value: "",
+    unit: "",
+    type: ""
+  };
+}
+
+function getMonumentAdminSubdivisionRows(record, { includeBlank = false } = {}) {
+  const rows = [];
+
+  for (let i = 1; i <= MONUMENT_REPEATABLE_MAX; i += 1) {
+    const name = mRaw(record, `Administrative Subdivision Name${i}`) || "";
+    const type = mRaw(record, `Administrative Subdivision Type${i}`) || "";
+
+    if (mRepeatableHasAnyValue(name, type)) {
+      rows.push({
+        name,
+        type
+      });
+    }
+  }
+
+  if (includeBlank && rows.length === 0) {
+    rows.push(mBlankAdminSubdivisionRow());
+  }
+
+  return rows.slice(0, MONUMENT_REPEATABLE_MAX);
+}
+
+function getMonumentMeasurementRows(record, { includeBlank = false } = {}) {
+  const rows = [];
+
+  for (let i = 1; i <= MONUMENT_REPEATABLE_MAX; i += 1) {
+    const value = mRaw(record, `Measurement Value${i}`) || "";
+    const unit = mRaw(record, `Measurement Unit${i}`) || "";
+    const type = mRaw(record, `Measurement Type${i}`) || "";
+
+    if (mRepeatableHasAnyValue(value, unit, type)) {
+      rows.push({
+        value,
+        unit,
+        type
+      });
+    }
+  }
+
+  if (includeBlank && rows.length === 0) {
+    rows.push(mBlankMeasurementRow());
+  }
+
+  return rows.slice(0, MONUMENT_REPEATABLE_MAX);
+}
+
+function mAdminSubdivisionTitle(index) {
+  return t("subdivision_number", "Subdivision {number}")
+    .replace("{number}", index);
+}
+
+function mMeasurementTitle(index) {
+  return t("measurement_number", "Measurement {number}")
+    .replace("{number}", index);
+}
+
+function mRepeatableNameLabel() {
+  return t("name", "Name");
+}
+
+function mRenderAdminSubdivisionDisplayRows(record) {
+  const rows = getMonumentAdminSubdivisionRows(record);
+
+  return rows.map((row, index) => {
+    const displayIndex = index + 1;
+
+    return `
+      <div class="measurement-row measurement-row-readonly monument-repeatable-display-row">
+        <div class="measurement-row-title">
+          ${mAdminSubdivisionTitle(displayIndex)}
+        </div>
+
+        <div class="measurement-row-fields">
+          <div class="measurement-field">
+            <span class="detail-label">${t("name", "Name")}</span>
+            <div class="detail-value">${mSafeValue(row.name)}</div>
+          </div>
+
+          <div class="measurement-field">
+            <span class="detail-label">${mLabel("Type", "Type")}</span>
+            <div class="detail-value">${mSafeValue(mLookupLabel("admin_subdivision_type", row.type))}</div>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+function mRenderMeasurementDisplayRows(record) {
+  const rows = getMonumentMeasurementRows(record);
+
+  return rows.map((row, index) => {
+    const displayIndex = index + 1;
+
+    return `
+      <div class="measurement-row measurement-row-readonly">
+        <div class="measurement-row-title">
+          ${mMeasurementTitle(displayIndex)}
+        </div>
+
+        <div class="measurement-row-fields">
+          <div class="measurement-field">
+            <span class="detail-label">${mLabel("Value", "Value")}</span>
+            <div class="detail-value">${mSafeValue(row.value)}</div>
+          </div>
+
+          <div class="measurement-field">
+            <span class="detail-label">${mLabel("Unit", "Unit")}</span>
+            <div class="detail-value">${mSafeValue(mLookupLabel("measurement_unit", row.unit))}</div>
+          </div>
+
+          <div class="measurement-field">
+            <span class="detail-label">${mLabel("Type", "Type")}</span>
+            <div class="detail-value">${mSafeValue(mLookupLabel("measurement_type", row.type))}</div>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join("");
+}
+
+function mRenderAdminSubdivisionEditor(record) {
+  const rows = getMonumentAdminSubdivisionRows(record, { includeBlank: true });
+
+  const rowHtml = Array.from({ length: MONUMENT_REPEATABLE_MAX }, (_, idx) => {
+    const index = idx + 1;
+    const row = rows[idx] || mBlankAdminSubdivisionRow();
+    const hidden = idx >= rows.length ? "hidden" : "";
+    const removeHidden = rows.length <= 1 ? "hidden" : "";
+
+    return `
+      <div
+        class="monument-repeatable-row monument-admin-row"
+        data-repeatable-row
+        data-repeatable-index="${index}"
+        ${hidden}
+      >
+        ${
+          rows.length > 1
+            ? `
+              <div class="measurement-row-title monument-repeatable-row-header">
+                <span></span>
+
+                <button
+                  type="button"
+                  class="action-btn subtle monument-repeatable-remove"
+                  data-repeatable-remove
+                  ${removeHidden}
+                >
+                  ${t("remove", "Remove")}
+                </button>
+              </div>
+            `
+            : ""
+        }
+
+        <div class="measurement-row-fields">
+          ${mRenderTextInput(
+            `Administrative Subdivision Name${index}`,
+            mLabel(
+              `Administrative Subdivision Name${index}`,
+              `Administrative Subdivision Name${index}`
+            ),
+            row.name
+          )}
+
+          ${mRenderSelect(
+            `Administrative Subdivision Type${index}`,
+            mLabel("Type", "Type"),
+            "admin_subdivision_type",
+            row.type
+          )}
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  const addHidden = rows.length >= MONUMENT_REPEATABLE_MAX ? "hidden" : "";
+
+  return `
+    <div
+      class="detail-item full-width monument-repeatable-group"
+      data-repeatable-kind="admin"
+      data-repeatable-max="${MONUMENT_REPEATABLE_MAX}"
+    >
+      ${rowHtml}
+
+      <button
+        type="button"
+        class="action-btn monument-repeatable-add"
+        data-repeatable-add
+        ${addHidden}
+      >
+        ${t("add_another_administrative_subdivision", "+ Add another administrative subdivision")}
+      </button>
+    </div>
+  `;
+}
+
+function mRenderMeasurementEditor(record) {
+  const rows = getMonumentMeasurementRows(record, { includeBlank: true });
+
+  const rowHtml = Array.from({ length: MONUMENT_REPEATABLE_MAX }, (_, idx) => {
+    const index = idx + 1;
+    const row = rows[idx] || mBlankMeasurementRow();
+    const hidden = idx >= rows.length ? "hidden" : "";
+    const removeHidden = rows.length <= 1 ? "hidden" : "";
+
+    return `
+      <div
+        class="monument-repeatable-row measurement-row measurement-row-edit"
+        data-repeatable-row
+        data-repeatable-index="${index}"
+        ${hidden}
+      >
+        ${
+          rows.length > 1
+            ? `
+              <div class="measurement-row-title monument-repeatable-row-header">
+                <span></span>
+
+                <button
+                  type="button"
+                  class="action-btn subtle monument-repeatable-remove"
+                  data-repeatable-remove
+                  ${removeHidden}
+                >
+                  ${t("remove", "Remove")}
+                </button>
+              </div>
+            `
+            : ""
+        }
+
+        <div class="measurement-row-fields">
+          ${mRenderNumberInput(
+            `Measurement Value${index}`,
+            mLabel("Value", "Value"),
+            row.value
+          )}
+
+          ${mRenderSelect(
+            `Measurement Unit${index}`,
+            mLabel("Unit", "Unit"),
+            "measurement_unit",
+            row.unit
+          )}
+
+          ${mRenderSelect(
+            `Measurement Type${index}`,
+            mLabel("Type", "Type"),
+            "measurement_type",
+            row.type
+          )}
+        </div>
+      </div>
+    `;
+  }).join("");
+
+  const addHidden = rows.length >= MONUMENT_REPEATABLE_MAX ? "hidden" : "";
+
+  return `
+    <div
+      class="detail-item full-width monument-repeatable-group"
+      data-repeatable-kind="measurement"
+      data-repeatable-max="${MONUMENT_REPEATABLE_MAX}"
+    >
+      ${rowHtml}
+
+      <button
+        type="button"
+        class="action-btn monument-repeatable-add"
+        data-repeatable-add
+        ${addHidden}
+      >
+        ${t("add_another_measurement", "+ Add another measurement")}
+      </button>
+    </div>
+  `;
+}
+
+function mRepeatableFieldsForKind(kind, index) {
+  if (kind === "admin") {
+    return [
+      `Administrative Subdivision Name${index}`,
+      `Administrative Subdivision Type${index}`
+    ];
+  }
+
+  if (kind === "measurement") {
+    return [
+      `Measurement Value${index}`,
+      `Measurement Unit${index}`,
+      `Measurement Type${index}`
+    ];
+  }
+
+  return [];
+}
+
+function mReadRepeatableDomRow(kind, index) {
+  if (kind === "admin") {
+    return {
+      name: mGetInputValue(`Administrative Subdivision Name${index}`),
+      type: mGetInputValue(`Administrative Subdivision Type${index}`)
+    };
+  }
+
+  if (kind === "measurement") {
+    return {
+      value: mGetInputValue(`Measurement Value${index}`),
+      unit: mGetInputValue(`Measurement Unit${index}`),
+      type: mGetInputValue(`Measurement Type${index}`)
+    };
+  }
+
+  return null;
+}
+
+function mRepeatableDomRowHasValue(kind, row) {
+  if (!row) return false;
+
+  if (kind === "admin") {
+    return mRepeatableHasAnyValue(row.name, row.type);
+  }
+
+  if (kind === "measurement") {
+    return mRepeatableHasAnyValue(row.value, row.unit, row.type);
+  }
+
+  return false;
+}
+
+function mBlankRepeatableRow(kind) {
+  return kind === "measurement"
+    ? mBlankMeasurementRow()
+    : mBlankAdminSubdivisionRow();
+}
+
+function mVisibleRepeatableRowsFromDom(group) {
+  const kind = group?.dataset?.repeatableKind;
+  if (!kind) return [];
+
+  return Array.from(group.querySelectorAll("[data-repeatable-row]"))
+    .filter((rowEl) => !rowEl.hidden)
+    .map((rowEl) => {
+      const index = Number(rowEl.dataset.repeatableIndex || 0);
+      return {
+        slotIndex: index,
+        value: mReadRepeatableDomRow(kind, index)
+      };
+    })
+    .filter((row) => row.slotIndex > 0);
+}
+
+function mSetInputValue(fieldName, value) {
+  const input = document.getElementById(mInputId(fieldName));
+  if (!input) return;
+
+  input.value = value ?? "";
+  updateMonumentChangedFieldState(input);
+}
+
+function mWriteRepeatableRowsToDom(group, rows) {
+  const kind = group?.dataset?.repeatableKind;
+  const max = Number(group?.dataset?.repeatableMax || MONUMENT_REPEATABLE_MAX);
+
+  if (!kind || !max) return;
+
+  const cleanRows = Array.isArray(rows)
+    ? rows.slice(0, max)
+    : [];
+
+  const rowsToShow = cleanRows.length
+    ? cleanRows
+    : [mBlankRepeatableRow(kind)];
+
+  for (let index = 1; index <= max; index += 1) {
+    const rowEl = group.querySelector(`[data-repeatable-row][data-repeatable-index="${index}"]`);
+    const rowValue = rowsToShow[index - 1] || mBlankRepeatableRow(kind);
+    const isVisible = index <= rowsToShow.length;
+
+    if (rowEl) {
+      rowEl.hidden = !isVisible;
+
+      const titleEl = rowEl.querySelector("[data-repeatable-row-title]");
+      if (titleEl && kind === "measurement") {
+        titleEl.textContent = mLabel(`Measurement ${index}`, `Measurement ${index}`);
+      }
+    }
+
+    if (kind === "admin") {
+      mSetInputValue(`Administrative Subdivision Name${index}`, isVisible ? rowValue.name : "");
+      mSetInputValue(`Administrative Subdivision Type${index}`, isVisible ? rowValue.type : "");
+    }
+
+    if (kind === "measurement") {
+      mSetInputValue(`Measurement Value${index}`, isVisible ? rowValue.value : "");
+      mSetInputValue(`Measurement Unit${index}`, isVisible ? rowValue.unit : "");
+      mSetInputValue(`Measurement Type${index}`, isVisible ? rowValue.type : "");
+    }
+  }
+
+  mUpdateRepeatableGroupButtons(group);
+}
+
+function mUpdateRepeatableGroupButtons(group) {
+  const visibleRows = Array.from(group.querySelectorAll("[data-repeatable-row]"))
+    .filter((rowEl) => !rowEl.hidden);
+
+  const addBtn = group.querySelector("[data-repeatable-add]");
+  if (addBtn) {
+    addBtn.hidden = visibleRows.length >= MONUMENT_REPEATABLE_MAX;
+  }
+
+  visibleRows.forEach((rowEl) => {
+    const removeBtn = rowEl.querySelector("[data-repeatable-remove]");
+    if (removeBtn) {
+      removeBtn.hidden = visibleRows.length <= 1;
+    }
+  });
+}
+
+function wireMonumentRepeatableGroups() {
+  if (!recordDetails) return;
+
+  recordDetails.querySelectorAll(".monument-repeatable-group").forEach((group) => {
+    if (group.dataset.repeatableWired === "true") {
+      mUpdateRepeatableGroupButtons(group);
+      return;
+    }
+
+    group.dataset.repeatableWired = "true";
+
+    const addBtn = group.querySelector("[data-repeatable-add]");
+    if (addBtn) {
+      addBtn.addEventListener("click", () => {
+        const rows = mVisibleRepeatableRowsFromDom(group).map((row) => row.value);
+
+        if (rows.length >= MONUMENT_REPEATABLE_MAX) return;
+
+        rows.push(mBlankRepeatableRow(group.dataset.repeatableKind));
+        mWriteRepeatableRowsToDom(group, rows);
+
+        monumentIsDirty = true;
+      });
+    }
+
+    group.querySelectorAll("[data-repeatable-remove]").forEach((removeBtn) => {
+      removeBtn.addEventListener("click", () => {
+        const rowEl = removeBtn.closest("[data-repeatable-row]");
+        const removeIndex = Number(rowEl?.dataset?.repeatableIndex || 0);
+
+        const rows = mVisibleRepeatableRowsFromDom(group)
+          .filter((row) => row.slotIndex !== removeIndex)
+          .map((row) => row.value)
+          .filter((row) => mRepeatableDomRowHasValue(group.dataset.repeatableKind, row));
+
+        mWriteRepeatableRowsToDom(group, rows.length ? rows : [mBlankRepeatableRow(group.dataset.repeatableKind)]);
+
+        monumentIsDirty = true;
+      });
+    });
+
+    mUpdateRepeatableGroupButtons(group);
+  });
+}
+
+function mApplyAdminSubdivisionRowsToPayload(payload) {
+  const group = recordDetails?.querySelector('.monument-repeatable-group[data-repeatable-kind="admin"]');
+
+  const rows = group
+    ? mVisibleRepeatableRowsFromDom(group)
+        .map((row) => row.value)
+        .filter((row) => mRepeatableDomRowHasValue("admin", row))
+    : [];
+
+  for (let i = 1; i <= MONUMENT_REPEATABLE_MAX; i += 1) {
+    const row = rows[i - 1] || mBlankAdminSubdivisionRow();
+
+    payload[`Administrative Subdivision Name${i}`] = row.name || "";
+    payload[`Administrative Subdivision Type${i}`] = row.type || "";
+  }
+
+  return payload;
+}
+
+function mApplyMeasurementRowsToPayload(payload) {
+  const group = recordDetails?.querySelector('.monument-repeatable-group[data-repeatable-kind="measurement"]');
+
+  const rows = group
+    ? mVisibleRepeatableRowsFromDom(group)
+        .map((row) => row.value)
+        .filter((row) => mRepeatableDomRowHasValue("measurement", row))
+    : [];
+
+  for (let i = 1; i <= MONUMENT_REPEATABLE_MAX; i += 1) {
+    const row = rows[i - 1] || mBlankMeasurementRow();
+
+    payload[`Measurement Value${i}`] = row.value || "";
+    payload[`Measurement Unit${i}`] = row.unit || "";
+    payload[`Measurement Type${i}`] = row.type || "";
+  }
+
+  return payload;
 }
 
 function mRenderMeasurementDisplaySet(index, record) {
@@ -10109,24 +10655,10 @@ function renderMonumentDisplayMode(record) {
     mRenderDetailItem(mLabel("Additional Notes", "Additional Notes"), mRaw(record, "Additional Notes"), true)
   ].join("");
 
-  const adminHtml = [
-    mRenderDetailItem(mLabel("Administrative Subdivision Name1", "Administrative Subdivision Name1"), mRaw(record, "Administrative Subdivision Name1")),
-    mRenderDetailItem(mLabel("Administrative Subdivision Type1", "Administrative Subdivision Type1"), mLookupLabel("admin_subdivision_type", mRaw(record, "Administrative Subdivision Type1"))),
-    mRenderDetailItem(mLabel("Administrative Subdivision Name2", "Administrative Subdivision Name2"), mRaw(record, "Administrative Subdivision Name2")),
-    mRenderDetailItem(mLabel("Administrative Subdivision Type2", "Administrative Subdivision Type2"), mLookupLabel("admin_subdivision_type", mRaw(record, "Administrative Subdivision Type2"))),
-    mRenderDetailItem(mLabel("Administrative Subdivision Name3", "Administrative Subdivision Name3"), mRaw(record, "Administrative Subdivision Name3")),
-    mRenderDetailItem(mLabel("Administrative Subdivision Type3", "Administrative Subdivision Type3"), mLookupLabel("admin_subdivision_type", mRaw(record, "Administrative Subdivision Type3"))),
-    mRenderDetailItem(mLabel("Administrative Subdivision Name4", "Administrative Subdivision Name4"), mRaw(record, "Administrative Subdivision Name4")),
-    mRenderDetailItem(mLabel("Administrative Subdivision Type4", "Administrative Subdivision Type4"), mLookupLabel("admin_subdivision_type", mRaw(record, "Administrative Subdivision Type4")))
-  ].join("");
+  const adminHtml = mRenderAdminSubdivisionDisplayRows(record);
+  const adminHasValues = adminHtml.trim() !== "";
 
-  const measurementsHtml = `
-  ${mRenderMeasurementDisplaySet(1, record)}
-  ${mRenderMeasurementDisplaySet(2, record)}
-  ${mRenderMeasurementDisplaySet(3, record)}
-  ${mRenderMeasurementDisplaySet(4, record)}
-`;
-
+  const measurementsHtml = mRenderMeasurementDisplayRows(record);
   const measurementsHasValues = measurementsHtml.trim() !== "";
 
   const relatedIds = getRelatedIdsFromRecord(record);
@@ -10250,7 +10782,7 @@ function renderMonumentDisplayMode(record) {
     <div class="group-stack">
       ${mRenderGroupBlock(t("basic", "Basic"), basicHtml, true)}
       ${mRenderGroupBlock(t("nav_monuments", "Monuments"), monumentHtml, true)}
-      ${mRenderGroupBlock(t("administration", "Administration"), adminHtml, true)}
+      ${mRenderGroupBlock(t("administration", "Administration"), adminHtml, adminHasValues)}
       ${mRenderGroupBlock(t("measurements", "Measurements"), measurementsHtml, measurementsHasValues)}
       ${mRenderGroupBlock(t("location", "Location"), locationHtml, true)}
       ${mRenderGroupBlock(t("related_resources", "Related Resources"), relatedHtml, true)}
@@ -10431,37 +10963,6 @@ async function showRelatedMonumentsOnMap(record = monumentSelectedRecord) {
 // --------------------------------------------------------
 // Edit mode
 // --------------------------------------------------------
-function mRenderMeasurementEditSet(index, record) {
-  return `
-    <div class="measurement-row measurement-row-edit">
-      <div class="measurement-row-title">
-        ${mLabel(`Measurement ${index}`, `Measurement ${index}`)}
-      </div>
-
-      <div class="measurement-row-fields">
-        ${mRenderNumberInput(
-          `Measurement Value${index}`,
-          mLabel("Value", "Value"),
-          mRaw(record, `Measurement Value${index}`)
-        )}
-
-        ${mRenderSelect(
-          `Measurement Unit${index}`,
-          mLabel("Unit", "Unit"),
-          "measurement_unit",
-          mRaw(record, `Measurement Unit${index}`)
-        )}
-
-        ${mRenderSelect(
-          `Measurement Type${index}`,
-          mLabel("Type", "Type"),
-          "measurement_type",
-          mRaw(record, `Measurement Type${index}`)
-        )}
-      </div>
-    </div>
-  `;
-}
 
 function renderMonumentEditMode(record) {
   recordDetails.innerHTML = `
@@ -10604,14 +11105,7 @@ function renderMonumentEditMode(record) {
           <div class="detail-item full-width section-header">
             <span class="detail-section-title">${t("administration", "Administration")}</span>
           </div>
-          ${mRenderTextInput("Administrative Subdivision Name1", mLabel("Administrative Subdivision Name1", "Administrative Subdivision Name1"), mRaw(record, "Administrative Subdivision Name1"))}
-          ${mRenderSelect("Administrative Subdivision Type1", mLabel("Administrative Subdivision Type1", "Administrative Subdivision Type1"), "admin_subdivision_type", mRaw(record, "Administrative Subdivision Type1"))}
-          ${mRenderTextInput("Administrative Subdivision Name2", mLabel("Administrative Subdivision Name2", "Administrative Subdivision Name2"), mRaw(record, "Administrative Subdivision Name2"))}
-          ${mRenderSelect("Administrative Subdivision Type2", mLabel("Administrative Subdivision Type2", "Administrative Subdivision Type2"), "admin_subdivision_type", mRaw(record, "Administrative Subdivision Type2"))}
-          ${mRenderTextInput("Administrative Subdivision Name3", mLabel("Administrative Subdivision Name3", "Administrative Subdivision Name3"), mRaw(record, "Administrative Subdivision Name3"))}
-          ${mRenderSelect("Administrative Subdivision Type3", mLabel("Administrative Subdivision Type3", "Administrative Subdivision Type3"), "admin_subdivision_type", mRaw(record, "Administrative Subdivision Type3"))}
-          ${mRenderTextInput("Administrative Subdivision Name4", mLabel("Administrative Subdivision Name4", "Administrative Subdivision Name4"), mRaw(record, "Administrative Subdivision Name4"))}
-          ${mRenderSelect("Administrative Subdivision Type4", mLabel("Administrative Subdivision Type4", "Administrative Subdivision Type4"), "admin_subdivision_type", mRaw(record, "Administrative Subdivision Type4"))}
+          ${mRenderAdminSubdivisionEditor(record)}
         </div>
       </div>
 
@@ -10620,10 +11114,7 @@ function renderMonumentEditMode(record) {
           <div class="detail-item full-width section-header">
             <span class="detail-section-title">${t("measurements", "Measurements")}</span>
           </div>
-          ${mRenderMeasurementEditSet(1, record)}
-          ${mRenderMeasurementEditSet(2, record)}
-          ${mRenderMeasurementEditSet(3, record)}
-          ${mRenderMeasurementEditSet(4, record)}
+          ${mRenderMeasurementEditor(record)}
         </div>
       </div>
 
@@ -10705,6 +11196,7 @@ function renderMonumentEditMode(record) {
 
   wireInlineLocationButtons();
   wireMonumentChangedFieldHighlights(recordDetails);
+  wireMonumentRepeatableGroups();
   wireMonumentCoordinateInputs();
   wireLocationStackWarningButtons(record);
 
