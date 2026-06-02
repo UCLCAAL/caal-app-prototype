@@ -1263,7 +1263,7 @@ function archiveRenderFilterChipsForSelect(selectEl, chipsId) {
     updateArchiveChangedFieldState(selectEl);
     return;
   }
-  
+
   selected.forEach((item) => {
     const chip = document.createElement("button");
     chip.type = "button";
@@ -1648,12 +1648,19 @@ function archiveLookupSortLabel(item) {
   ).trim();
 }
 
+const ARCHIVE_ORDERED_LOOKUPS = new Set([
+  "condition_original_material",
+  "copyright_status"
+]);
+
 function archiveLookupOptions(lookupName, { sort = true } = {}) {
   const options = Array.isArray(archiveLookups?.[lookupName])
     ? [...archiveLookups[lookupName]]
     : [];
 
-  if (!sort) {
+  const shouldSort = sort && !ARCHIVE_ORDERED_LOOKUPS.has(lookupName);
+
+  if (!shouldSort) {
     return options;
   }
 
@@ -1686,11 +1693,11 @@ function archiveRenderLookupSingleValue(lookupName, rawValue) {
   return archiveLookupLabel(lookupName, rawValue);
 }
 
-function archiveRenderSelect(fieldName, label, lookupName, currentValue, fullWidth = false) {
+function archiveRenderSelect(fieldName, label, lookupName, currentValue, fullWidth = false, lookupOptions = {}) {
   const inputId = archiveInputId(fieldName);
   const fullWidthClass = fullWidth ? " full-width" : "";
 
-  const optionsHtml = archiveLookupOptions(lookupName)
+  const optionsHtml = archiveLookupOptions(lookupName, lookupOptions)
     .map((item) => {
       const value = item.value ?? "";
       const selected = String(value) === String(currentValue ?? "") ? "selected" : "";
@@ -1955,6 +1962,7 @@ function archiveBuildSavePayload() {
     "Languages of Material": archiveGetMultiSelectValue("Languages of Material"),
     "Script of Material": archiveGetInputValue("Script of Material"),
     "Writing System": archiveGetInputValue("Writing System"),
+    "still_under_copyright": archiveGetInputValue("still_under_copyright"),
     "Copyright Holder Name": archiveGetInputValue("Copyright Holder Name"),
     "Copyright Attribution": archiveGetInputValue("Copyright Attribution"),
     "Digital Folder Name": archiveGetInputValue("Digital Folder Name"),
@@ -3957,7 +3965,9 @@ function archiveRenderEditMode(record) {
     "Condition of Original Material",
     archiveLabel("Condition of Original Material", "Condition of Original Material"),
     "condition_original_material",
-    archiveRaw(record, "Condition of Original Material")
+    archiveRaw(record, "Condition of Original Material"),
+    false,
+    { sort: false }
   );
 
   let publicationHtml = "";
@@ -4014,6 +4024,13 @@ function archiveRenderEditMode(record) {
   );
 
   let digitalHtml = "";
+
+  digitalHtml += archiveRenderSelect(
+    "still_under_copyright",
+    archiveLabel("Still under CopyrightYN", "Still under Copyright?"),
+    "copyright_status",
+    archiveRaw(record, "still_under_copyright") ?? archiveRaw(record, "Still under CopyrightYN")
+  );
   digitalHtml += archiveRenderTextInput("Copyright Holder Name", archiveLabel("Copyright Holder Name", "Copyright Holder Name"), archiveRaw(record, "Copyright Holder Name"), true);
   digitalHtml += archiveRenderTextarea("Copyright Attribution", archiveLabel("Copyright Attribution", "Copyright Attribution"), archiveRaw(record, "Copyright Attribution"), true);
   digitalHtml += archiveRenderTextInput("Digital Folder Name", archiveLabel("Digital Folder Name", "Digital Folder Name"), archiveRaw(record, "Digital Folder Name"), true);

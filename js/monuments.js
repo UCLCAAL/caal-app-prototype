@@ -3545,12 +3545,18 @@ function mLookupSortLabel(item) {
   ).trim();
 }
 
+const MONUMENT_ORDERED_LOOKUPS = new Set([
+  "location_confidence"
+]);
+
 function mLookupOptions(lookupName, { sort = true } = {}) {
   const options = Array.isArray(monumentLookups?.[lookupName])
     ? [...monumentLookups[lookupName]]
     : [];
 
-  if (!sort) {
+  const shouldSort = sort && !MONUMENT_ORDERED_LOOKUPS.has(lookupName);
+
+  if (!shouldSort) {
     return options;
   }
 
@@ -3890,11 +3896,11 @@ function mRenderReadOnlyItem(label, value, fullWidth = false) {
   return mRenderDetailItem(label, value, fullWidth);
 }
 
-function mRenderSelect(fieldName, label, lookupName, currentValue, fullWidth = false) {
+function mRenderSelect(fieldName, label, lookupName, currentValue, fullWidth = false, lookupOptions = {}) {
   const inputId = mInputId(fieldName);
   const fullWidthClass = fullWidth ? " full-width" : "";
 
-  const optionsHtml = mLookupOptions(lookupName)
+  const optionsHtml = mLookupOptions(lookupName, lookupOptions)
     .map((item) => {
       const value = item.value ?? "";
       const selected = String(value) === String(currentValue ?? "") ? "selected" : "";
@@ -10511,7 +10517,14 @@ function renderMonumentEditMode(record) {
           ${mRenderNumberInput("Longitude", mLabel("Longitude", "Longitude"), mRaw(record, "Longitude"), "0.000001")}
           ${mRenderNumberInput("Latitude", mLabel("Latitude", "Latitude"), mRaw(record, "Latitude"), "0.000001")}
           ${mRenderNumberInput("Altitude", mLabel("Altitude", "Altitude"), mRaw(record, "Altitude"), "any")}
-          ${mRenderSelect("Location Confidence", mLabel("Location Confidence", "Location Confidence"), "location_confidence", mRaw(record, "Location Confidence"))}
+          ${mRenderSelect(
+            "Location Confidence",
+            mLabel("Location Confidence", "Location Confidence"),
+            "location_confidence",
+            mRaw(record, "Location Confidence"),
+            false,
+            { sort: false }
+          )}
           ${mRenderTextarea("Location Notes", mLabel("Location Notes", "Location Notes"), mRaw(record, "Location Notes"), true)}
           ${mRenderTextInput("Primary Address", mLabel("Primary Address", "Primary Address"), mRaw(record, "Primary Address"), true)}
         </div>
