@@ -922,6 +922,107 @@ body {
   }
 }
 
+.monument-stack-map-popup .maplibregl-popup-content {
+  padding: 0;
+  border-radius: 12px;
+  overflow: visible;
+}
+
+.monument-stack-map-popup .map-popup-stack {
+  width: min(520px, calc(100vw - 32px));
+  padding: 1rem;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.monument-stack-map-popup .map-popup-record-list {
+  margin-top: 0.75rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.monument-single-hover-popup .maplibregl-popup-content {
+  padding: 0.85rem 1rem;
+  border-radius: 10px;
+  max-width: 300px;
+  overflow: hidden;
+}
+
+.monument-single-hover-popup .map-popup {
+  max-width: 270px;
+  font-size: 0.95rem;
+  line-height: 1.35;
+}
+
+.monument-single-hover-popup .map-popup-title-btn {
+  display: block;
+  max-width: 100%;
+  margin: 0 0 0.35rem;
+  font-size: 1rem;
+  line-height: 1.25;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
+.monument-single-hover-popup .popup-meta,
+.monument-single-hover-popup .map-popup-meta {
+  margin-top: 0.2rem;
+}
+
+.monument-stack-map-popup .maplibregl-popup-close-button {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  width: 34px;
+  height: 34px;
+  font-size: 22px;
+  line-height: 30px;
+  border-radius: 999px;
+  color: #263238;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.18);
+  z-index: 20;
+}
+
+.monument-stack-map-popup .maplibregl-popup-close-button:hover {
+  background: #eef3f2;
+}
+
+.monument-stack-map-popup .map-popup-stack {
+  padding: 1.25rem 1rem 1rem;
+}
+
+.monument-stack-map-popup .maplibregl-popup-content {
+  padding: 0;
+  border-radius: 12px;
+  overflow: visible;
+}
+
+.monument-stack-map-popup .map-popup-stack {
+  width: min(520px, calc(100vw - 32px));
+  padding: 1.25rem 1rem 1rem;
+  box-sizing: border-box;
+  overflow: hidden;
+}
+
+.monument-stack-map-popup .map-popup-record-list {
+  margin-top: 0.75rem;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+
+.monument-single-hover-popup .map-popup-title-btn {
+  display: block;
+  margin: 0 0 0.1rem;
+  max-width: 100%;
+  font-size: 1rem;
+  line-height: 1.25;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: normal;
+}
+
 .results-empty {
   color: var(--muted);
   font-size: 0.92rem;

@@ -9027,15 +9027,47 @@ function getMonumentRecordsNearClick(point, layerIds, pixelTolerance = 8) {
 
 let monumentClickPopup = null;
 
+function monumentStackRecordsShareExactCoordinate(records, decimals = 6) {
+  const safeRecords = dedupeMonumentRecords(records);
+
+  if (safeRecords.length <= 1) return false;
+
+  const keys = safeRecords
+    .map((record) => monumentCoordKey(record, decimals))
+    .filter(Boolean);
+
+  if (keys.length !== safeRecords.length) return false;
+
+  return new Set(keys).size === 1;
+}
+
+function monumentStackKind(records) {
+  return monumentStackRecordsShareExactCoordinate(records)
+    ? "exact"
+    : "nearby";
+}
+
 function renderStackedCoordinateWarning(records) {
-  if (!Array.isArray(records) || records.length <= 1) return "";
+  const safeRecords = dedupeMonumentRecords(records);
+
+  if (safeRecords.length <= 1) return "";
+
+  const kind = monumentStackKind(safeRecords);
+
+  const message =
+    kind === "exact"
+      ? t(
+          "stacked_exact_coordinate_warning",
+          "{count} records share the same mapped coordinate. This may be an interim location."
+        )
+      : t(
+          "stacked_nearby_records_warning",
+          "{count} records are very close together at this zoom level. Zoom in to distinguish them or show them in the results list."
+        );
 
   return `
     <div class="map-popup-warning">
-      ${t(
-        "stacked_coordinate_warning",
-        "{count} records share this mapped coordinate. This may be an interim location."
-      ).replace("{count}", records.length)}
+      ${message.replace("{count}", safeRecords.length)}
     </div>
   `;
 }
@@ -9090,6 +9122,90 @@ function getMonumentPopupRecordsForPoint(point) {
   return sameCoordRecords.length > clickedRecords.length
     ? sameCoordRecords
     : clickedRecords;
+}
+
+function resizeMonumentHoverStackPopupToMap() {
+  resizeMonumentStackPopupElementToMap(monumentHoverPopup);
+}
+
+function resizeMonumentStackPopupToMap() {
+  resizeMonumentStackPopupElementToMap(monumentClickPopup);
+}
+
+function resizeMonumentStackPopupToAvailableSpace(popup, lngLat, anchor = "bottom") {
+  const popupEl = popup?.getElement?.();
+  const mapContainer = map?.getContainer?.();
+
+  if (!popupEl || !mapContainer || !lngLat) return;
+
+  const contentEl = popupEl.querySelector(".map-popup-stack");
+  const listEl = popupEl.querySelector(".map-popup-record-list");
+
+  if (!contentEl || !listEl) return;
+
+  const mapHeight = mapContainer.clientHeight || 500;
+  const point = map.project(lngLat);
+
+  const margin = 28;
+
+  const availableHeight =
+    anchor === "top"
+      ? Math.max(140, mapHeight - point.y - margin)
+      : Math.max(140, point.y - margin);
+
+  const maxPopupHeight = Math.min(500, availableHeight);
+
+  contentEl.style.maxHeight = `${maxPopupHeight}px`;
+  contentEl.style.overflow = "hidden";
+
+  const nonListHeight = contentEl.offsetHeight - listEl.offsetHeight;
+  const maxListHeight = Math.max(70, maxPopupHeight - nonListHeight - 16);
+
+  listEl.style.maxHeight = `${maxListHeight}px`;
+  listEl.style.overflowY = "auto";
+  listEl.style.overscrollBehavior = "contain";
+}
+
+function resizeMonumentStackPopupElementToMap(popup) {
+  const popupEl = popup?.getElement?.();
+  const mapContainer = map?.getContainer?.();
+
+  if (!popupEl || !mapContainer) return;
+
+  const contentEl = popupEl.querySelector(".map-popup-stack");
+  const listEl = popupEl.querySelector(".map-popup-record-list");
+
+  if (!contentEl || !listEl) return;
+
+  const mapRect = mapContainer.getBoundingClientRect();
+  const popupRect = popupEl.getBoundingClientRect();
+  const margin = 12;
+
+  const availableFromPopupTop = Math.max(
+    180,
+    mapRect.bottom - popupRect.top - margin
+  );
+
+  const availableFromMapTop = Math.max(
+    180,
+    mapRect.bottom - mapRect.top - margin * 2
+  );
+
+  const maxPopupHeight = Math.min(
+    500,
+    availableFromPopupTop,
+    availableFromMapTop
+  );
+
+  contentEl.style.maxHeight = `${maxPopupHeight}px`;
+  contentEl.style.overflow = "hidden";
+
+  const nonListHeight = contentEl.offsetHeight - listEl.offsetHeight;
+  const maxListHeight = Math.max(90, maxPopupHeight - nonListHeight - 12);
+
+  listEl.style.maxHeight = `${maxListHeight}px`;
+  listEl.style.overflowY = "auto";
+  listEl.style.overscrollBehavior = "contain";
 }
 
 function getStackPopupPlacement(lngLat, recordCount = 1) {
@@ -9182,8 +9298,11 @@ function renderMonumentStackPopupHtml(records) {
         <strong>
           ${
             isStack
-              ? t("records_at_this_location", "{count} records at this location")
-                  .replace("{count}", safeRecords.length)
+              ? (
+                  monumentStackKind(safeRecords) === "exact"
+                    ? t("records_at_same_coordinate", "{count} records at this coordinate")
+                    : t("records_here_or_nearby", "{count} records here or nearby")
+                ).replace("{count}", safeRecords.length)
               : t("record_at_this_location", "1 record at this location")
           }
         </strong>
@@ -9363,9 +9482,9 @@ function showMonumentStackPopup(lngLat, records, options = {}) {
     monumentClickPopup = null;
   });
 
-  monumentClickPopup
+  monumentHoverPopup
     .setLngLat(lngLat)
-    .setHTML(renderMonumentStackPopupHtml(safeRecords))
+    .setHTML(renderMonumentStackPopupHtml(popupRecords))
     .addTo(map);
 
   resizeMonumentStackPopupToAvailableSpace(
@@ -9374,43 +9493,18 @@ function showMonumentStackPopup(lngLat, records, options = {}) {
     placement.anchor
   );
 
+  requestAnimationFrame(() => {
+    resizeMonumentStackPopupToAvailableSpace(
+      monumentClickPopup,
+      lngLat,
+      placement.anchor
+    );
+  });
+
   wireMonumentStackPopupRows(monumentClickPopup, safeRecords, {
     openRecord,
     closePopup: closeMonumentClickPopup
   });
-}
-
-function resizeMonumentStackPopupToAvailableSpace(popup, lngLat, anchor = "bottom") {
-  const popupEl = popup?.getElement?.();
-  const mapContainer = map?.getContainer?.();
-
-  if (!popupEl || !mapContainer || !lngLat) return;
-
-  const contentEl = popupEl.querySelector(".map-popup-stack");
-  const listEl = popupEl.querySelector(".map-popup-record-list");
-
-  if (!contentEl || !listEl) return;
-
-  const mapHeight = mapContainer.clientHeight || 500;
-  const point = map.project(lngLat);
-
-  const margin = 28;
-
-  const availableHeight =
-    anchor === "top"
-      ? Math.max(180, mapHeight - point.y - margin)
-      : Math.max(180, point.y - margin);
-
-  const maxPopupHeight = Math.min(500, availableHeight);
-
-  contentEl.style.maxHeight = `${maxPopupHeight}px`;
-  contentEl.style.overflow = "hidden";
-
-  const nonListHeight = contentEl.offsetHeight - listEl.offsetHeight;
-  const maxListHeight = Math.max(90, maxPopupHeight - nonListHeight - 16);
-
-  listEl.style.maxHeight = `${maxListHeight}px`;
-  listEl.style.overflowY = "auto";
 }
 
 function showStackedRecordsInResults(records) {
@@ -9740,13 +9834,12 @@ function bindMonumentLayerEvents() {
       );
 
       monumentHoverPopup = new maplibregl.Popup({
-        closeButton: false,
+        closeButton: true,
         closeOnClick: false,
-        focusAfterOpen: false,
-        anchor: placement.anchor,
         offset: placement.offset,
-        maxWidth: "min(520px, calc(100vw - 32px))",
-        className: "monument-stack-map-popup monument-stack-hover-popup"
+        anchor: placement.anchor,
+        className: "monument-stack-map-popup monument-stack-hover-popup",
+        maxWidth: "520px"
       });
 
       const lngLat = popupRecords[0]?.geometry?.coordinates || e.lngLat;
@@ -9761,6 +9854,14 @@ function bindMonumentLayerEvents() {
         lngLat,
         placement.anchor
       );
+
+      requestAnimationFrame(() => {
+        resizeMonumentStackPopupToAvailableSpace(
+          monumentHoverPopup,
+          lngLat,
+          placement.anchor
+        );
+      });
 
       wireMonumentStackPopupRows(monumentHoverPopup, popupRecords, {
         openRecord: handleMapMonumentOpen,
@@ -9785,7 +9886,9 @@ function bindMonumentLayerEvents() {
       monumentHoverPopup = new maplibregl.Popup({
         closeButton: false,
         closeOnClick: false,
-        offset: 10
+        offset: 10,
+        maxWidth: "280px",
+        className: "monument-single-hover-popup"
       });
     }
 
@@ -9800,8 +9903,8 @@ function bindMonumentLayerEvents() {
             data-monument-scope="${record.source?.scope || ""}"
           >
             ${mSafeValue(mSummary(record, "primary_name"))}
-          </button><br>
-          <span>${mSafeValue(mIdentity(record, "caal_id"))}</span><br>
+            </button>
+            <span>${mSafeValue(mIdentity(record, "caal_id"))}</span><br>
           <span>${mSafeValue(mSummary(record, "classification"))}</span><br>
           <span>${mSafeValue(mSummary(record, "monument_type1"))}</span>
         </div>

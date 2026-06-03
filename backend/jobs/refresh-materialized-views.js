@@ -1,16 +1,63 @@
 const pool = require("../db");
 
 const MATERIALIZED_VIEWS = [
-  "ui.mv_monuments_caal",
-  "ui.mv_monuments_caal_list",
-  "kz.mv_archive_combined"
+  {
+    name: "ui.mv_monuments_caal",
+    cacheKey: "monuments_caal_cache"
+  },
+  {
+    name: "ui.mv_monuments_caal_list",
+    cacheKey: "monuments_caal_list_cache"
+  },
+  {
+    name: "ui.mv_archive_caal_app",
+    cacheKey: "archive_caal_cache"
+  }
 ];
 
-async function refreshView(viewName) {
+async function refreshView(viewConfig) {
+  const viewName =
+    typeof viewConfig === "string"
+      ? viewConfig
+      : viewConfig.name;
+
+  const cacheKey =
+    typeof viewConfig === "string"
+      ? viewConfig
+      : viewConfig.cacheKey;
+
   console.log(`[MV refresh] Refreshing ${viewName}...`);
 
   await pool.query(`REFRESH MATERIALIZED VIEW CONCURRENTLY ${viewName}`);
   await pool.query(`ANALYZE ${viewName}`);
+
+  if (cacheKey) {
+    await pool.query(
+      `
+      INSERT INTO ui.app_cache_status (
+        cache_key,
+        refreshed_at,
+        refreshed_by,
+        note
+      )
+      VALUES (
+        $1,
+        now(),
+        'cron',
+        $2
+      )
+      ON CONFLICT (cache_key)
+      DO UPDATE SET
+        refreshed_at = EXCLUDED.refreshed_at,
+        refreshed_by = EXCLUDED.refreshed_by,
+        note = EXCLUDED.note
+      `,
+      [
+        cacheKey,
+        `${viewName} refreshed by materialized-view cron job`
+      ]
+    );
+  }
 
   console.log(`[MV refresh] Done ${viewName}`);
 }
@@ -73,6 +120,28 @@ async function rebuildMonumentAdminBoundaryMembership() {
 
   await pool.query(`ANALYZE ui.monument_admin_boundary_membership`);
 
+  await pool.query(
+    `
+    INSERT INTO ui.app_cache_status (
+      cache_key,
+      refreshed_at,
+      refreshed_by,
+      note
+    )
+    VALUES (
+      'monument_admin_boundary_membership',
+      now(),
+      'cron',
+      'Monument admin boundary membership rebuilt by materialized-view cron job'
+    )
+    ON CONFLICT (cache_key)
+    DO UPDATE SET
+      refreshed_at = EXCLUDED.refreshed_at,
+      refreshed_by = EXCLUDED.refreshed_by,
+      note = EXCLUDED.note
+    `
+  );
+
   console.log("[MV refresh] Done ui.monument_admin_boundary_membership");
 }
 
@@ -83,9 +152,14 @@ async function main() {
 
   let failed = false;
 
-  for (const viewName of MATERIALIZED_VIEWS) {
+  for (const viewConfig of MATERIALIZED_VIEWS) {
+    const viewName =
+      typeof viewConfig === "string"
+        ? viewConfig
+        : viewConfig.name;
+
     try {
-      await refreshView(viewName);
+      await refreshView(viewConfig);
     } catch (error) {
       failed = true;
       console.error(`[MV refresh] Failed for ${viewName}:`);
