@@ -3876,7 +3876,35 @@ router.post("/monuments", async (req, res) => {
       RETURNING id
     `;
 
-    const insertResult = await pool.query(insertSql, queryValues);
+    let insertResult;
+
+    if (createTarget.isPublicCaalStorage) {
+      const client = await pool.connect();
+
+      try {
+        await client.query("BEGIN");
+
+        await client.query(`SELECT set_config('caal.edit_source', 'web_app', true)`);
+        await client.query(`SELECT set_config('caal.app_user_id', $1, true)`, [
+          String(appUserId || "")
+        ]);
+        await client.query(`SELECT set_config('caal.username', $1, true)`, [
+          sessionUsername || "web_app"
+        ]);
+
+        insertResult = await client.query(insertSql, queryValues);
+
+        await client.query("COMMIT");
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
+    } else {
+      insertResult = await pool.query(insertSql, queryValues);
+    }
+
     const newId = insertResult.rows[0].id;
 
     const freshRow = createTarget.isPublicCaalStorage
@@ -4363,10 +4391,179 @@ router.delete("/monuments/:id", async (req, res) => {
   const isWorkspaceTarget = requestedStorageScope.endsWith("_workspace");
 
   if (isPublicTarget) {
-    return res.status(403).json({
-      ok: false,
-      error: "Public CAAL records cannot currently be deleted from this screen"
-    });
+    const canDeletePublic =
+      isCaalAdmin(currentSession) ||
+      currentSession?.permissions?.can_edit_workspace === true;
+
+    if (!canDeletePublic) {
+      return res.status(403).json({
+        ok: false,
+        error: "You do not have permission to delete public CAAL monument records"
+      });
+    }
+
+    const client = await pool.connect();
+
+    try {
+      await client.query("BEGIN");
+
+      await client.query(`SELECT set_config('caal.edit_source', 'web_app', true)`);
+      await client.query(`SELECT set_config('caal.app_user_id', $1, true)`, [
+        String(userId || "")
+      ]);
+      await client.query(`SELECT set_config('caal.username', $1, true)`, [
+        username || "web_app"
+      ]);
+
+      const targetResult = await client.query(
+        `
+        SELECT m.*
+        FROM ${MONUMENTS_CAAL_TABLE} m
+        WHERE m.id = $1
+          AND (
+            $2::boolean = true
+            OR EXISTS (
+              SELECT 1
+              FROM public.record_registry rr
+              WHERE rr.caal_id = m."CAAL_ID"
+                AND rr.created_by_app_user_id = $3
+                AND COALESCE(rr.status, '') <> 'deleted'
+            )
+            OR m.created_by_app_user_id = $3
+          )
+        `,
+        [
+          id,
+          isCaalAdmin(currentSession),
+          userId
+        ]
+      );
+
+      const target = targetResult.rows[0];
+
+      if (!target) {
+        await client.query("ROLLBACK");
+        return res.status(403).json({
+          ok: false,
+          error: "Public CAAL monument record not found, or you do not have permission to delete it"
+        });
+      }
+
+      await client.query(
+        `
+        WITH registry_update AS (
+          UPDATE public.record_registry rr
+          SET
+            status = 'deleted',
+            deleted_at = now(),
+            deleted_by_app_user_id = $2,
+            deleted_by = $3,
+            delete_reason = $4,
+            deleted_record = $5::jsonb
+          WHERE (
+              rr.caal_id = $1
+              OR (
+                rr.source_schema = 'public'
+                AND rr.source_table = 'CAAL_Monuments'
+                AND rr.source_row_id = $6
+              )
+            )
+          RETURNING rr.id
+        ),
+        registry_insert AS (
+          INSERT INTO public.record_registry (
+            source_schema,
+            source_table,
+            source_row_id,
+            caal_id,
+            record_type,
+            created_at,
+            created_by,
+            created_by_app_user_id,
+            status,
+            notes,
+            deleted_at,
+            deleted_by_app_user_id,
+            deleted_by,
+            delete_reason,
+            deleted_record
+          )
+          SELECT
+            'public',
+            'CAAL_Monuments',
+            $6,
+            $1,
+            'monument',
+            now(),
+            $3,
+            $2,
+            'deleted',
+            'Registry row created during public CAAL web app delete',
+            now(),
+            $2,
+            $3,
+            $4,
+            $5::jsonb
+          WHERE NOT EXISTS (SELECT 1 FROM registry_update)
+          RETURNING id
+        )
+        SELECT
+          COALESCE(
+            (SELECT id FROM registry_update LIMIT 1),
+            (SELECT id FROM registry_insert LIMIT 1)
+          ) AS registry_id
+        `,
+        [
+          target["CAAL_ID"],
+          userId,
+          username,
+          deleteReason,
+          JSON.stringify(target),
+          target.id
+        ]
+      );
+
+      const deleteResult = await client.query(
+        `
+        DELETE FROM ${MONUMENTS_CAAL_TABLE}
+        WHERE id = $1
+        RETURNING id, "CAAL_ID"
+        `,
+        [target.id]
+      );
+
+      await client.query("COMMIT");
+
+      await deactivateResourceRelationsForDeletedRecord(pool, {
+        caalId: target["CAAL_ID"],
+        currentSession,
+        note: "Deactivated because public CAAL monument record was deleted through CAAL web app."
+      });
+
+      return res.json({
+        ok: true,
+        deleted: {
+          id: deleteResult.rows[0].id,
+          CAAL_ID: deleteResult.rows[0]["CAAL_ID"],
+          storage_scope: "public_caal",
+          physically_deleted: true
+        },
+        cache_refresh_required: true
+      });
+    } catch (error) {
+      await client.query("ROLLBACK");
+
+      console.error("Public CAAL monument delete failed:");
+      console.error(error);
+
+      return res.status(500).json({
+        ok: false,
+        error: "Public CAAL monument delete failed",
+        detail: error.message
+      });
+    } finally {
+      client.release();
+    }
   }
 
   if (!isWorkspaceTarget) {
