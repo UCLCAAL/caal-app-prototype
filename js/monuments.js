@@ -6147,6 +6147,22 @@ function renderRelatedMonumentsMapOverlay() {
   renderMonumentLegend();
 }
 
+function clearSelectedMonumentMapHighlight() {
+  if (!map || !mapLoaded) return;
+
+  if (map.getLayer("monument-selected-ring")) {
+    map.removeLayer("monument-selected-ring");
+  }
+
+  if (map.getSource("monument-selected")) {
+    map.removeSource("monument-selected");
+  }
+
+  renderLiveMapLabels();
+  updateMapOptionsState();
+  renderMonumentLegend();
+}
+
 function clearSelectedMonumentRecord() {
   if (!monumentConfirmLoseChanges()) return;
 
@@ -6161,15 +6177,8 @@ function clearSelectedMonumentRecord() {
   updateMonumentActionBar();
   updateSelectedResultCard();
 
-  if (map) {
-    if (map.getLayer("monument-selected-ring")) {
-      map.removeLayer("monument-selected-ring");
-    }
+  clearSelectedMonumentMapHighlight();
 
-    if (map.getSource("monument-selected")) {
-      map.removeSource("monument-selected");
-    }
-  }
   clearRelatedMonumentsMap();
   clearPendingPickPoint();
   renderMonumentEmptyState();
@@ -12264,16 +12273,23 @@ if (addMonumentBtn) {
 
     monumentLastSaveSummary = null;
 
+    clearFocusedResultHighlight();
+    clearSelectedMonumentMapHighlight();
+    clearRelatedMonumentsMap();
+    clearPendingPickPoint();
+
     const newRecord = makeNewBlankMonumentRecord();
     monumentPendingNewRecord = newRecord;
     monumentSelectedRecord = newRecord;
     monumentIsEditMode = true;
     monumentSyncModeVisualState();
     monumentIsDirty = false;
-    monumentIsAddMode = false;
+    monumentIsAddMode = true;
+
     updateAddModeUI();
     renderMonumentRecordDetails(newRecord);
     updateSelectedResultCard();
+    renderMonumentLegend();
   });
 }
 

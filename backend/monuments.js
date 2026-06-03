@@ -4131,29 +4131,50 @@ router.patch("/monuments/:id", async (req, res) => {
         2
       );
 
-      const oldPublicResult = await pool.query(
-        `
-        SELECT m.*
-        FROM ${MONUMENTS_CAAL_TABLE} m
-        WHERE m.id = $1
-          ${publicOldCheck.sql}
-        `,
-        [id, ...publicOldCheck.values]
-      );
+      const client = await pool.connect();
 
-      oldPublicCaalRow = oldPublicResult.rows[0] || null;
-      oldRowForSummary = oldPublicCaalRow;
+      try {
+        await client.query("BEGIN");
 
-      updateResult = await pool.query(
-        `
-        UPDATE ${MONUMENTS_CAAL_TABLE} m
-        SET ${setParts.join(", ")}
-        WHERE m.id = $${values.length + 1}
-          ${publicEditCheck.sql}
-        RETURNING m.*
-        `,
-        [...values, id, ...publicEditCheck.values]
-      );
+        await client.query(`SELECT set_config('caal.edit_source', 'web_app', true)`);
+        await client.query(`SELECT set_config('caal.app_user_id', $1, true)`, [
+          String(currentSession?.user?.user_id || "")
+        ]);
+        await client.query(`SELECT set_config('caal.username', $1, true)`, [
+          currentSession?.user?.username || "web_app"
+        ]);
+
+        const oldPublicResult = await client.query(
+          `
+          SELECT m.*
+          FROM ${MONUMENTS_CAAL_TABLE} m
+          WHERE m.id = $1
+            ${publicOldCheck.sql}
+          `,
+          [id, ...publicOldCheck.values]
+        );
+
+        oldPublicCaalRow = oldPublicResult.rows[0] || null;
+        oldRowForSummary = oldPublicCaalRow;
+
+        updateResult = await client.query(
+          `
+          UPDATE ${MONUMENTS_CAAL_TABLE} m
+          SET ${setParts.join(", ")}
+          WHERE m.id = $${values.length + 1}
+            ${publicEditCheck.sql}
+          RETURNING m.*
+          `,
+          [...values, id, ...publicEditCheck.values]
+        );
+
+        await client.query("COMMIT");
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      } finally {
+        client.release();
+      }
 
       if (updateResult.rows.length > 0) {
         updatedScope =
