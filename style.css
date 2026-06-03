@@ -1023,6 +1023,17 @@ body {
   word-break: normal;
 }
 
+.cache-status-line {
+  margin: 0.2rem 0 0.35rem 0;
+  font-size: 0.78rem;
+  color: #6b7280;
+  line-height: 1.3;
+}
+
+.cache-status-line.cache-status-unavailable {
+  color: #92400e;
+}
+
 .results-empty {
   color: var(--muted);
   font-size: 0.92rem;

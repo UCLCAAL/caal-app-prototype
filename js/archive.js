@@ -55,6 +55,8 @@ const archiveEditBtn = document.getElementById("archiveEditBtn");
 const archiveDeleteBtn = document.getElementById("archiveDeleteBtn");
 const archiveCloseRecordBtn = document.getElementById("archiveCloseRecordBtn");
 
+const archiveCacheStatusLine = document.getElementById("archiveCacheStatusLine");
+
 // API base
 // --------------------------------------------------------
 //const API_BASE = "http://localhost:3000";
@@ -333,6 +335,75 @@ function archiveUserIsCaalAdmin() {
   ).trim().toLowerCase();
 
   return accessLevel === 9 && workspaceCode === "caal";
+}
+
+// Cache helper
+function archiveCacheLocale() {
+  const lang = archiveCurrentLanguageCode();
+
+  const localeByLang = {
+    en: "en-GB",
+    ru: "ru-RU",
+    zh: "zh-CN",
+    kk: "kk-KZ",
+    ky: "ky-KG",
+    tg: "tg-TJ",
+    tk: "tk-TM",
+    uz: "uz-UZ"
+  };
+
+  return localeByLang[lang] || "en-GB";
+}
+
+function archiveFormatCacheTimestamp(value) {
+  if (!value) return "";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  return new Intl.DateTimeFormat(archiveCacheLocale(), {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(date);
+}
+
+async function archiveLoadCacheStatus() {
+  if (!archiveCacheStatusLine) return;
+
+  try {
+    const response = await fetch("/api/archive/cache-status", {
+      method: "GET",
+      credentials: "include"
+    });
+
+    const data = await response.json();
+
+    if (!response.ok || !data.ok || !data.status?.refreshed_at) {
+      archiveCacheStatusLine.hidden = true;
+      return;
+    }
+
+    archiveCacheStatusLine.classList.remove("cache-status-unavailable");
+
+    archiveCacheStatusLine.textContent =
+      `${t("caal_browse_data_last_updated", "CAAL browse data last updated")}: ${archiveFormatCacheTimestamp(data.status.refreshed_at)}`;
+
+    archiveCacheStatusLine.hidden = false;
+  } catch (error) {
+    console.warn("Archive cache status unavailable:", error);
+
+    archiveCacheStatusLine.textContent =
+      t("browse_data_update_time_unavailable", "Browse data update time unavailable");
+
+    archiveCacheStatusLine.classList.add("cache-status-unavailable");
+    archiveCacheStatusLine.hidden = false;
+  }
 }
 
 // Label helpers
@@ -4479,6 +4550,8 @@ document.addEventListener("app:languageChanged", async (event) => {
   } catch (error) {
     console.error("Archive label refresh failed:", error);
     // Do not wipe archiveLabels here. Keeping old labels is safer than forcing English fallback.
+  } finally {
+    await archiveLoadCacheStatus();
   }
 
   try {
@@ -4673,6 +4746,7 @@ document.addEventListener("DOMContentLoaded", async () => {
         await loadArchiveRecords(archiveLimit, archiveOffset, {
           preserveSelection: true
         });
+        await archiveLoadCacheStatus();
       } catch (error) {
         console.error("Archive cache refresh failed:", error);
         alert(error.message || t("cache_refresh_failed", "Cache refresh failed"));
@@ -4710,6 +4784,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   try {
     await loadArchiveLabels();
     applyArchiveStaticLabels();
+    await archiveLoadCacheStatus();
 
     await loadArchiveLookups();
     archivePopulateFilterLookups();

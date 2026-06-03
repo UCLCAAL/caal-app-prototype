@@ -2722,6 +2722,45 @@ router.get("/monuments/map", async (req, res) => {
 // ========================================================
 // GET RECORDS
 // ========================================================
+// cache status bar read endpoint
+router.get("/monuments/cache-status", async (req, res) => {
+  const currentSession = req.session?.appSession || null;
+
+  if (!currentSession) {
+    return res.status(401).json({
+      ok: false,
+      error: "No active session"
+    });
+  }
+
+  try {
+    const result = await pool.query(
+      `
+      SELECT
+        cache_key,
+        refreshed_at,
+        refreshed_by,
+        note
+      FROM ui.app_cache_status
+      WHERE cache_key = 'monuments_caal_list_cache'
+      LIMIT 1
+      `
+    );
+
+    return res.json({
+      ok: true,
+      status: result.rows[0] || null
+    });
+  } catch (error) {
+    console.error("Monument cache status fetch failed:", error);
+
+    return res.status(500).json({
+      ok: false,
+      error: "Monument cache status fetch failed",
+      detail: error.message
+    });
+  }
+});
 
 router.get("/monuments", async (req, res) => {
   const currentSession = req.session?.appSession || null;
@@ -3944,6 +3983,36 @@ router.post("/monuments/admin/refresh-caal-cache", async (req, res) => {
     await pool.query(`REFRESH MATERIALIZED VIEW CONCURRENTLY ui.mv_monuments_caal_list`);
     refreshed.push("ui.mv_monuments_caal_list");
 
+    await pool.query(
+      `
+      INSERT INTO ui.app_cache_status (
+        cache_key,
+        refreshed_at,
+        refreshed_by,
+        note
+      )
+      VALUES
+        (
+          'monuments_caal_cache',
+          now(),
+          $1,
+          'ui.mv_monuments_caal refreshed from web admin button'
+        ),
+        (
+          'monuments_caal_list_cache',
+          now(),
+          $1,
+          'ui.mv_monuments_caal_list refreshed from web admin button'
+        )
+      ON CONFLICT (cache_key)
+      DO UPDATE SET
+        refreshed_at = EXCLUDED.refreshed_at,
+        refreshed_by = EXCLUDED.refreshed_by,
+        note = EXCLUDED.note
+      `,
+      [currentSession?.user?.username || "web_admin"]
+    );
+
     return res.json({
       ok: true,
       refreshed
@@ -4427,5 +4496,7 @@ router.delete("/monuments/:id", async (req, res) => {
     });
   }
 });
+
+
 
 module.exports = router;

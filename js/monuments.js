@@ -81,6 +81,8 @@ const monumentCloseRecordBtn = document.getElementById("monumentCloseRecordBtn")
 
 const refreshMonumentsCacheBtn = document.getElementById("refreshMonumentsCacheBtn");
 
+const monumentCacheStatusLine = document.getElementById("monumentCacheStatusLine");
+
 // modal
 const monumentPreviewModal = document.getElementById("monumentPreviewModal");
 const monumentPreviewTitle = document.getElementById("monumentPreviewTitle");
@@ -1571,6 +1573,79 @@ function boxesOverlap(a, b) {
 // --------------------------------------------------------
 // Helpers
 // --------------------------------------------------------
+// cache statusbar
+
+function monumentCacheLocale() {
+  const lang =
+    (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
+    window.appSession?.profile?.preferred_language ||
+    "en";
+
+  const localeByLang = {
+    en: "en-GB",
+    ru: "ru-RU",
+    zh: "zh-CN",
+    kk: "kk-KZ",
+    ky: "ky-KG",
+    tg: "tg-TJ",
+    tk: "tk-TM",
+    uz: "uz-UZ"
+  };
+
+  return localeByLang[lang] || "en-GB";
+}
+
+function monumentFormatCacheTimestamp(value) {
+  if (!value) return "";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  return new Intl.DateTimeFormat(monumentCacheLocale(), {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(date);
+}
+
+async function loadMonumentCacheStatus() {
+  if (!monumentCacheStatusLine) return;
+
+  try {
+    const response = await fetch("/api/monuments/cache-status", {
+      method: "GET",
+      credentials: "include"
+    });
+
+    const data = await response.json();
+
+    if (!response.ok || !data.ok || !data.status?.refreshed_at) {
+      monumentCacheStatusLine.hidden = true;
+      return;
+    }
+
+    monumentCacheStatusLine.classList.remove("cache-status-unavailable");
+
+    monumentCacheStatusLine.textContent =
+      `${t("caal_browse_data_last_updated", "CAAL browse data last updated")}: ${monumentFormatCacheTimestamp(data.status.refreshed_at)}`;
+
+    monumentCacheStatusLine.hidden = false;
+  } catch (error) {
+    console.warn("Monument cache status unavailable:", error);
+
+    monumentCacheStatusLine.textContent =
+      t("browse_data_update_time_unavailable", "Browse data update time unavailable");
+
+    monumentCacheStatusLine.classList.add("cache-status-unavailable");
+    monumentCacheStatusLine.hidden = false;
+  }
+}
+
 //map helpers
 function getCurrentMapViewBbox() {
   if (!map) return null;
@@ -12345,9 +12420,12 @@ document.addEventListener("app:languageChanged", async () => {
   try {
     await loadMonumentLabels();
     applyMonumentStaticLabels();
+    await loadMonumentCacheStatus();
+
     applyMonumentScopeUiForSession(window.appSession);
     refreshMapLibreControlTooltips();
     renderMonumentLegend();
+
     await loadMonumentLookups();
     populateMonumentFilterLookups();
 
@@ -12647,6 +12725,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
           await loadMonumentMapRecords();
           await loadMonumentListRecords();
+          await loadMonumentCacheStatus();
         } catch (error) {
           console.error("Cache refresh failed:", error);
           alert(error.message || t("cache_refresh_failed", "Cache refresh failed"));
@@ -12686,6 +12765,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   try {
     await loadMonumentLabels();
     applyMonumentStaticLabels();
+    await loadMonumentCacheStatus();
+
     applyMonumentScopeUiForSession(window.appSession);
     renderMonumentLegend();
     await loadMonumentLookups();
