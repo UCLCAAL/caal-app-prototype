@@ -3732,6 +3732,26 @@ function archiveRenderDisplayMode(record) {
   publicationHtml += archiveRenderDetailItem(archiveLabel("Publisher of the Original Material", "Publisher of the Original Material"), archiveRaw(record, "Publisher of the Original Material"), true);
   publicationHtml += archiveRenderDetailItem(archiveLabel("Editor of the Original Material", "Editor of the Original Material"), archiveRaw(record, "Editor of the Original Material"), true);
   publicationHtml += archiveRenderDetailItem(archiveLabel("Volume and Issue Number", "Volume and Issue Number"), archiveRaw(record, "Volume and Issue Number"));
+  publicationHtml += archiveRenderDetailItem(
+    archiveLabel("Still under CopyrightYN", "Still under Copyright?"),
+    archiveRenderLookupSingleValue(
+      "copyright_status",
+      archiveRaw(record, "still_under_copyright") ??
+      archiveRaw(record, "Still under CopyrightYN")
+    )
+  );
+
+  publicationHtml += archiveRenderDetailItem(
+    archiveLabel("Copyright Holder Name", "Copyright Holder Name"),
+    archiveRaw(record, "Copyright Holder Name"),
+    true
+  );
+
+  publicationHtml += archiveRenderDetailItem(
+    archiveLabel("Copyright Attribution", "Copyright Attribution"),
+    archiveRaw(record, "Copyright Attribution"),
+    true
+  );
 
   let contentHtml = "";
   contentHtml += archiveRenderDetailItem(archiveLabel("Description", "Description"), archiveRaw(record, "Description"), true);
@@ -3763,9 +3783,6 @@ function archiveRenderDisplayMode(record) {
   contentHtml += archiveRenderDetailItem(archiveLabel("Writing System", "Writing System"), archiveRaw(record, "Writing System"));
 
   let digitalHtml = "";
-  digitalHtml += archiveRenderDetailItem(archiveLabel("Still under Copyright", "Still under Copyright"), archiveBoolLabel(archiveRaw(record, "still_under_copyright")));
-  digitalHtml += archiveRenderDetailItem(archiveLabel("Copyright Holder Name", "Copyright Holder Name"), archiveRaw(record, "Copyright Holder Name"), true);
-  digitalHtml += archiveRenderDetailItem(archiveLabel("Copyright Attribution", "Copyright Attribution"), archiveRaw(record, "Copyright Attribution"), true);
   digitalHtml += archiveRenderDetailItem(archiveLabel("Digital Folder Name", "Digital Folder Name"), archiveRaw(record, "Digital Folder Name"), true);
   digitalHtml += archiveRenderDetailItem(archiveLabel("Digital Files Name", "Digital Files Name"), archiveRaw(record, "Digital Files Name"), true);
   digitalHtml += archiveRenderDetailItem(archiveLabel("Creation Date of Digital Files", "Creation Date of Digital Files"), archiveRaw(record, "Creation Date of Digital Files"));
@@ -3812,7 +3829,11 @@ function archiveRenderDisplayMode(record) {
     archiveRaw(record, "Author of the Original Material"),
     archiveRaw(record, "Publisher of the Original Material"),
     archiveRaw(record, "Editor of the Original Material"),
-    archiveRaw(record, "Volume and Issue Number")
+    archiveRaw(record, "Volume and Issue Number"),
+    archiveRaw(record, "still_under_copyright"),
+    archiveRaw(record, "Still under CopyrightYN"),
+    archiveRaw(record, "Copyright Holder Name"),
+    archiveRaw(record, "Copyright Attribution")
   ]);
 
   const contentHasValues = archiveSectionHasValues([
@@ -3829,9 +3850,6 @@ function archiveRenderDisplayMode(record) {
   ]);
 
   const digitalHasValues = archiveSectionHasValues([
-    archiveRaw(record, "still_under_copyright"),
-    archiveRaw(record, "Copyright Holder Name"),
-    archiveRaw(record, "Copyright Attribution"),
     archiveRaw(record, "Digital Folder Name"),
     archiveRaw(record, "Digital Files Name"),
     archiveRaw(record, "Creation Date of Digital Files"),
@@ -3976,6 +3994,24 @@ function archiveRenderEditMode(record) {
   publicationHtml += archiveRenderTextarea("Publisher of the Original Material", archiveLabel("Publisher of the Original Material", "Publisher of the Original Material"), archiveRaw(record, "Publisher of the Original Material"), true);
   publicationHtml += archiveRenderTextarea("Editor of the Original Material", archiveLabel("Editor of the Original Material", "Editor of the Original Material"), archiveRaw(record, "Editor of the Original Material"), true);
   publicationHtml += archiveRenderTextInput("Volume and Issue Number", archiveLabel("Volume and Issue Number", "Volume and Issue Number"), archiveRaw(record, "Volume and Issue Number"));
+  publicationHtml += archiveRenderSelect(
+    "still_under_copyright",
+    archiveLabel("Still under CopyrightYN", "Still under Copyright?"),
+    "copyright_status",
+    archiveRaw(record, "still_under_copyright") ?? archiveRaw(record, "Still under CopyrightYN")
+  );
+  publicationHtml += archiveRenderTextInput(
+    "Copyright Holder Name",
+    archiveLabel("Copyright Holder Name", "Copyright Holder Name"),
+    archiveRaw(record, "Copyright Holder Name"),
+    true
+  );
+  publicationHtml += archiveRenderTextarea(
+    "Copyright Attribution",
+    archiveLabel("Copyright Attribution", "Copyright Attribution"),
+    archiveRaw(record, "Copyright Attribution"),
+    true
+  );
 
   let contentHtml = "";
   contentHtml += archiveRenderTextarea("Description", archiveLabel("Description", "Description"), archiveRaw(record, "Description"), true);
@@ -4024,15 +4060,6 @@ function archiveRenderEditMode(record) {
   );
 
   let digitalHtml = "";
-
-  digitalHtml += archiveRenderSelect(
-    "still_under_copyright",
-    archiveLabel("Still under CopyrightYN", "Still under Copyright?"),
-    "copyright_status",
-    archiveRaw(record, "still_under_copyright") ?? archiveRaw(record, "Still under CopyrightYN")
-  );
-  digitalHtml += archiveRenderTextInput("Copyright Holder Name", archiveLabel("Copyright Holder Name", "Copyright Holder Name"), archiveRaw(record, "Copyright Holder Name"), true);
-  digitalHtml += archiveRenderTextarea("Copyright Attribution", archiveLabel("Copyright Attribution", "Copyright Attribution"), archiveRaw(record, "Copyright Attribution"), true);
   digitalHtml += archiveRenderTextInput("Digital Folder Name", archiveLabel("Digital Folder Name", "Digital Folder Name"), archiveRaw(record, "Digital Folder Name"), true);
   digitalHtml += archiveRenderTextarea("Digital Files Name", archiveLabel("Digital Files Name", "Digital Files Name"), archiveRaw(record, "Digital Files Name"), true);
   digitalHtml += archiveRenderTextInput("Creation Date of Digital Files", archiveLabel("Creation Date of Digital Files", "Creation Date of Digital Files"), archiveRaw(record, "Creation Date of Digital Files"));

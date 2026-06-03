@@ -3164,6 +3164,62 @@ async function logPublicCaalMonumentEdit({
   );
 }
 
+async function logWorkspaceCaalMonumentEdit({
+  oldRow,
+  newRow,
+  submittedFields,
+  currentSession,
+  sourceSchema,
+  storageScope,
+  note = null
+}) {
+  if (!oldRow || !newRow) return;
+
+  const { changedFields, oldValues, newValues } =
+    buildChangedValueSnapshots(oldRow, newRow, submittedFields);
+
+  if (changedFields.length === 0) return;
+
+  await pool.query(
+    `
+    INSERT INTO public."CAAL_Monuments_workspace_web_edit_log" (
+      source_schema,
+      source_table,
+      source_row_id,
+      caal_id,
+      edited_by_app_user_id,
+      edited_by_username,
+      workspace_code,
+      storage_scope,
+      edit_type,
+      changed_fields,
+      old_values,
+      new_values,
+      note
+    )
+    VALUES (
+      $1, 'CAAL_Monuments', $2, $3,
+      $4, $5, $6, $7,
+      $8, $9, $10::jsonb, $11::jsonb, $12
+    )
+    `,
+    [
+      sourceSchema,
+      newRow.id,
+      newRow["CAAL_ID"],
+      currentSession?.user?.user_id ?? null,
+      currentSession?.user?.username ?? null,
+      newRow.workspace_code || null,
+      storageScope || null,
+      classifyMonumentEdit(changedFields),
+      changedFields,
+      JSON.stringify(oldValues),
+      JSON.stringify(newValues),
+      note
+    ]
+  );
+}
+
 async function logResourceRelationEdit(db, {
   edgeId = null,
   parentId,
@@ -3708,11 +3764,13 @@ router.post("/monuments", async (req, res) => {
     For CAAL users this may be "kz", "tj", etc. even though the row is inserted into public."CAAL_Monuments".
   */
   payload.workspace_code = recordWorkspaceCode;
-  payload.workspace_assignment_method =
+
+  const workspaceAssignmentMethod =
     currentSession?.user?.workspace_code === "caal"
       ? "caal_user_country_inference"
       : "session_workspace";
-  payload.workspace_assigned_at = new Date();
+
+  const workspaceAssignedAt = new Date();
 
   const prefix =
     currentSession?.user?.monument_id_prefix ||
@@ -3806,8 +3864,8 @@ router.post("/monuments", async (req, res) => {
       storageScope: createTarget.storageScope,
       createdByWorkspaceCode: getSessionWorkspaceCode(currentSession),
       notes: createTarget.isPublicCaalStorage
-        ? `Created through CAAL web app into public CAAL table; record workspace_code=${recordWorkspaceCode}`
-        : `Created through CAAL web app into ${createTarget.storageScope}`
+        ? `Created through CAAL web app into public CAAL table; record workspace_code=${recordWorkspaceCode}; workspace_assignment_method=${workspaceAssignmentMethod}`
+        : `Created through CAAL web app into ${createTarget.storageScope}; workspace_assignment_method=${workspaceAssignmentMethod}`
     });
 
     if (freshRow["CAAL_ID"]) {
@@ -4106,12 +4164,16 @@ router.patch("/monuments/:id", async (req, res) => {
       storageScope: requestedStorageScope
     });
 
-    if (isPublicTarget && oldPublicCaalRow) {
-      await logPublicCaalMonumentEdit({
-        oldRow: oldPublicCaalRow,
+    if (isWorkspaceTarget && oldRowForSummary) {
+      const storage = storageFromScope(requestedStorageScope);
+
+      await logWorkspaceCaalMonumentEdit({
+        oldRow: oldRowForSummary,
         newRow: freshRow,
         submittedFields: fields,
         currentSession,
+        sourceSchema: storage?.schema || null,
+        storageScope: requestedStorageScope,
         note: "Edited through CAAL web app"
       });
     }

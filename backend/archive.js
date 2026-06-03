@@ -1250,6 +1250,62 @@ async function logPublicCaalArchiveEdit({
   );
 }
 
+async function logWorkspaceArchiveEdit({
+  oldRow,
+  newRow,
+  submittedFields,
+  currentSession,
+  sourceSchema,
+  storageScope,
+  note = null
+}) {
+  if (!oldRow || !newRow) return;
+
+  const { changedFields, oldValues, newValues } =
+    buildArchiveChangedValueSnapshots(oldRow, newRow, submittedFields);
+
+  if (changedFields.length === 0) return;
+
+  await pool.query(
+    `
+    INSERT INTO public."CAAL_Archive_workspace_web_edit_log" (
+      source_schema,
+      source_table,
+      source_row_id,
+      caal_id,
+      edited_by_app_user_id,
+      edited_by_username,
+      workspace_code,
+      storage_scope,
+      edit_type,
+      changed_fields,
+      old_values,
+      new_values,
+      note
+    )
+    VALUES (
+      $1, 'CAAL_Archive', $2, $3,
+      $4, $5, $6, $7,
+      $8, $9, $10::jsonb, $11::jsonb, $12
+    )
+    `,
+    [
+      sourceSchema,
+      newRow.id,
+      newRow["CAAL_ID"],
+      currentSession?.user?.user_id ?? null,
+      currentSession?.user?.username ?? null,
+      newRow.workspace_code || null,
+      storageScope || null,
+      classifyArchiveEdit(changedFields),
+      changedFields,
+      JSON.stringify(oldValues),
+      JSON.stringify(newValues),
+      note
+    ]
+  );
+}
+
 function publicCaalArchiveEditWhereSql(session, tableAlias = "a", paramIndex) {
   const workspaceCode = getSessionWorkspaceCode(session);
 
@@ -1310,15 +1366,25 @@ function normaliseArchivePayload(input = {}) {
     if (field === "still_under_copyright") {
       if (value === null) {
         payload[field] = null;
-      } else if (value === true || value === false) {
+        continue;
+      }
+
+      if (value === true || value === false) {
         payload[field] = value;
-      } else if (value === "true") {
+        continue;
+      }
+
+      const text = String(value).trim().toLowerCase();
+
+      if (["true", "yes", "y", "1"].includes(text)) {
         payload[field] = true;
-      } else if (value === "false") {
+      } else if (["false", "no", "n", "0"].includes(text)) {
         payload[field] = false;
       } else {
+        // Unknown, blank, unrecognised, legacy null-equivalent
         payload[field] = null;
       }
+
       continue;
     }
 
@@ -1745,12 +1811,16 @@ router.patch("/:id", async (req, res) => {
       });
     }
 
-    if (oldPublicCaalRow) {
-      await logPublicCaalArchiveEdit({
-        oldRow: oldPublicCaalRow,
+    if (isWorkspaceTarget && oldRowForSummary) {
+      const storage = storageFromScope(requestedStorageScope);
+
+      await logWorkspaceArchiveEdit({
+        oldRow: oldRowForSummary,
         newRow: result.rows[0],
         submittedFields: fields,
         currentSession,
+        sourceSchema: storage?.schema || null,
+        storageScope: requestedStorageScope,
         note: "Edited through CAAL web app"
       });
     }
