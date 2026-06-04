@@ -316,13 +316,34 @@ function drawSelectedMonumentHighlight(record) {
           "interpolate",
           ["linear"],
           ["zoom"],
-          4, 7,
-          8, 9,
-          12, 11
+          4, 8,
+          8, 10,
+          12, 13
         ],
-        "circle-color": MONUMENT_MAP_COLOURS.selectedFill,
+        "circle-color": "rgba(255, 255, 255, 0.18)",
         "circle-stroke-color": MONUMENT_MAP_COLOURS.selected,
-        "circle-stroke-width": 4
+        "circle-stroke-width": 2
+      }
+    });
+  }
+
+  if (!map.getLayer("monument-selected-point")) {
+    map.addLayer({
+      id: "monument-selected-point",
+      type: "circle",
+      source: "monument-selected",
+      paint: {
+        "circle-radius": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          4, 4,
+          8, 5,
+          12, 6
+        ],
+        "circle-color": MONUMENT_MAP_COLOURS.selected,
+        "circle-stroke-color": "#ffffff",
+        "circle-stroke-width": 2
       }
     });
   }
@@ -775,7 +796,10 @@ function renderMonumentLegend() {
     (record) => monumentDisplayScope(record) === "all_caal"
   );
 
-  const hasSelected = !!monumentSelectedRecord?.geometry?.coordinates;
+  const hasSelected =
+    !monumentIsAddMode &&
+    !!monumentSelectedRecord?.identity?.id &&
+    !!monumentSelectedRecord?.geometry?.coordinates;
 
   const hasPending =
     !!map &&
@@ -935,7 +959,10 @@ function getCurrentMapLegendItems() {
     (record) => monumentDisplayScope(record) === "all_caal"
   );
 
-  const hasSelected = !!monumentSelectedRecord?.geometry?.coordinates;
+  const hasSelected =
+    !monumentIsAddMode &&
+    !!monumentSelectedRecord?.identity?.id &&
+    !!monumentSelectedRecord?.geometry?.coordinates;
 
   const hasPending =
     !!map &&
@@ -964,8 +991,10 @@ function getCurrentMapLegendItems() {
   }
 
   if (hasSelected) {
-    items.push({ label: t("selected_record", "Selected record"),
-      color: MONUMENT_MAP_COLOURS.selected, type: "ring" });
+    items.push({
+      label: t("selected_record", "Selected record"), color: MONUMENT_MAP_COLOURS.selected,
+      type: "selected"
+    });
   }
 
   if (hasPending) {
@@ -1148,13 +1177,21 @@ async function downloadCurrentMapImage(options = {}) {
         const symbolX = legendX + legendPadding + symbolRadius;
         const textX = symbolX + symbolRadius + symbolGap;
 
-        if (item.type === "ring") {
+        if (item.type === "selected") {
           ctx.beginPath();
-          ctx.arc(symbolX, y, symbolRadius + scaled(1), 0, Math.PI * 2);
-          ctx.fillStyle = "rgba(0, 229, 255, 0)";
+          ctx.arc(symbolX, y, symbolRadius + scaled(3), 0, Math.PI * 2);
+          ctx.fillStyle = "rgba(255, 255, 255, 0.25)";
           ctx.fill();
           ctx.strokeStyle = item.color;
           ctx.lineWidth = scaled(3);
+          ctx.stroke();
+
+          ctx.beginPath();
+          ctx.arc(symbolX, y, symbolRadius - scaled(2), 0, Math.PI * 2);
+          ctx.fillStyle = item.color;
+          ctx.fill();
+          ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
+          ctx.lineWidth = scaled(2);
           ctx.stroke();
         } else {
           ctx.beginPath();
@@ -1639,7 +1676,7 @@ async function loadMonumentCacheStatus() {
     console.warn("Monument cache status unavailable:", error);
 
     monumentCacheStatusLine.textContent =
-      t("browse_data_update_time_unavailable", "Browse data update time unavailable");
+      t("caal_browse_data_update_time_unavailable","CAAL browse data update time unavailable")
 
     monumentCacheStatusLine.classList.add("cache-status-unavailable");
     monumentCacheStatusLine.hidden = false;
@@ -1690,7 +1727,8 @@ async function applyMapViewFilterFromCurrentMap() {
     setMonumentsLoading(true, t("redrawing_map", "Redrawing map..."));
     await loadMonumentMapRecords();
 
-    renderMonumentEmptyState();
+    syncOpenMonumentAfterBrowseReload();
+    renderActiveFilterChips();
   } catch (error) {
     console.error("Failed to apply map-view filter:", error);
     alert(error.message || t("could_not_apply_map_view_filter", "Could not apply map-view filter"));
@@ -2175,7 +2213,10 @@ function updateMapOptionsState() {
     Array.isArray(monumentMapRecords) &&
     monumentMapRecords.some((record) => Array.isArray(record?.geometry?.coordinates));
 
-  const hasSelected = !!monumentSelectedRecord?.geometry?.coordinates;
+  const hasSelected =
+    !monumentIsAddMode &&
+    !!monumentSelectedRecord?.identity?.id &&
+    !!monumentSelectedRecord?.geometry?.coordinates;
   const selectedHasRelatedIds = selectedRecordHasRelatedIds();
   const hasRelatedOverlay = relatedOverlayExists();
 
@@ -6119,7 +6160,7 @@ function renderRelatedMonumentsMapOverlay() {
   }
 
   // Related monument points only.
-  // The selected/open record is already shown by monument-selected-ring.
+  // The selected/open record is already shown by monument-selected.
   if (!map.getLayer("monument-related-points")) {
     map.addLayer({
       id: "monument-related-points",
@@ -6149,6 +6190,10 @@ function renderRelatedMonumentsMapOverlay() {
 
 function clearSelectedMonumentMapHighlight() {
   if (!map || !mapLoaded) return;
+
+  if (map.getLayer("monument-selected-point")) {
+    map.removeLayer("monument-selected-point");
+  }
 
   if (map.getLayer("monument-selected-ring")) {
     map.removeLayer("monument-selected-ring");
@@ -6207,6 +6252,7 @@ function bringMonumentOverlaysToFront() {
     "monument-related-lines",
     "monument-related-points",
     "monument-selected-ring",
+    "monument-selected-point",
     "monument-pick-point-layer",
     "monument-hover-ring",
     "monument-result-focus-ring",
@@ -8835,24 +8881,42 @@ function monumentMatchesFilters(record, filters) {
   );
 }
 
-async function applyMonumentFilters({ includeMap = true, listFirst = true } = {}) {
-  monumentPageOffset = 0;
-  monumentSelectedRecord = null;
-  monumentPendingNewRecord = null;
-  monumentIsEditMode = false;
-  monumentSyncModeVisualState();
+function syncOpenMonumentAfterBrowseReload() {
+  updateSelectedResultCard();
 
-  if (map) {
-    if (map.getLayer("monument-selected-ring")) {
-      map.removeLayer("monument-selected-ring");
-    }
-    if (map.getSource("monument-selected")) {
-      map.removeSource("monument-selected");
-    }
+  if (!monumentSelectedRecord) {
+    renderMonumentEmptyState();
+    clearSelectedMonumentMapHighlight();
+    clearRelationshipStateForNewSelection();
+    updateMonumentActionBar();
+    updateMapOptionsState();
+    renderMonumentLegend();
+    return;
   }
 
-  clearRelatedMonumentsMap();
+  if (
+    !monumentIsAddMode &&
+    monumentSelectedRecord?.identity?.id &&
+    monumentSelectedRecord?.geometry?.coordinates
+  ) {
+    drawSelectedMonumentHighlight(monumentSelectedRecord);
+  } else {
+    clearSelectedMonumentMapHighlight();
+  }
+
+  updateMonumentActionBar();
   updateMapOptionsState();
+  renderMonumentLegend();
+}
+
+async function applyMonumentFilters({ includeMap = true, listFirst = true } = {}) {
+  monumentPageOffset = 0;
+
+  const selectedBefore = monumentSelectedRecord;
+  const pendingBefore = monumentPendingNewRecord;
+  const wasEditing = monumentIsEditMode;
+  const wasDirty = monumentIsDirty;
+  const wasAddMode = monumentIsAddMode;
 
   setMonumentsLoading(true, t("updating_results", "Updating results..."));
 
@@ -8864,6 +8928,7 @@ async function applyMonumentFilters({ includeMap = true, listFirst = true } = {}
         setMonumentsLoading(true, t("redrawing_map", "Redrawing map..."));
         await loadMonumentMapRecords();
       }
+
       renderActiveFilterChips();
     } else {
       if (includeMap) {
@@ -8871,15 +8936,86 @@ async function applyMonumentFilters({ includeMap = true, listFirst = true } = {}
       }
 
       await loadMonumentListRecords();
+      renderActiveFilterChips();
     }
 
-    renderMonumentEmptyState();
+    monumentSelectedRecord = selectedBefore;
+    monumentPendingNewRecord = pendingBefore;
+    monumentIsEditMode = wasEditing;
+    monumentIsDirty = wasDirty;
+    monumentIsAddMode = wasAddMode;
+
+    monumentSyncModeVisualState();
+    syncOpenMonumentAfterBrowseReload();
+
+    if (monumentIsAddMode && pendingBefore?.geometry?.coordinates) {
+      drawPendingPickPoint(
+        pendingBefore.geometry.coordinates[0],
+        pendingBefore.geometry.coordinates[1]
+      );
+    }
   } catch (error) {
     console.error("Failed to reload monuments after filter change:", error);
   } finally {
     setMonumentsLoading(false);
   }
 }
+
+function resetMonumentBrowseAfterSave() {
+  // Show the user's own editable/workspace records.
+  if (showWorkspaceRecords) {
+    showWorkspaceRecords.checked = true;
+  }
+
+  // Suppress broader scopes so the newest user-created/edited record is not buried.
+  if (showNationalRecords && !showNationalRecords.disabled) {
+    showNationalRecords.checked = false;
+  }
+
+  if (showAllCaalRecords && !showAllCaalRecords.disabled) {
+    showAllCaalRecords.checked = false;
+  }
+
+  // Clear text filters.
+  if (siteSearch) siteSearch.value = "";
+  if (filterCaalId) filterCaalId.value = "";
+
+  // Clear advanced filters.
+  [
+    filterMonumentType,
+    filterClassification,
+    filterDesignation,
+    filterReligion,
+    filterCulturalPeriod,
+    filterCountry
+  ].forEach((selectEl) => {
+    if (!selectEl) return;
+
+    Array.from(selectEl.options || []).forEach((option) => {
+      option.selected = false;
+    });
+  });
+
+  // Clear spatial/region filters as well, otherwise the saved record may still be hidden.
+  activeMapViewFilterBbox = null;
+  selectedAdminBoundary = null;
+
+  // Return to first page so newest records are visible at the top.
+  monumentPageOffset = 0;
+
+  updateFilterToMapViewButton();
+
+  if (typeof syncAllAdvancedFilterTreesFromSelects === "function") {
+    syncAllAdvancedFilterTreesFromSelects();
+  }
+
+  if (typeof renderAllFilterChips === "function") {
+    renderAllFilterChips();
+  }
+
+  renderActiveFilterChips();
+}
+
 
 async function clearMonumentFilters() {
   if (siteSearch) siteSearch.value = "";
@@ -11722,10 +11858,19 @@ function applyTypedCoordinatesToSelectedRecord({ panIfOutside = true } = {}) {
   };
 
   drawPendingPickPoint(lng, lat);
-  drawSelectedMonumentHighlight(monumentSelectedRecord);
 
-  if (panIfOutside) {
-    ensureRecordVisibleOnMap(monumentSelectedRecord);
+  const isUnsavedAddPoint =
+    monumentIsAddMode ||
+    !monumentSelectedRecord?.identity?.id;
+
+  if (isUnsavedAddPoint) {
+    clearSelectedMonumentMapHighlight();
+  } else {
+    drawSelectedMonumentHighlight(monumentSelectedRecord);
+
+    if (panIfOutside) {
+      ensureRecordVisibleOnMap(monumentSelectedRecord);
+    }
   }
 
   renderMonumentLegend();
@@ -11786,6 +11931,14 @@ function applyMapClickToSelectedRecord(latlng) {
 
   updateCoordinateInputs(lng, lat);
   drawPendingPickPoint(lng, lat);
+
+  if (monumentIsAddMode || !monumentSelectedRecord?.identity?.id) {
+    clearSelectedMonumentMapHighlight();
+  }
+
+  renderMonumentLegend();
+  updateMapOptionsState();
+
   monumentIsDirty = true;
 }
 
@@ -11933,6 +12086,8 @@ async function saveCurrentMonumentRecord() {
     monumentIsAddMode = false;
     updateAddModeUI();
 
+    resetMonumentBrowseAfterSave();
+
         /*
           For newly created public CAAL records, do not immediately resolve by CAAL_ID.
           /api/records/resolve may depend on the CAAL materialized view, which may not
@@ -11970,6 +12125,7 @@ async function saveCurrentMonumentRecord() {
           if (!isPublicCaalRecord) {
             await loadMonumentMapRecords();
             await loadMonumentListRecords();
+            updateSelectedResultCard();
           }
 
           return;
@@ -12279,16 +12435,18 @@ if (addMonumentBtn) {
     clearPendingPickPoint();
 
     const newRecord = makeNewBlankMonumentRecord();
+
     monumentPendingNewRecord = newRecord;
     monumentSelectedRecord = newRecord;
     monumentIsEditMode = true;
-    monumentSyncModeVisualState();
     monumentIsDirty = false;
     monumentIsAddMode = true;
 
+    monumentSyncModeVisualState();
     updateAddModeUI();
     renderMonumentRecordDetails(newRecord);
     updateSelectedResultCard();
+    updateMapOptionsState();
     renderMonumentLegend();
   });
 }

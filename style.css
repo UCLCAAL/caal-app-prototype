@@ -2371,12 +2371,29 @@ body {
   box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.25);
 }
 
-.legend-selected {
-  width: 17px;
-  height: 17px;
-  border-radius: 50%;
-  background: transparent;
-  border: 3px solid #00E5FF;
+
+
+.legend-symbol.legend-selected {
+  position: relative;
+  width: 18px;
+  height: 18px;
+  border: 2px solid rgba(0, 229, 255, 0.55);
+  background: rgba(0, 229, 255, 0.08);
+  border-radius: 999px;
+}
+
+.legend-symbol.legend-selected::after {
+  content: "";
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -50%);
+  border-radius: 999px;
+  background: #00e5ff;
+  border: 1.5px solid #ffffff;
+  box-sizing: border-box;
 }
 
 .legend-national {
