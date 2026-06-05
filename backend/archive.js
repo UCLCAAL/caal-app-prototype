@@ -2153,7 +2153,11 @@ router.post("/", async (req, res) => {
 
   const appUserId = currentSession?.user?.user_id ?? null;
   const sessionUsername = currentSession?.user?.username ?? null;
-  const preferredLanguage = currentSession?.profile?.preferred_language ?? null;
+  const preferredLanguage =
+    String(req.body?.["Preferred Language"] || "").trim() ||
+    String(req.query.lang || "").trim() ||
+    String(currentSession?.profile?.preferred_language || "").trim() ||
+    null;
   const sessionCountry = currentSession?.profile?.country ?? null;
 
   payload.created_by_app_user_id = appUserId;
