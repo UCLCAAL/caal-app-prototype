@@ -11081,12 +11081,12 @@ function renderMonumentDisplayMode(record) {
                 <button
                   type="button"
                   class="copy-field-btn"
-                  data-copy-value="${mSafeValue(mIdentity(record, "caal_id"))}"
+                  data-copy-value="${mAttributeValue(mIdentity(record, "caal_id"))}"
                   title="${t("copy_to_clipboard", "Copy to clipboard")}"
-                  aria-label="${t("copy_to_clipboard", "Copy to clipboard")}: ${mSafeValue(mIdentity(record, "caal_id"))}"
+                  aria-label="${t("copy_to_clipboard", "Copy to clipboard")}: ${mAttributeValue(mIdentity(record, "caal_id"))}"
                 >
-                  ${svgCopyIcon ? svgCopyIcon() : svgCopyIcon()}
-                </button>
+                  ${svgCopyIcon()}
+                </button> 
               `
               : ""
           }
@@ -11112,6 +11112,8 @@ function renderMonumentDisplayMode(record) {
       ${mRenderGroupBlock(t("metadata", "Metadata"), metadataHtml, true)}
     </div>
   `;
+
+  wireCopyFieldButtons(recordDetails);
 
   window.wireSaveSummaryDismiss?.(recordDetails);
 
