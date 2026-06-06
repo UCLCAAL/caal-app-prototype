@@ -32,7 +32,8 @@ const SHELL_TRANSLATIONS = {
     login_subtitle: "Sign in to continue",
     login_username: "Username",
     login_password: "Password",
-    login_sign_in: "Sign in"
+    login_sign_in: "Sign in",
+    signed_in_as: "Signed in as"
   },
 
   ru: {
@@ -49,7 +50,8 @@ const SHELL_TRANSLATIONS = {
     login_subtitle: "Войдите, чтобы продолжить",
     login_username: "Имя пользователя",
     login_password: "Пароль",
-    login_sign_in: "Войти"
+    login_sign_in: "Войти",
+    signed_in_as: "Вошли как"
   },
 
   zh: {
@@ -66,7 +68,8 @@ const SHELL_TRANSLATIONS = {
     login_subtitle: "登录以继续",
     login_username: "用户名",
     login_password: "密码",
-    login_sign_in: "登录"
+    login_sign_in: "登录",
+    signed_in_as: "已登录为"
   },
 
   kk: {
@@ -199,6 +202,67 @@ function initialiseLanguageSelector() {
 // --------------------------------------------------------
 // Session helpers
 // --------------------------------------------------------
+function sharedSessionWorkspaceCode(session = window.appSession) {
+  return String(
+    session?.user?.workspace_code ??
+    session?.profile?.workspace_code ??
+    session?.permissions?.workspace_code ??
+    session?.workspace_code ??
+    ""
+  ).trim();
+}
+
+function sharedSessionAccessLevel(session = window.appSession) {
+  return Number(
+    session?.user?.access_level ??
+    session?.profile?.access_level ??
+    session?.permissions?.access_level ??
+    session?.access_level ??
+    0
+  );
+}
+
+function renderSignedInUserPill() {
+  const pill = document.getElementById("signedInUserPill");
+  const nameEl = document.getElementById("signedInUserName");
+  const workspaceEl = document.getElementById("signedInUserWorkspace");
+
+  if (!pill || !nameEl || !workspaceEl) return;
+
+  const session = window.appSession || {};
+
+  const username =
+    session.user?.display_name ||
+    session.user?.username ||
+    session.user?.email ||
+    session.profile?.display_name ||
+    session.profile?.username ||
+    session.profile?.email ||
+    "";
+
+  const workspaceCode = sharedSessionWorkspaceCode(session);
+  const accessLevel = sharedSessionAccessLevel(session);
+
+  if (!username) {
+    pill.hidden = true;
+    return;
+  }
+
+  const roleLabel = accessLevel === 9
+    ? "Admin"
+    : "User";
+
+  nameEl.textContent = username;
+
+  workspaceEl.textContent = workspaceCode
+    ? `(${workspaceCode.toUpperCase()} ${roleLabel})`
+    : `(${roleLabel})`;
+
+  pill.hidden = false;
+}
+
+window.renderSignedInUserPill = renderSignedInUserPill;
+
 function getCurrentSession() {
   return appSession;
 }
@@ -1492,6 +1556,8 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   await loadBackendSession();
 
+  renderSignedInUserPill();
+
   currentLang = resolveInitialLanguage();
 
   if (currentLang) {
@@ -1502,4 +1568,6 @@ document.addEventListener("DOMContentLoaded", async () => {
   bindLanguageSelector();
 
   await applyLanguage({ notify: false });
+  
+  renderSignedInUserPill();
 });

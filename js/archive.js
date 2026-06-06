@@ -81,9 +81,76 @@ let archiveRecordOpenInProgress = false;
 let archiveIsDirty = false;      // when entering edit mode and makign a change, save resets it to false
 let archivePreviewRecord = null;
 let archiveJustSavedRecordId = null;
+
+let archiveRecentlySavedRecords = [];
+
 let archiveLastSaveSummary = null;
 
 const archiveSaveSummaryByCaalId = new Map();
+
+function archiveAnyCaalId(record) {
+  return String(
+    record?.identity?.caal_id ||
+    record?.raw?.["CAAL_ID"] ||
+    record?.raw?.caal_id ||
+    record?.["CAAL_ID"] ||
+    record?.caal_id ||
+    ""
+  ).trim();
+}
+
+function archiveRecentlySavedCaalIdSet() {
+  return new Set(
+    (archiveRecentlySavedRecords || [])
+      .map((record) => archiveAnyCaalId(record).toLowerCase())
+      .filter(Boolean)
+  );
+}
+
+function archiveIsSavedSinceCacheRefresh(record) {
+  if (String(record?.source?.storage || "") !== "public_caal") {
+    return false;
+  }
+
+  const caalId = archiveAnyCaalId(record).toLowerCase();
+  if (!caalId) return false;
+
+  return archiveRecentlySavedCaalIdSet().has(caalId);
+}
+
+function getRecentlySavedArchiveRecord(record) {
+  const caalId = archiveAnyCaalId(record).toLowerCase();
+  if (!caalId) return null;
+
+  return (archiveRecentlySavedRecords || []).find((liveRecord) => {
+    return archiveAnyCaalId(liveRecord).toLowerCase() === caalId;
+  }) || null;
+}
+
+async function loadRecentlySavedArchiveRecords() {
+  if (!archiveUserIsCaalAdmin()) {
+    archiveRecentlySavedRecords = [];
+    return [];
+  }
+
+  const response = await fetch("/api/archive/live-edited-records", {
+    method: "GET",
+    credentials: "include"
+  });
+
+  const data = await response.json();
+
+  if (!response.ok || !data.ok) {
+    throw new Error(
+      data.detail ||
+      data.error ||
+      "Failed to load recently saved archive records"
+    );
+  }
+
+  archiveRecentlySavedRecords = Array.isArray(data.records) ? data.records : [];
+  return archiveRecentlySavedRecords;
+}
 
 function archiveRecordCaalId(record) {
   return String(
@@ -2336,12 +2403,54 @@ function archiveRenderResourceRelations(record) {
 
 async function loadFullArchiveRecord(record, langOverride = null) {
   const caalId = archiveIdentity(record, "caal_id") || archiveRaw(record, "CAAL_ID");
+  const recordId = archiveIdentity(record, "id") || record?.identity?.id;
 
   if (!caalId) {
     return record;
   }
 
   const lang = archiveCurrentLanguageCode(langOverride);
+
+  const liveRecord = getRecentlySavedArchiveRecord(record);
+
+  if (
+    liveRecord &&
+    archiveUserIsCaalAdmin() &&
+    recordId !== null &&
+    recordId !== undefined &&
+    String(record?.source?.storage || "") === "public_caal"
+  ) {
+    const liveResponse = await fetch(
+      `/api/archive/${encodeURIComponent(recordId)}/live-full-record?lang=${encodeURIComponent(lang)}`,
+      {
+        method: "GET",
+        credentials: "include"
+      }
+    );
+
+    const liveData = await liveResponse.json();
+
+    if (!liveResponse.ok || !liveData.ok || !liveData.record) {
+      throw new Error(
+        liveData.detail ||
+        liveData.error ||
+        t("could_not_load_full_archive_record", "Could not load full archive record")
+      );
+    }
+
+    liveData.record.source = liveData.record.source || {};
+
+    if (record?.source) {
+      liveData.record.source.scope = record.source.scope;
+      liveData.record.source.storage = record.source.storage;
+      liveData.record.source.is_promoted = record.source.is_promoted;
+      liveData.record.source.is_editable = record.source.is_editable === true;
+    } else {
+      liveData.record.source.is_editable = false;
+    }
+
+    return liveData.record;
+  }
 
   const response = await fetch(
     `/api/records/resolve?caal_id=${encodeURIComponent(caalId)}&lang=${encodeURIComponent(lang)}`,
@@ -3471,6 +3580,13 @@ async function loadArchiveRecords(limit = 100, offset = 0, options = {}) {
 
   archiveVisibleRecords = archiveAllRecords;
 
+  try {
+    await loadRecentlySavedArchiveRecords();
+  } catch (error) {
+    console.warn("Recently saved archive records unavailable:", error);
+    archiveRecentlySavedRecords = [];
+  }
+
   renderArchiveResultsList(archiveVisibleRecords);
   renderArchivePageInfo();
 }
@@ -3627,6 +3743,8 @@ function renderArchiveResultsList(records) {
     .map((record, index) => {
       const s = record.summary || {};
 
+      const isRecentSave = archiveIsSavedSinceCacheRefresh(record);
+
       const caalId =
         record.identity?.caal_id ||
         record.raw?.["CAAL_ID"] ||
@@ -3640,9 +3758,17 @@ function renderArchiveResultsList(records) {
 
       return `
         <div
-          class="result-card ${archiveSelectedRecord?.identity?.id === record.identity?.id ? "is-selected" : ""}"
+          class="result-card ${archiveSelectedRecord?.identity?.id === record.identity?.id ? "is-selected" : ""} ${isRecentSave ? "recent-save-card" : ""}"
           data-archive-result-index="${index}"
           data-archive-record-id="${record.identity?.id ?? ""}"
+          title="${
+            isRecentSave
+              ? t(
+                  "saved_since_cache_refresh_help",
+                  "This record was saved after the last cache refresh. Opening it loads the current saved record."
+                )
+              : ""
+          }"
         >
           <div class="result-card-topline">
             <strong>${safeArchiveValue(title)}</strong>
@@ -3737,6 +3863,8 @@ function archiveUpdateSelectedResultCard() {
   const selectedId = archiveSelectedRecord?.identity?.id;
 
   Array.from(archiveResultsList.querySelectorAll(".result-card")).forEach((card) => {
+    const idx = Number(card.dataset.archiveResultIndex);
+    const record = archiveVisibleRecords[idx] || archiveAllRecords[idx];
     const cardId = Number(card.dataset.archiveRecordId);
 
     card.classList.toggle(
@@ -3745,8 +3873,8 @@ function archiveUpdateSelectedResultCard() {
     );
 
     card.classList.toggle(
-      "result-card-saved",
-      archiveJustSavedRecordId !== null && cardId === archiveJustSavedRecordId
+      "recent-save-card",
+      archiveIsSavedSinceCacheRefresh(record)
     );
   });
 }
@@ -4349,7 +4477,50 @@ if (archiveSaveBtn) {
           3000
         );
       }
+      
+      if (!isNewRecord && isPublicCaalArchiveRecord && data.record) {
+        const currentRecord = {
+          ...data.record,
+          source: {
+            ...(data.record.source || {}),
+            scope: data.record.source?.scope || record.source?.scope || "all_caal",
+            storage: data.record.source?.storage || savedStorage,
+            is_promoted: data.record.source?.is_promoted ?? true,
+            is_editable: true
+          }
+        };
 
+        archivePendingNewRecord = null;
+        archiveSelectedRecord = currentRecord;
+        archiveIsEditMode = false;
+        archiveIsDirty = false;
+        archiveJustSavedRecordId = currentRecord.identity.id;
+
+        archiveRenderRecordDetails(currentRecord);
+        archiveRenderActionBar({
+          hasRecord: true,
+          canEdit: canEditArchiveRecord(currentRecord)
+        });
+
+        try {
+          await loadRecentlySavedArchiveRecords();
+          archiveUpdateSelectedResultCard();
+        } catch (error) {
+          console.warn("Could not refresh recently saved archive markers:", error);
+        }
+
+        showArchiveToast(
+          t(
+            "caal_archive_record_saved_cache_pending",
+            "Record saved. This is a CAAL archive record, so search/list values may not update until the CAAL cache refreshes. Your changes have been saved, but they may not appear immediately in the results list."
+          ),
+          "success",
+          12000
+        );
+
+        return;
+      }
+      
       try {
         await loadArchiveRecords(archiveLimit, archiveOffset, {
           preserveSelection: true

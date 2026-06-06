@@ -2432,4 +2432,145 @@ router.get("/cache-status", async (req, res) => {
   }
 });
 
+// show updated full record before cache refresh
+router.get("/live-edited-records", async (req, res) => {
+  const currentSession = req.session?.appSession || null;
+
+  if (!currentSession) {
+    return res.status(401).json({ ok: false, error: "No active session" });
+  }
+
+  if (!isCaalAdmin(currentSession)) {
+    return res.status(403).json({
+      ok: false,
+      error: "CAAL admin only"
+    });
+  }
+
+  try {
+    const result = await pool.query(
+      `
+      WITH cache_status AS (
+        SELECT refreshed_at
+        FROM ui.app_cache_status
+        WHERE cache_key = 'archive_caal_cache'
+        LIMIT 1
+      ),
+      threshold AS (
+        SELECT
+          COALESCE(
+            (SELECT refreshed_at FROM cache_status),
+            now() - interval '2 hours'
+          ) AS changed_after
+      )
+      SELECT
+        a.id,
+        a."CAAL_ID",
+        a."Tstamp",
+        threshold.changed_after AS cache_refreshed_at
+      FROM ${ARCHIVE_CAAL_TABLE} a
+      CROSS JOIN threshold
+      WHERE a."Tstamp" > threshold.changed_after
+      ORDER BY a."Tstamp" DESC NULLS LAST
+      LIMIT 500
+      `
+    );
+
+    return res.json({
+      ok: true,
+      records: result.rows,
+      total: result.rows.length,
+      source_mode: "archive_uncached_live_edits",
+      cache_refreshed_at: result.rows[0]?.cache_refreshed_at || null
+    });
+  } catch (error) {
+    console.error("Uncached live archive records fetch failed:");
+    console.error(error);
+
+    return res.status(500).json({
+      ok: false,
+      error: "Uncached live archive records fetch failed",
+      detail: error.message
+    });
+  }
+});
+
+router.get("/:id/live-full-record", async (req, res) => {
+  const currentSession = req.session?.appSession || null;
+
+  if (!currentSession) {
+    return res.status(401).json({ ok: false, error: "No active session" });
+  }
+
+  if (!isCaalAdmin(currentSession)) {
+    return res.status(403).json({
+      ok: false,
+      error: "CAAL admin only"
+    });
+  }
+
+  const id = Number(req.params.id);
+
+  if (!Number.isInteger(id)) {
+    return res.status(400).json({
+      ok: false,
+      error: "Invalid archive id"
+    });
+  }
+
+  const lang =
+    req.query.lang ||
+    currentSession.profile?.preferred_language ||
+    "en";
+
+  try {
+    const result = await pool.query(
+      `
+      SELECT
+        a.*,
+        'all_caal'::text AS source_scope,
+        true AS is_editable,
+        'all_caal'::text AS source_scope_override,
+        true AS is_editable_override,
+        'public_caal'::text AS storage_scope,
+        true AS is_promoted
+      FROM ${ARCHIVE_CAAL_TABLE} a
+      WHERE a.id = $1
+      LIMIT 1
+      `,
+      [id]
+    );
+
+    if (!result.rows.length) {
+      return res.status(404).json({
+        ok: false,
+        error: "Archive record not found"
+      });
+    }
+
+    const record = buildArchiveRecord(result.rows[0], lang);
+
+    record.relations = await getResourceRelations(pool, record.identity?.caal_id);
+    record.holding_institution = await getArchiveHoldingInstitution(
+      pool,
+      record.identity?.caal_id
+    );
+
+    return res.json({
+      ok: true,
+      record,
+      source_mode: "archive_live_full_record"
+    });
+  } catch (error) {
+    console.error("Live full archive record fetch failed:");
+    console.error(error);
+
+    return res.status(500).json({
+      ok: false,
+      error: "Live full archive record fetch failed",
+      detail: error.message
+    });
+  }
+});
+
 module.exports = router;
