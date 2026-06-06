@@ -249,6 +249,213 @@ function rememberMonumentSaveSummary(summary) {
   monumentLastSaveSummary = summary;
 }
 
+let monumentUncachedLiveRecords = [];
+let uncachedLiveLayerEventsBound = false;
+
+async function loadUncachedLiveEditedMonuments() {
+  if (!monumentUserIsCaalAdmin()) {
+    monumentUncachedLiveRecords = [];
+    return [];
+  }
+
+  const lang =
+    (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
+    window.appSession?.profile?.preferred_language ||
+    "en";
+
+  const response = await fetch(
+    `/api/monuments/live-edited-map-records?lang=${encodeURIComponent(lang)}`,
+    {
+      method: "GET",
+      credentials: "include"
+    }
+  );
+
+  const data = await response.json();
+
+  if (!response.ok || !data.ok) {
+    throw new Error(data.detail || data.error || "Failed to load uncached live edits");
+  }
+
+  monumentUncachedLiveRecords = Array.isArray(data.records) ? data.records : [];
+  return monumentUncachedLiveRecords;
+}
+
+function bindUncachedLiveLayerEvents() {
+  // The normal monument layer event binder handles this layer.
+  // Do not bind here because the click/hover handlers are scoped inside that binder.
+  return;
+}
+
+function drawUncachedLiveEditedMonuments(records = monumentUncachedLiveRecords) {
+  if (!map || !mapLoaded) return;
+
+  const features = (records || [])
+    .filter((record) => Array.isArray(record?.geometry?.coordinates))
+    .map((record) => ({
+      type: "Feature",
+      geometry: record.geometry,
+      properties: {
+        id: record.identity?.id,
+        caal_id: record.identity?.caal_id || "",
+        source_scope: record.source?.scope || "all_caal",
+        primary_name: record.summary?.primary_name || "",
+        primary_name_english: record.summary?.primary_name_english || "",
+        label:
+          record.summary?.primary_name ||
+          record.summary?.primary_name_english ||
+          record.identity?.caal_id ||
+          ""
+      }
+    }));
+
+  const geojson = {
+    type: "FeatureCollection",
+    features
+  };
+
+  const existingSource = map.getSource("monuments-uncached-live");
+
+  if (existingSource && typeof existingSource.setData === "function") {
+    existingSource.setData(geojson);
+  } else {
+    map.addSource("monuments-uncached-live", {
+      type: "geojson",
+      data: geojson
+    });
+  }
+
+  // Base point layer - same basic point style, not a new icon
+  if (!map.getLayer("monuments-uncached-live-base")) {
+    map.addLayer({
+      id: "monuments-uncached-live-base",
+      type: "circle",
+      source: "monuments-uncached-live",
+      paint: {
+        "circle-radius": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          4, 4,
+          8, 5,
+          12, 6
+        ],
+        "circle-color": [
+          "match",
+          ["get", "source_scope"],
+          "workspace", MONUMENT_MAP_COLOURS.workspace,
+          "national_ref", MONUMENT_MAP_COLOURS.national,
+          "all_caal", MONUMENT_MAP_COLOURS.allCaal,
+          MONUMENT_MAP_COLOURS.allCaal
+        ],
+        "circle-stroke-color": "#ffffff",
+        "circle-stroke-width": 1.5,
+        "circle-opacity": 1
+      }
+    });
+  }
+
+  // Yellow ring around the point
+  if (!map.getLayer("monuments-uncached-live-ring")) {
+    map.addLayer({
+      id: "monuments-uncached-live-ring",
+      type: "circle",
+      source: "monuments-uncached-live",
+      paint: {
+        "circle-radius": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          4, 7,
+          8, 9,
+          12, 11
+        ],
+        "circle-color": "rgba(0,0,0,0)",
+        "circle-stroke-color": MONUMENT_MAP_COLOURS.recentSave,
+        "circle-stroke-width": 3,
+        "circle-opacity": 1
+      }
+    });
+  }
+
+  bindUncachedLiveLayerEvents();
+  bringMonumentOverlaysToFront();
+  renderMonumentLegend();
+}
+
+function liveEditedCaalIdSet() {
+  return new Set(
+    (monumentUncachedLiveRecords || [])
+      .map((record) => String(record.identity?.caal_id || "").trim().toLowerCase())
+      .filter(Boolean)
+  );
+}
+
+function isRecentlySavedMonument(record) {
+  const caalId = String(
+    record?.identity?.caal_id ||
+    record?.raw?.["CAAL_ID"] ||
+    ""
+  )
+    .trim()
+    .toLowerCase();
+
+  if (!caalId) return false;
+
+  return liveEditedCaalIdSet().has(caalId);
+}
+
+function getRecentlySavedLiveRecord(record) {
+  const caalId = String(
+    record?.identity?.caal_id ||
+    record?.raw?.["CAAL_ID"] ||
+    ""
+  )
+    .trim()
+    .toLowerCase();
+
+  if (!caalId) return null;
+
+  return (monumentUncachedLiveRecords || []).find((liveRecord) => {
+    const liveCaalId = String(liveRecord?.identity?.caal_id || "")
+      .trim()
+      .toLowerCase();
+
+    return liveCaalId === caalId;
+  }) || null;
+}
+
+function mergeLiveGeometryForRecentlySavedRecord(record) {
+  const liveRecord = getRecentlySavedLiveRecord(record);
+
+  if (!liveRecord?.geometry?.coordinates) {
+    return record;
+  }
+
+  return {
+    ...record,
+    geometry: liveRecord.geometry,
+    summary: {
+      ...(record?.summary || {}),
+      longitude:
+        liveRecord.summary?.longitude ??
+        liveRecord.geometry.coordinates[0],
+      latitude:
+        liveRecord.summary?.latitude ??
+        liveRecord.geometry.coordinates[1]
+    },
+    raw: {
+      ...(record?.raw || {}),
+      Longitude:
+        liveRecord.raw?.Longitude ??
+        liveRecord.geometry.coordinates[0],
+      Latitude:
+        liveRecord.raw?.Latitude ??
+        liveRecord.geometry.coordinates[1]
+    }
+  };
+}
+
 // --------------------------------------------------------
 // MapLibre map
 // --------------------------------------------------------
@@ -259,6 +466,7 @@ const MONUMENT_MAP_COLOURS = {
   allCaal: "#C95A4A",            // other CAAL records
   newPoint: "#1D4ED8",           // new / moved point, blue
   selected: "#00E5FF",           // selected record ring
+  recentSave: "#FDE047",         // recently changed but after last cache
   selectedFill: "rgba(0, 229, 255, 0.12)",
   related: "#7C3AED",            // related records
   whiteStroke: "rgba(255,255,255,0.92)"
@@ -811,7 +1019,11 @@ function renderMonumentLegend() {
 
   const rows = [];
 
-  
+  const hasUncachedLive =
+    Array.isArray(monumentUncachedLiveRecords) &&
+    monumentUncachedLiveRecords.some((record) =>
+      Array.isArray(record?.geometry?.coordinates)
+    );
 
   if (hasWorkspace) {
     rows.push(`
@@ -843,12 +1055,21 @@ function renderMonumentLegend() {
       </div>
     `);
   }
-
+  
   if (hasSelected) {
     rows.push(`
       <div class="legend-row">
         <span class="legend-symbol legend-selected"></span>
         <span>${t("selected_record", "Selected record")}</span>
+      </div>
+    `);
+  }
+
+  if (hasUncachedLive) {
+    rows.push(`
+      <div class="legend-row">
+        <span class="legend-symbol legend-uncached-live"></span>
+        <span>${t("recent_saved_changes", "Saved since cache refresh")}</span>
       </div>
     `);
   }
@@ -964,6 +1185,12 @@ function getCurrentMapLegendItems() {
     !!monumentSelectedRecord?.identity?.id &&
     !!monumentSelectedRecord?.geometry?.coordinates;
 
+  const hasUncachedLive =
+    Array.isArray(monumentUncachedLiveRecords) &&
+    monumentUncachedLiveRecords.some((record) =>
+      Array.isArray(record?.geometry?.coordinates)
+    );
+
   const hasPending =
     !!map &&
     !!map.getSource("monument-pick-point");
@@ -994,6 +1221,14 @@ function getCurrentMapLegendItems() {
     items.push({
       label: t("selected_record", "Selected record"), color: MONUMENT_MAP_COLOURS.selected,
       type: "selected"
+    });
+  }
+
+  if (hasUncachedLive) {
+    items.push({
+      label: t("recent_saved_changes", "Saved since cache refresh"),
+      color: MONUMENT_MAP_COLOURS.recentSave,
+      type: "ring"
     });
   }
 
@@ -1333,7 +1568,8 @@ function getRenderedExportPointFeatures() {
     "national-cluster-points",
     "monuments-workspace-layer",
     "monuments-national-layer",
-    "monuments-all-caal-layer"
+    "monuments-all-caal-layer",
+    "monuments-uncached-live-base"
   ].filter((layerId) => map.getLayer(layerId));
 
   if (!pointLayerIds.length) return [];
@@ -2568,6 +2804,7 @@ function updateSelectedResultCard() {
       Number(record?.identity?.id) === selectedId;
 
     resultCard.classList.toggle("is-selected", isSelected);
+    resultCard.classList.toggle("recent-save-card", isRecentlySavedMonument(record));
   });
 }
 
@@ -6251,6 +6488,8 @@ function bringMonumentOverlaysToFront() {
     "monument-related-lines-halo",
     "monument-related-lines",
     "monument-related-points",
+    "monuments-uncached-live-base",
+    "monuments-uncached-live-ring",
     "monument-selected-ring",
     "monument-selected-point",
     "monument-pick-point-layer",
@@ -8616,9 +8855,13 @@ async function loadMonumentMapRecords() {
 
   if (!scopes.length) {
     monumentMapRecords = [];
+    monumentUncachedLiveRecords = [];
     nationalClusterPointRecords = [];
+
     clearNationalClustersLayer();
     drawMonumentRecords([]);
+    drawUncachedLiveEditedMonuments([]);
+
     updateMapOptionsState();
     updateMapStatusLine();
     setMapStaleState(false);
@@ -8670,26 +8913,42 @@ async function loadMonumentMapRecords() {
       return;
     }
 
+    let liveRecords = [];
+
+    try {
+      liveRecords = await loadUncachedLiveEditedMonuments();
+    } catch (error) {
+      console.warn("Uncached live edited monuments unavailable:", error);
+      monumentUncachedLiveRecords = [];
+      liveRecords = [];
+    }
+
     /*
       Keep full clickable point records in state.
       At low zoom, nationalClusterPointRecords will usually be empty because
       the national endpoint returns clusters only.
       At high zoom, it returns national points and those become clickable.
+
+      Include uncached live records so the label/export/click helpers can see them.
     */
     monumentMapRecords = [
       ...standardRecords,
-      ...nationalClusterPointRecords
+      ...nationalClusterPointRecords,
+      ...liveRecords
     ];
 
     /*
-      Draw only the standard records through the existing client-side layers.
-      National records are now drawn through the separate national-clusters source.
+      Draw cached standard records after live records have been loaded into
+      monumentUncachedLiveRecords, so drawMonumentRecords() can suppress stale
+      cached duplicates for edited CAAL_IDs.
     */
     drawMonumentRecords(standardRecords);
+    drawUncachedLiveEditedMonuments(liveRecords);
 
     renderLiveMapLabels();
     updateMapOptionsState();
     updateMapStatusLine();
+
   } finally {
     if (requestSeq === monumentMapRequestSeq) {
       setMapStaleState(false);
@@ -10158,7 +10417,8 @@ function bindMonumentLayerEvents() {
     "national-cluster-points",
     "monuments-national-layer",
     "monuments-all-caal-layer",
-    "monuments-workspace-layer"
+    "monuments-workspace-layer",
+    "monuments-uncached-live-base"
   ].forEach((layerId) => {
     if (!map.getLayer(layerId)) return;
 
@@ -10192,15 +10452,28 @@ function closeMonumentClickPopup() {
 function drawMonumentRecords(records) {
   if (!map || !mapLoaded) return;
 
-  const workspaceRecords = records.filter(
+  const liveEditedIds =
+    typeof liveEditedCaalIdSet === "function"
+      ? liveEditedCaalIdSet()
+      : new Set();
+
+  const drawableRecords = (records || []).filter((record) => {
+    const caalId = String(record?.identity?.caal_id || "")
+      .trim()
+      .toLowerCase();
+
+    return !caalId || !liveEditedIds.has(caalId);
+  });
+
+  const workspaceRecords = drawableRecords.filter(
     (r) => monumentDisplayScope(r) === "workspace"
   );
 
-  const nationalRecords = records.filter(
+  const nationalRecords = drawableRecords.filter(
     (r) => monumentDisplayScope(r) === "national_ref"
   );
 
-  const allCaalRecords = records.filter(
+  const allCaalRecords = drawableRecords.filter(
     (r) => monumentDisplayScope(r) === "all_caal"
   );
 
@@ -10568,50 +10841,19 @@ async function previewMonumentFromLightRecord(lightRecord) {
 }
 
 async function centreLightRecordOnMap(lightRecord) {
-  if (!map || !lightRecord?.geometry?.coordinates) return;
+  const displayRecord = mergeLiveGeometryForRecentlySavedRecord(lightRecord);
 
-  setMapStaleState(true, t("redrawing_map", "Redrawing map..."));
+  if (!displayRecord?.geometry?.coordinates || !map) return;
 
-  suppressNextMapMoveReload = true;
+  drawFocusedResultHighlight(displayRecord);
 
-  await new Promise((resolve) => {
-    let resolved = false;
+  const [lng, lat] = displayRecord.geometry.coordinates;
 
-    function finish() {
-      if (resolved) return;
-      resolved = true;
-      resolve();
-    }
-
-    map.once("moveend", finish);
-
-    map.easeTo({
-      center: lightRecord.geometry.coordinates,
-      zoom: Math.max(map.getZoom(), 10),
-      duration: 600
-    });
-
-    setTimeout(finish, 800);
+  map.easeTo({
+    center: [lng, lat],
+    zoom: Math.max(map.getZoom(), 7),
+    duration: 500
   });
-
-  try {
-    await loadMonumentMapRecords();
-  } catch (error) {
-    console.error("Failed to reload monuments after centring record:", error);
-  }
-
-  drawFocusedResultHighlight(lightRecord);
-
-  if (
-    monumentSelectedRecord?.identity?.caal_id &&
-    String(monumentSelectedRecord.identity.caal_id) === String(lightRecord.identity?.caal_id)
-  ) {
-    drawSelectedMonumentHighlight(monumentSelectedRecord);
-  }
-
-  renderLiveMapLabels();
-  updateMapOptionsState();
-  updateMapStatusLine();
 }
 
 async function openLightRecordInDetails(lightRecord) {
@@ -10625,21 +10867,25 @@ async function openLightRecordInDetails(lightRecord) {
 
   try {
     const fullRecord = await loadFullMonumentRecord(lightRecord);
+    const displayRecord = mergeLiveGeometryForRecentlySavedRecord(fullRecord);
 
     monumentIsEditMode = false;
     monumentSyncModeVisualState();
     monumentPendingNewRecord = null;
-    monumentSelectedRecord = fullRecord;
+    monumentSelectedRecord = displayRecord;
     clearRelatedMonumentsMap();
     clearRelationshipStateForNewSelection();
 
-    renderMonumentRecordDetails(fullRecord);
+    renderMonumentRecordDetails(displayRecord);
     updateSelectedResultCard();
 
-    if (map && fullRecord.geometry?.coordinates) {
-      drawSelectedMonumentHighlight(fullRecord);
+    if (map && displayRecord.geometry?.coordinates) {
+      drawSelectedMonumentHighlight(displayRecord);
+      ensureRecordVisibleOnMap(displayRecord);
     } else if (map && lightRecord.geometry?.coordinates) {
-      drawSelectedMonumentHighlight(lightRecord);
+      const displayLightRecord = mergeLiveGeometryForRecentlySavedRecord(lightRecord);
+      drawSelectedMonumentHighlight(displayLightRecord);
+      ensureRecordVisibleOnMap(displayLightRecord);
     }
   } catch (error) {
     console.error("Failed to load full monument record:", error);
@@ -10689,16 +10935,24 @@ function renderMonumentResultsList(records) {
   }
 
   resultsList.innerHTML = records
-  .map((record, index) => {
-    return `
-      <div
-        class="result-card ${Number(monumentSelectedRecord?.identity?.id) === Number(record.identity?.id) ? "is-selected" : ""}"
-        data-result-index="${index}"
-      >
-        <div class="result-card-topline">
-          <strong>${mSafeValue(monumentResultTitle(record))}</strong>
-          <span class="scope-badge">${mSafeValue(monumentScopeLabel(monumentDisplayScope(record)))}</span>
-        </div>
+    .map((record, index) => {
+      const isSelected =
+        Number(monumentSelectedRecord?.identity?.id) === Number(record.identity?.id);
+
+      const isRecentSave = isRecentlySavedMonument(record);
+
+      return `
+        <div
+          class="result-card ${isSelected ? "is-selected" : ""} ${isRecentSave ? "recent-save-card" : ""}"
+          data-result-index="${index}"updateSelectedResultCard
+        >
+          <div class="result-card-topline">
+            <strong>${mSafeValue(monumentResultTitle(record))}</strong>
+
+            <div class="result-card-badges">
+              <span class="scope-badge">${mSafeValue(monumentScopeLabel(monumentDisplayScope(record)))}</span>
+            </div>
+          </div>
 
         <div class="result-card-meta">${mSafeValue(mIdentity(record, "caal_id"))}</div>
         <div class="result-card-meta">${mSafeValue(mSummary(record, "classification"))}</div>
@@ -10806,17 +11060,21 @@ async function moveSelection(direction) {
 
   try {
     const fullRecord = await loadFullMonumentRecord(lightRecord);
+    const displayRecord = mergeLiveGeometryForRecentlySavedRecord(fullRecord);
 
-    monumentSelectedRecord = fullRecord;
+    monumentSelectedRecord = displayRecord;
     clearRelationshipStateForNewSelection();
     clearRelatedMonumentsMap();
-    renderMonumentRecordDetails(fullRecord);
+    renderMonumentRecordDetails(displayRecord);
     updateSelectedResultCard();
 
-    if (fullRecord.geometry?.coordinates) {
-      drawSelectedMonumentHighlight(fullRecord);
+    if (displayRecord.geometry?.coordinates) {
+      drawSelectedMonumentHighlight(displayRecord);
+      ensureRecordVisibleOnMap(displayRecord);
     } else {
-      drawSelectedMonumentHighlight(lightRecord);
+      const displayLightRecord = mergeLiveGeometryForRecentlySavedRecord(lightRecord);
+      drawSelectedMonumentHighlight(displayLightRecord);
+      ensureRecordVisibleOnMap(displayLightRecord);
     }
   } catch (error) {
     console.error("Failed to load full monument record:", error);
@@ -12128,6 +12386,39 @@ async function saveCurrentMonumentRecord() {
             await loadMonumentMapRecords();
             await loadMonumentListRecords();
             updateSelectedResultCard();
+          }
+
+          return;
+        }
+
+        if (!isNewRecord && data.record && isPublicCaalRecord) {
+          const savedRecord = {
+            ...data.record,
+            source: {
+              ...(data.record.source || {}),
+              scope: data.record.source?.scope || record.source?.scope || "all_caal",
+              storage: data.record.source?.storage || savedStorage,
+              is_promoted: data.record.source?.is_promoted ?? true,
+              is_editable: true
+            }
+          };
+
+          monumentSelectedRecord = savedRecord;
+          clearRelationshipStateForNewSelection();
+          renderMonumentRecordDetails(savedRecord);
+          updateMonumentActionBar();
+          updateSelectedResultCard();
+
+          if (map && savedRecord.geometry?.coordinates) {
+            drawSelectedMonumentHighlight(savedRecord);
+            ensureRecordVisibleOnMap(savedRecord);
+          }
+
+          try {
+            const liveRecords = await loadUncachedLiveEditedMonuments();
+            drawUncachedLiveEditedMonuments(liveRecords);
+          } catch (error) {
+            console.warn("Could not refresh uncached live edit overlay:", error);
           }
 
           return;

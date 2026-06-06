@@ -2470,6 +2470,30 @@ body {
   outline: none;
 }
 
+.legend-symbol.legend-uncached-live {
+  width: 14px;
+  height: 14px;
+  background: transparent;
+  border: 3px solid #FDE047;
+  border-radius: 50%;
+  box-shadow: 0 0 0 1px rgba(30, 41, 59, 0.35);
+}
+
+.result-card.recent-save-card {
+  border-color: #FDE047;
+  box-shadow: inset 4px 0 0 #FDE047;
+}
+
+.result-card.recent-save-card.is-selected {
+  border-color: var(--accent, #2f6f5f);
+  box-shadow: none;
+}
+
+.result-card.is-selected.recent-save-card {
+  border-color: var(--accent, #2f6f5f);
+  box-shadow: none;
+}
+
 .monument-map-legend.legend-collapsed {
   min-width: 0;
   padding: 6px;

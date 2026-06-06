@@ -655,7 +655,8 @@ function buildBrowseUnionSql(scopes, currentSession, options = {}) {
     .join("\nUNION ALL\n");
 }
 
-function buildBrowseListUnionSql(scopes, currentSession, lang = "en") {
+function buildBrowseListUnionSql(scopes, currentSession, lang = "en", options = {}) {
+  const caalListSource = options.caalListSource || MONUMENTS_CAAL_LIST_MV;
   const currentAppUserId = currentAppUserIdFromSession(currentSession);
   const userId = currentAppUserId ?? -1;
   const workspaceCode = getSessionWorkspaceCode(currentSession);
@@ -677,7 +678,7 @@ function buildBrowseListUnionSql(scopes, currentSession, lang = "en") {
   const workspacePublicOwnedListSql = `
     SELECT
       ${promotedWorkspaceCardSelectSql("m", lang)}
-    FROM ${MONUMENTS_CAAL_LIST_MV} m
+    FROM ${caalListSource} m
     LEFT JOIN public.record_registry rr
       ON rr.caal_id = m."CAAL_ID"
     WHERE (
@@ -730,7 +731,7 @@ function buildBrowseListUnionSql(scopes, currentSession, lang = "en") {
           'public_caal'::text AS storage_scope,
           true AS is_promoted,
           ${publicEditableSqlForListBase} AS is_editable
-        FROM ${MONUMENTS_CAAL_LIST_MV} base
+        FROM ${caalListSource} base
       ) m
       WHERE (${nationalRefWhereSql("m", currentSession)})
         AND COALESCE(m.created_by_app_user_id, -1) <> ${userId}
@@ -754,7 +755,7 @@ function buildBrowseListUnionSql(scopes, currentSession, lang = "en") {
             'public_caal'::text AS storage_scope,
             true AS is_promoted,
             ${allCaalEditableSql} AS is_editable
-          FROM ${MONUMENTS_CAAL_LIST_MV} base
+          FROM ${caalListSource} base
         ) m
         WHERE (
           ${workspaceCode && workspaceCode !== "caal"
@@ -2236,6 +2237,13 @@ router.get("/monuments/map-national-clusters", async (req, res) => {
     return res.status(401).json({ ok: false, error: "No active session" });
   }
 
+  const caalSources = {
+    useLive: false,
+    caalSource: MONUMENTS_CAAL_MV,
+    caalListSource: MONUMENTS_CAAL_LIST_MV,
+    caalMapSource: MONUMENTS_CAAL_MV
+  };
+
   if (!getAllowedScopes(currentSession).includes("national_ref")) {
     return res.status(403).json({
       ok: false,
@@ -2351,7 +2359,7 @@ router.get("/monuments/map-national-clusters", async (req, res) => {
               ST_SetSRID(ST_MakePoint(m."Longitude", m."Latitude"), 4326),
               $${nextIndex}
             ) AS grid_geom
-          FROM ${MONUMENTS_CAAL_MV} m
+          FROM ${caalSources.caalSource} m
           ${whereSql}
           AND m."Longitude" IS NOT NULL
           AND m."Latitude" IS NOT NULL
@@ -2414,7 +2422,7 @@ router.get("/monuments/map-national-clusters", async (req, res) => {
         'public_caal'::text AS storage_scope,
         true AS is_promoted,
         false AS is_editable
-      FROM ${MONUMENTS_CAAL_MV} m
+      FROM ${caalSources.caalSource} m
       ${whereSql}
       AND m."Longitude" IS NOT NULL
       AND m."Latitude" IS NOT NULL
@@ -2440,6 +2448,271 @@ router.get("/monuments/map-national-clusters", async (req, res) => {
     return res.status(500).json({
       ok: false,
       error: "National monument cluster fetch failed",
+      detail: error.message
+    });
+  }
+});
+
+// for after saving but before cache to avoid stale data
+router.get("/monuments/:id/live-full-record", async (req, res) => {
+  const currentSession = req.session?.appSession || null;
+
+  if (!currentSession) {
+    return res.status(401).json({ ok: false, error: "No active session" });
+  }
+
+  if (!isCaalAdmin(currentSession)) {
+    return res.status(403).json({
+      ok: false,
+      error: "CAAL admin only"
+    });
+  }
+
+  const id = Number(req.params.id);
+
+  if (!Number.isInteger(id)) {
+    return res.status(400).json({
+      ok: false,
+      error: "Invalid monument id"
+    });
+  }
+
+  const lang =
+    req.query.lang ||
+    currentSession.profile?.preferred_language ||
+    "en";
+
+  try {
+    const row = await fetchPublicMonumentRowById(id);
+
+    if (!row) {
+      return res.status(404).json({
+        ok: false,
+        error: "Monument not found"
+      });
+    }
+
+    const currentAppUserId = currentAppUserIdFromSession(currentSession);
+    const canEditCaal = canEditCaalMonuments(currentSession);
+
+    const record = buildMonumentRecord(
+      {
+        ...stripMonumentInternalFields(row),
+        source_scope: "all_caal",
+        storage_scope: "public_caal",
+        is_promoted: true,
+        is_editable: true
+      },
+      lang,
+      currentAppUserId,
+      canEditCaal
+    );
+
+    record.relations = await getResourceRelations(pool, record.identity?.caal_id);
+
+    return res.json({
+      ok: true,
+      record,
+      source_mode: "live_full_record"
+    });
+  } catch (error) {
+    console.error("Live full monument record fetch failed:");
+    console.error(error);
+
+    return res.status(500).json({
+      ok: false,
+      error: "Live full monument record fetch failed",
+      detail: error.message
+    });
+  }
+});
+
+router.get("/monuments/:id/live-map-record", async (req, res) => {
+  const currentSession = req.session?.appSession || null;
+
+  if (!currentSession) {
+    return res.status(401).json({ ok: false, error: "No active session" });
+  }
+
+  if (!isCaalAdmin(currentSession)) {
+    return res.status(403).json({
+      ok: false,
+      error: "CAAL admin only"
+    });
+  }
+
+  const id = Number(req.params.id);
+
+  if (!Number.isInteger(id)) {
+    return res.status(400).json({
+      ok: false,
+      error: "Invalid monument id"
+    });
+  }
+
+  const lang =
+    req.query.lang ||
+    currentSession.profile?.preferred_language ||
+    "en";
+
+  try {
+    const result = await pool.query(
+      `
+      SELECT
+        m.id,
+        m."CAAL_ID",
+        m."Primary Name",
+        m."Primary Name (English)",
+        m."Country",
+        m."Country" AS country_display,
+        m."Region",
+        m."Classification",
+        m."Classification" AS classification_display,
+        m."Designation",
+        m."Designation" AS designation_display,
+        m."Monument Type1",
+        m."Monument Type1" AS monument_type1_display,
+        m."Cultural Period1",
+        m."Cultural Period1" AS cultural_period1_display,
+        m."Religion1",
+        m."Religion1" AS religion1_display,
+        m."Longitude",
+        m."Latitude",
+        m.created_by_app_user_id,
+        'all_caal'::text AS source_scope,
+        'public_caal'::text AS storage_scope,
+        true AS is_promoted,
+        true AS is_editable
+      FROM ${MONUMENTS_CAAL_TABLE} m
+      WHERE m.id = $1
+      LIMIT 1
+      `,
+      [id]
+    );
+
+    if (!result.rows.length) {
+      return res.status(404).json({
+        ok: false,
+        error: "Monument not found"
+      });
+    }
+
+    const currentAppUserId = currentAppUserIdFromSession(currentSession);
+    const record = buildMonumentMapRecord(
+      result.rows[0],
+      lang,
+      currentAppUserId,
+      true
+    );
+
+    return res.json({
+      ok: true,
+      record,
+      source_mode: "single_live_record"
+    });
+  } catch (error) {
+    console.error("Live monument map record fetch failed:");
+    console.error(error);
+
+    return res.status(500).json({
+      ok: false,
+      error: "Live monument map record fetch failed",
+      detail: error.message
+    });
+  }
+});
+
+router.get("/monuments/live-edited-map-records", async (req, res) => {
+  const currentSession = req.session?.appSession || null;
+
+  if (!currentSession) {
+    return res.status(401).json({ ok: false, error: "No active session" });
+  }
+
+  if (!isCaalAdmin(currentSession)) {
+    return res.status(403).json({
+      ok: false,
+      error: "CAAL admin only"
+    });
+  }
+
+  const lang =
+    req.query.lang ||
+    currentSession.profile?.preferred_language ||
+    "en";
+
+  const currentAppUserId = currentAppUserIdFromSession(currentSession);
+
+  try {
+    const result = await pool.query(
+      `
+      WITH cache_status AS (
+        SELECT refreshed_at
+        FROM ui.app_cache_status
+        WHERE cache_key = 'monuments_caal_cache'
+        LIMIT 1
+      ),
+      threshold AS (
+        SELECT
+          COALESCE(
+            (SELECT refreshed_at FROM cache_status),
+            now() - interval '2 hours'
+          ) AS changed_after
+      )
+      SELECT
+        m.id,
+        m."CAAL_ID",
+        m."Primary Name",
+        m."Primary Name (English)",
+        m."Country",
+        m."Country" AS country_display,
+        m."Region",
+        m."Classification",
+        m."Classification" AS classification_display,
+        m."Designation",
+        m."Designation" AS designation_display,
+        m."Monument Type1",
+        m."Monument Type1" AS monument_type1_display,
+        m."Cultural Period1",
+        m."Cultural Period1" AS cultural_period1_display,
+        m."Religion1",
+        m."Religion1" AS religion1_display,
+        m."Longitude",
+        m."Latitude",
+        m."Tstamp",
+        m.created_by_app_user_id,
+        'all_caal'::text AS source_scope,
+        'public_caal'::text AS storage_scope,
+        true AS is_promoted,
+        true AS is_editable,
+        threshold.changed_after AS cache_refreshed_at
+      FROM public."CAAL_Monuments" m
+      CROSS JOIN threshold
+      WHERE m."Longitude" IS NOT NULL
+        AND m."Latitude" IS NOT NULL
+        AND m."Tstamp" > threshold.changed_after
+      ORDER BY m."Tstamp" DESC NULLS LAST
+      `
+    );
+
+    const records = result.rows.map((row) =>
+      buildMonumentMapRecord(row, lang, currentAppUserId, true)
+    );
+
+    return res.json({
+      ok: true,
+      records,
+      total: records.length,
+      source_mode: "uncached_live_edits",
+      cache_refreshed_at: result.rows[0]?.cache_refreshed_at || null
+    });
+  } catch (error) {
+    console.error("Uncached live monument records fetch failed:");
+    console.error(error);
+
+    return res.status(500).json({
+      ok: false,
+      error: "Uncached live monument records fetch failed",
       detail: error.message
     });
   }
@@ -2472,6 +2745,13 @@ router.get("/monuments/map", async (req, res) => {
     req.query.lang ||
     currentSession.profile?.preferred_language ||
     "en";
+
+  const caalSources = {
+    useLive: false,
+    caalSource: MONUMENTS_CAAL_MV,
+    caalListSource: MONUMENTS_CAAL_LIST_MV,
+    caalMapSource: MONUMENTS_CAAL_MV
+  };
 
   const workspaceOnly =
     scopes.length === 1 &&
@@ -2549,7 +2829,7 @@ router.get("/monuments/map", async (req, res) => {
 
           SELECT
             ${promotedWorkspaceMapSelectSql("m", lang)}
-          FROM ${MONUMENTS_CAAL_MV} m
+          FROM ${caalSources.caalSource} m
           JOIN public.record_registry rr
             ON rr.caal_id = m."CAAL_ID"
           ${promotedWhere}
@@ -2588,8 +2868,19 @@ router.get("/monuments/map", async (req, res) => {
   }
 
   // --- base SQL parts ---
-  const unionSql = buildBrowseUnionSql(scopes, currentSession);
+  const unionSql = buildBrowseUnionSql(scopes, currentSession, {
+    caalSource: caalSources.caalSource
+  });
+
   const { whereSql, values } = buildMonumentFilterWhere(req, lang);
+
+  if (!unionSql) {
+    return res.json({
+      ok: true,
+      total: 0,
+      records: []
+    });
+  }
 
   // --- bbox handling ---
   const bbox = parseBboxParam(req.query.bbox);
@@ -2785,6 +3076,13 @@ router.get("/monuments", async (req, res) => {
   const offset = Number(req.query.offset) || 0;
   const lang = req.query.lang || currentSession.profile?.preferred_language || "en";
 
+  const caalSources = {
+    useLive: false,
+    caalSource: MONUMENTS_CAAL_MV,
+    caalListSource: MONUMENTS_CAAL_LIST_MV,
+    caalMapSource: MONUMENTS_CAAL_MV
+  };
+
   const workspaceOnly =
     scopes.length === 1 &&
     scopes[0] === "workspace" &&
@@ -2829,7 +3127,7 @@ router.get("/monuments", async (req, res) => {
 
           SELECT
             ${promotedWorkspaceCardSelectSql("m", lang)}
-          FROM ${MONUMENTS_CAAL_MV} m
+          FROM ${caalSources.caalListSource} m
           JOIN public.record_registry rr
             ON rr.caal_id = m."CAAL_ID"
           WHERE rr.created_by_app_user_id = $1
@@ -2859,7 +3157,7 @@ router.get("/monuments", async (req, res) => {
           UNION ALL
 
           SELECT m.id
-          FROM ${MONUMENTS_CAAL_MV} m
+          FROM ${caalSources.caalListSource} m
           JOIN public.record_registry rr
             ON rr.caal_id = m."CAAL_ID"
           WHERE rr.created_by_app_user_id = $1
@@ -2900,7 +3198,9 @@ router.get("/monuments", async (req, res) => {
   }
 
   try {
-    const unionSql = buildBrowseListUnionSql(scopes, currentSession, lang);
+    const unionSql = buildBrowseListUnionSql(scopes, currentSession, lang, {
+      caalListSource: caalSources.caalListSource
+    });
 
     const { whereSql, values } = buildMonumentFilterWhere(req, lang);
 
@@ -3006,7 +3306,8 @@ router.get("/monuments", async (req, res) => {
       total_is_exact: totalIsExact,
       limit,
       offset,
-      scopes
+      scopes,
+      source_mode: "cached"
     });
   } catch (error) {
     console.error("Monuments fetch failed:");
