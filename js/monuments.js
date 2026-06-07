@@ -253,7 +253,7 @@ let monumentUncachedLiveRecords = [];
 let uncachedLiveLayerEventsBound = false;
 
 async function loadUncachedLiveEditedMonuments() {
-  if (!monumentUserIsCaalAdmin()) {
+  if (!monumentUserCanUseLiveCacheWorkaround()) {
     monumentUncachedLiveRecords = [];
     return [];
   }
@@ -4963,6 +4963,19 @@ function monumentUserIsCaalAdmin() {
   return accessLevel === 9 && workspaceCode === "caal";
 }
 
+function monumentUserCanUseLiveCacheWorkaround() {
+  const session = window.appSession || {};
+
+  const accessLevel = Number(
+    session.user?.access_level ??
+    session.profile?.access_level ??
+    session.permissions?.access_level ??
+    0
+  );
+
+  return accessLevel === 9;
+}
+
 function monumentUserCanEditMasterId() {
   return monumentUserIsCaalAdmin();
 }
@@ -5081,8 +5094,8 @@ function applyMonumentScopeUiForSession(
 
   setScopeLabelForInput(
     showAllCaalRecords,
-    "monument_other_records",
-    "Other CAAL records"
+    "monuments_other_records",
+    "Other CAAL"
   );
 
   if (workspaceWrapper) {
@@ -5105,19 +5118,31 @@ function monumentScopeLabel(scope) {
 
   switch (normalisedScope) {
     case "workspace":
-      return t("workspace", "Workspace");
+      return t("scope_workspace", "Workspace");
 
     case "national_ref":
-      return t("monuments_national_records", "National CAAL records");
+      return t("scope_national_caal", "National CAAL");
 
     case "all_caal":
       return monumentUserIsGlobalCaal()
-        ? t("monuments_all_records", t("monuments_all_records", "All CAAL records"))
-        : t("monuments_other_records", "Other CAAL records");
+        ? t("scope_all_caal", "All CAAL")
+        : t("scope_other_caal", "Other CAAL");
 
     default:
       return normalisedScope || t("unknown", "Unknown");
   }
+}
+
+function monumentScopeBadgeClass(record) {
+  const classes = ["scope-badge"];
+
+  if (record?.source?.is_editable === true) {
+    classes.push("scope-badge-editable");
+  } else {
+    classes.push("scope-badge-readonly");
+  }
+
+  return classes.join(" ");
 }
 
 function monumentDisplayScope(record) {
@@ -10950,7 +10975,9 @@ function renderMonumentResultsList(records) {
             <strong>${mSafeValue(monumentResultTitle(record))}</strong>
 
             <div class="result-card-badges">
-              <span class="scope-badge">${mSafeValue(monumentScopeLabel(monumentDisplayScope(record)))}</span>
+              <span class="${monumentScopeBadgeClass(record)}">
+                ${mSafeValue(monumentScopeLabel(record.source?.scope))}
+              </span>
             </div>
           </div>
 

@@ -128,7 +128,7 @@ function getRecentlySavedArchiveRecord(record) {
 }
 
 async function loadRecentlySavedArchiveRecords() {
-  if (!archiveUserIsCaalAdmin()) {
+  if (!archiveUserCanUseLiveCacheWorkaround()) {
     archiveRecentlySavedRecords = [];
     return [];
   }
@@ -404,6 +404,18 @@ function archiveUserIsCaalAdmin() {
   return accessLevel === 9 && workspaceCode === "caal";
 }
 
+function archiveUserCanUseLiveCacheWorkaround() {
+  const session = window.appSession || {};
+  const accessLevel = Number(
+    session.user?.access_level ??
+    session.profile?.access_level ??
+    session.permissions?.access_level ??
+    0
+  );
+
+  return accessLevel === 9;
+}
+
 // Cache helper
 function archiveCacheLocale() {
   const lang = archiveCurrentLanguageCode();
@@ -543,19 +555,31 @@ function archiveScopeLabel(scope) {
 
   switch (normalisedScope) {
     case "workspace":
-      return t("workspace", "Workspace");
+      return t("scope_workspace", "Workspace");
 
     case "national_ref":
-      return t("archive_national_records", "National CAAL records");
+      return t("scope_national_caal", "National CAAL");
 
     case "all_caal":
       return archiveUserIsGlobalCaal()
-        ? t("archive_all_records", "All CAAL records")
-        : t("archive_other_records", "Other CAAL records");
+        ? t("scope_all_caal", "All CAAL")
+        : t("scope_other_caal", "Other CAAL");
 
     default:
       return normalisedScope || t("unknown", "Unknown");
   }
+}
+
+function archiveScopeBadgeClass(record) {
+  const classes = ["scope-badge"];
+
+  if (record?.source?.is_editable === true) {
+    classes.push("scope-badge-editable");
+  } else {
+    classes.push("scope-badge-readonly");
+  }
+
+  return classes.join(" ");
 }
 
 // lookup helper
@@ -2415,7 +2439,7 @@ async function loadFullArchiveRecord(record, langOverride = null) {
 
   if (
     liveRecord &&
-    archiveUserIsCaalAdmin() &&
+    archiveUserCanUseLiveCacheWorkaround() &&
     recordId !== null &&
     recordId !== undefined &&
     String(record?.source?.storage || "") === "public_caal"
@@ -3772,7 +3796,9 @@ function renderArchiveResultsList(records) {
         >
           <div class="result-card-topline">
             <strong>${safeArchiveValue(title)}</strong>
-            <span class="scope-badge">${safeArchiveValue(archiveScopeLabel(record.source?.scope))}</span>
+            <span class="${archiveScopeBadgeClass(record)}">
+              ${safeArchiveValue(archiveScopeLabel(record.source?.scope))}
+            </span>
           </div>
 
           <div class="result-card-meta">${safeArchiveValue(caalId)}</div>

@@ -2440,14 +2440,24 @@ router.get("/live-edited-records", async (req, res) => {
     return res.status(401).json({ ok: false, error: "No active session" });
   }
 
-  if (!isCaalAdmin(currentSession)) {
+  if (!isCaalAdmin(currentSession) && !isNationalAdmin(currentSession)) {
     return res.status(403).json({
       ok: false,
-      error: "CAAL admin only"
-    });
+      error: "Admin only"
+    }); 
   }
 
   try {
+    const workspaceCode = getSessionWorkspaceCode(currentSession);
+    const values = [];
+
+    let workspaceWhere = "";
+
+    if (isNationalAdmin(currentSession)) {
+      values.push(workspaceCode);
+      workspaceWhere = `AND a.workspace_code = $${values.length}`;
+    }
+
     const result = await pool.query(
       `
       WITH cache_status AS (
@@ -2471,9 +2481,10 @@ router.get("/live-edited-records", async (req, res) => {
       FROM ${ARCHIVE_CAAL_TABLE} a
       CROSS JOIN threshold
       WHERE a."Tstamp" > threshold.changed_after
+        ${workspaceWhere}
       ORDER BY a."Tstamp" DESC NULLS LAST
-      LIMIT 500
-      `
+      `,
+      values
     );
 
     return res.json({
@@ -2502,10 +2513,10 @@ router.get("/:id/live-full-record", async (req, res) => {
     return res.status(401).json({ ok: false, error: "No active session" });
   }
 
-  if (!isCaalAdmin(currentSession)) {
+  if (!isCaalAdmin(currentSession) && !isNationalAdmin(currentSession)) {
     return res.status(403).json({
       ok: false,
-      error: "CAAL admin only"
+      error: "Admin only"
     });
   }
 
@@ -2524,6 +2535,16 @@ router.get("/:id/live-full-record", async (req, res) => {
     "en";
 
   try {
+    const workspaceCode = getSessionWorkspaceCode(currentSession);
+    const values = [id];
+
+    let workspaceWhere = "";
+
+    if (isNationalAdmin(currentSession)) {
+      values.push(workspaceCode);
+      workspaceWhere = `AND a.workspace_code = $${values.length}`;
+    }
+
     const result = await pool.query(
       `
       SELECT
@@ -2536,9 +2557,10 @@ router.get("/:id/live-full-record", async (req, res) => {
         true AS is_promoted
       FROM ${ARCHIVE_CAAL_TABLE} a
       WHERE a.id = $1
+        ${workspaceWhere}
       LIMIT 1
       `,
-      [id]
+      values
     );
 
     if (!result.rows.length) {
