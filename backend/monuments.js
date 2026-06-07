@@ -2461,10 +2461,10 @@ router.get("/monuments/:id/live-full-record", async (req, res) => {
     return res.status(401).json({ ok: false, error: "No active session" });
   }
 
-  if (!isCaalAdmin(currentSession)) {
+  if (!isCaalAdmin(currentSession) && !isNationalAdmin(currentSession)) {
     return res.status(403).json({
       ok: false,
-      error: "CAAL admin only"
+      error: "Admin only"
     });
   }
 
@@ -2534,10 +2534,10 @@ router.get("/monuments/:id/live-map-record", async (req, res) => {
     return res.status(401).json({ ok: false, error: "No active session" });
   }
 
-  if (!isCaalAdmin(currentSession)) {
+  if (!isCaalAdmin(currentSession) && !isNationalAdmin(currentSession)) {
     return res.status(403).json({
       ok: false,
-      error: "CAAL admin only"
+      error: "Admin only"
     });
   }
 
@@ -2556,6 +2556,16 @@ router.get("/monuments/:id/live-map-record", async (req, res) => {
     "en";
 
   try {
+    const workspaceCode = getSessionWorkspaceCode(currentSession);
+    const values = [id];
+
+    let workspaceWhere = "";
+
+    if (isNationalAdmin(currentSession)) {
+      values.push(workspaceCode);
+      workspaceWhere = `AND m.workspace_code = $${values.length}`;
+    }
+
     const result = await pool.query(
       `
       SELECT
@@ -2585,9 +2595,10 @@ router.get("/monuments/:id/live-map-record", async (req, res) => {
         true AS is_editable
       FROM ${MONUMENTS_CAAL_TABLE} m
       WHERE m.id = $1
+        ${workspaceWhere}
       LIMIT 1
       `,
-      [id]
+      values
     );
 
     if (!result.rows.length) {
@@ -2629,10 +2640,10 @@ router.get("/monuments/live-edited-map-records", async (req, res) => {
     return res.status(401).json({ ok: false, error: "No active session" });
   }
 
-  if (!isCaalAdmin(currentSession)) {
+  if (!isCaalAdmin(currentSession) && !isNationalAdmin(currentSession)) {
     return res.status(403).json({
       ok: false,
-      error: "CAAL admin only"
+      error: "Admin only"
     });
   }
 
@@ -2644,6 +2655,16 @@ router.get("/monuments/live-edited-map-records", async (req, res) => {
   const currentAppUserId = currentAppUserIdFromSession(currentSession);
 
   try {
+    const workspaceCode = getSessionWorkspaceCode(currentSession);
+    const values = [];
+
+    let workspaceWhere = "";
+
+    if (isNationalAdmin(currentSession)) {
+      values.push(workspaceCode);
+      workspaceWhere = `AND m.workspace_code = $${values.length}`;
+    }
+
     const result = await pool.query(
       `
       WITH cache_status AS (
@@ -2692,7 +2713,9 @@ router.get("/monuments/live-edited-map-records", async (req, res) => {
         AND m."Latitude" IS NOT NULL
         AND m."Tstamp" > threshold.changed_after
       ORDER BY m."Tstamp" DESC NULLS LAST
-      `
+        ${workspaceWhere}
+      `,
+      values
     );
 
     const records = result.rows.map((row) =>
@@ -3369,13 +3392,17 @@ function publicCaalMonumentEditWhereSql(session, tableAlias = "m", paramIndex) {
 
   if (isNationalAdmin(session)) {
     return {
-      sql: `AND ${tableAlias}.workspace_code = $${paramIndex}`,
+      sql: `
+        AND ${tableAlias}.workspace_code = $${paramIndex}
+        AND COALESCE(${tableAlias}."MasterID", '') = ''
+      `,
       values: [workspaceCode]
     };
   }
 
   return {
     sql: `
+      AND COALESCE(${tableAlias}."MasterID", '') = ''
       AND EXISTS (
         SELECT 1
         FROM public.record_registry rr

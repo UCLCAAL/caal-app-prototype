@@ -593,6 +593,10 @@ async function syncResourceRelationsForMonument(db, {
 
   const relationFields = [
     {
+      field: "MasterID",
+      relationType: "is superseded by / supersedes"
+    },
+    {
       field: "Monument is part of",
       relationType: "is part of"
     },
