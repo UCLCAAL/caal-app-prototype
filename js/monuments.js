@@ -5113,8 +5113,31 @@ function getMonumentEnabledScopes() {
   return scopes;
 }
 
-function monumentScopeLabel(scope) {
-  const normalisedScope = normaliseMonumentScopeForSession(scope);
+function monumentStorageScopeLabel(storageScope) {
+  const storage = String(storageScope || "").trim();
+
+  if (storage === "public_caal") {
+    return t("scope_caal", "CAAL");
+  }
+
+  if (storage.endsWith("_workspace")) {
+    const code = storage.replace(/_workspace$/, "").toUpperCase();
+
+    return t("scope_country_workspace", "{code} workspace")
+      .replace("{code}", code);
+  }
+
+  return storage || "";
+}
+
+function monumentScopeLabelForRecord(record) {
+  const normalisedScope = normaliseMonumentScopeForSession(record?.source?.scope);
+  const storage = record?.source?.storage || "";
+
+  if (monumentUserIsCaalAdmin()) {
+    const storageLabel = monumentStorageScopeLabel(storage);
+    if (storageLabel) return storageLabel;
+  }
 
   switch (normalisedScope) {
     case "workspace":
@@ -10976,7 +10999,7 @@ function renderMonumentResultsList(records) {
 
             <div class="result-card-badges">
               <span class="${monumentScopeBadgeClass(record)}">
-                ${mSafeValue(monumentScopeLabel(record.source?.scope))}
+                ${mSafeValue(monumentScopeLabelForRecord(record))}
               </span>
             </div>
           </div>
