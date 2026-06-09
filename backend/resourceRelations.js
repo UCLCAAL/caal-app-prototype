@@ -584,29 +584,44 @@ async function syncResourceRelationsForMonument(db, {
 }) {
   if (!caalId || !sourceRowId || !payload) return;
 
-  const effectiveUsername = currentSession?.user?.username ||
+  const effectiveUsername =
+    currentSession?.user?.username ||
     username ||
     "web app";
 
   const ws = relationStorageFromContext(currentSession, storageScope);
   const sourceTable = `${ws.schema}.CAAL_Monuments`;
 
+  /*
+    Established convention for monument source fields:
+
+      parent_id = current monument CAAL_ID
+      child_id  = value entered in the source field
+
+    For MasterID this means:
+      current record -> MasterID
+      relation_type = is superseded by / supersedes
+  */
   const relationFields = [
     {
       field: "MasterID",
-      relationType: "is superseded by / supersedes"
+      relationType: "is superseded by / supersedes",
+      upsertNote: "MasterID relation synced from web app"
     },
     {
       field: "Monument is part of",
-      relationType: "is part of"
+      relationType: "is part of",
+      upsertNote: "Monument relation synced from Monument is part of"
     },
     {
       field: "Monument contains",
-      relationType: "contains / is contained within"
+      relationType: "contains / is contained within",
+      upsertNote: "Monument relation synced from Monument contains"
     },
     {
       field: "Monument is associated with",
-      relationType: "is related to"
+      relationType: "is related to",
+      upsertNote: "Monument relation synced from Monument is associated with"
     }
   ];
 
@@ -618,16 +633,39 @@ async function syncResourceRelationsForMonument(db, {
     const relatedIds = parseRelationIdList(payload[config.field]);
 
     for (const relatedId of relatedIds) {
-      await upsertResourceRelationEdge(db, {
-        parentId: caalId,
-        childId: relatedId,
+      const parentId = caalId;
+      const childId = relatedId;
+
+      const edgeId = await upsertResourceRelationEdge(db, {
+        parentId,
+        childId,
         relationType: config.relationType,
         sourceTable,
         sourceField: config.field,
         sourceRowId,
         currentSession,
-        username,
+        username: effectiveUsername,
         note: `Created or updated from ${sourceTable}:${sourceRowId}:${config.field}`
+      });
+
+      await logResourceRelationEdit(db, {
+        edgeId,
+        parentId,
+        childId,
+        relationType: config.relationType,
+        action: "upserted",
+        currentSession,
+        username: effectiveUsername,
+        sourceTable,
+        sourceField: config.field,
+        sourceRowId: String(sourceRowId),
+        newValues: {
+          parent_id: parentId,
+          child_id: childId,
+          relation_type: config.relationType,
+          source_field: config.field
+        },
+        note: config.upsertNote
       });
     }
 
@@ -635,7 +673,7 @@ async function syncResourceRelationsForMonument(db, {
       Conservative deactivation:
       Only deactivate web-edit edges from this exact record field where the
       related ID has been removed. This avoids deactivating relations that also
-      came from the old batch import or another source.
+      came from legacy import, QGIS edits, or another source.
     */
     const normalisedCurrentRelatedIds = relatedIds.map((id) =>
       id.toLowerCase().trim()
@@ -650,9 +688,9 @@ async function syncResourceRelationsForMonument(db, {
         updated_by = $3,
         notes = COALESCE(e.notes, '') || E'\nDeactivated by web edit sync because source field no longer lists this ID.'
       WHERE COALESCE(e.edge_status, 'active') = 'active'
-      AND e.source_tables @> ARRAY[$5]::text[]
-      AND e.source_fields @> ARRAY[$6]::text[]
-      AND e.source_row_ids @> ARRAY[$7]::text[]
+        AND e.source_tables @> ARRAY[$5]::text[]
+        AND e.source_fields @> ARRAY[$6]::text[]
+        AND e.source_row_ids @> ARRAY[$7]::text[]
         AND e.relation_type_norm = $2
         AND (
           lower(trim(e.parent_id)) = lower(trim($1))
@@ -698,7 +736,8 @@ async function syncResourceRelationsForMonument(db, {
         childId: row.child_id,
         relationType: row.relation_type,
         action: "deactivated",
-        username,
+        currentSession,
+        username: effectiveUsername,
         sourceTable,
         sourceField: config.field,
         sourceRowId: String(sourceRowId),
