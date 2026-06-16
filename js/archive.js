@@ -2275,7 +2275,8 @@ function archiveRenderDetailHtmlItem(label, htmlValue, fullWidth = false) {
 function archiveNormaliseDoi(value) {
   return String(value || "")
     .trim()
-    .replace(/^https?:\/\/(dx\.)?doi\.org\//i, "")
+    .replace(/^https?:\/\/(www\.)?(dx\.)?doi\.org\//i, "")
+    .replace(/^(www\.)?(dx\.)?doi\.org\//i, "")
     .replace(/^doi:\s*/i, "")
     .trim();
 }
@@ -2302,7 +2303,7 @@ function archiveRenderDoiValue(value) {
       rel="noopener noreferrer"
       class="archive-doi-link"
     >
-      ${safeArchiveValue(doi)}
+      ${safeArchiveValue(href)}
     </a>
   `;
 }
@@ -4077,8 +4078,7 @@ function archiveRenderDisplayMode(record) {
   );
   metadataHtml += archiveRenderDetailHtmlItem(
     archiveLabel("Resource", "DOI"),
-    archiveRenderDoiValue(archiveRaw(record, "Resource")),
-    true
+    archiveRenderDoiValue(archiveRaw(record, "Resource"))
   );
 
   const holdingInstitution = archiveGetHoldingInstitutionRelation(record);
