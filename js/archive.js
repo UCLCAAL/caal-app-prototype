@@ -2261,6 +2261,52 @@ function archiveRenderDetailItem(label, value, fullWidth = false) {
   `;
 }
 
+function archiveRenderDetailHtmlItem(label, htmlValue, fullWidth = false) {
+  const fullWidthClass = fullWidth ? " full-width" : "";
+
+  return `
+    <div class="detail-item${fullWidthClass}">
+      <span class="detail-label">${label}</span>
+      <div class="detail-value">${htmlValue}</div>
+    </div>
+  `;
+}
+
+function archiveNormaliseDoi(value) {
+  return String(value || "")
+    .trim()
+    .replace(/^https?:\/\/(dx\.)?doi\.org\//i, "")
+    .replace(/^doi:\s*/i, "")
+    .trim();
+}
+
+function archiveRenderDoiValue(value) {
+  const raw = String(value || "").trim();
+
+  if (!raw) {
+    return safeArchiveValue("");
+  }
+
+  const doi = archiveNormaliseDoi(raw);
+
+  if (!doi) {
+    return safeArchiveValue(raw);
+  }
+
+  const href = `https://doi.org/${encodeURIComponent(doi).replace(/%2F/g, "/")}`;
+
+  return `
+    <a
+      href="${archiveAttributeValue(href)}"
+      target="_blank"
+      rel="noopener noreferrer"
+      class="archive-doi-link"
+    >
+      ${safeArchiveValue(doi)}
+    </a>
+  `;
+}
+
 function archiveSvgCopyIcon() {
   return `
     <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16">
@@ -4029,9 +4075,10 @@ function archiveRenderDisplayMode(record) {
     t("recorded_language", "Recorded Language"),
     displayLanguageName(archiveRaw(record, "Preferred Language"))
   );
-  metadataHtml += archiveRenderDetailItem(
-    archiveLabel("Resource", "Resource"),
-    archiveRaw(record, "Resource")
+  metadataHtml += archiveRenderDetailHtmlItem(
+    archiveLabel("Resource", "DOI"),
+    archiveRenderDoiValue(archiveRaw(record, "Resource")),
+    true
   );
 
   const holdingInstitution = archiveGetHoldingInstitutionRelation(record);
@@ -4313,7 +4360,12 @@ function archiveRenderEditMode(record) {
     archiveDateOnly(archiveRaw(record, "Date of Recording")) ||
       archiveLabel("Set automatically on save", "Set automatically on save")
   );
-  metadataHtml += archiveRenderTextarea("Resource", archiveLabel("Resource", "Resource"), archiveRaw(record, "Resource"), true);
+  metadataHtml += archiveRenderTextarea(
+    "Resource",
+    archiveLabel("Resource", "DOI"),
+    archiveRaw(record, "Resource"),
+    true
+  );
   metadataHtml += archiveRenderReadOnlyItem(
     t("recorded_language", "Recorded Language"),
     displayLanguageName(archiveRaw(record, "Preferred Language"))

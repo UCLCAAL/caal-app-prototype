@@ -97,6 +97,10 @@
   display: none !important;
 }
 
+.archive-doi-link {
+  overflow-wrap: anywhere;
+}
+
 /* =========================================== LOGIN */
 .login-language-row {
   display: flex;
