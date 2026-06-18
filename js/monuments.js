@@ -9997,7 +9997,7 @@ function showMonumentStackPopup(lngLat, records, options = {}) {
 
   monumentClickPopup = new maplibregl.Popup({
     closeButton: true,
-    closeOnClick: true,
+    closeOnClick: false,
     focusAfterOpen: false,
     anchor: placement.anchor,
     offset: placement.offset,
@@ -10009,9 +10009,9 @@ function showMonumentStackPopup(lngLat, records, options = {}) {
     monumentClickPopup = null;
   });
 
-  monumentHoverPopup
+  monumentClickPopup
     .setLngLat(lngLat)
-    .setHTML(renderMonumentStackPopupHtml(popupRecords))
+    .setHTML(renderMonumentStackPopupHtml(safeRecords))
     .addTo(map);
 
   resizeMonumentStackPopupToAvailableSpace(
@@ -10307,6 +10307,9 @@ function bindMonumentLayerEvents() {
   }
 
   async function handleMonumentPointClick(e) {
+    e?.originalEvent?.preventDefault?.();
+    e?.originalEvent?.stopPropagation?.();
+
     if (!e?.point) return;
 
     const popupRecords = getMonumentPopupRecordsForPoint(e.point);
