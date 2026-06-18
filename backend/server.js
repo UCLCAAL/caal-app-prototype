@@ -50,10 +50,12 @@ app.use(session({
   secret: process.env.SESSION_SECRET || "change-this-for-production",
   resave: false,
   saveUninitialized: false,
+  rolling: true,
   cookie: {
     httpOnly: true,
     sameSite: "lax",
-    secure: process.env.NODE_ENV === "production"
+    secure: process.env.NODE_ENV === "production",
+    maxAge: 3 * 60 * 60 * 1000
   }
 }));
 
