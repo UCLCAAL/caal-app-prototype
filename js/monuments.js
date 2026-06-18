@@ -3534,6 +3534,33 @@ function normaliseTreeItems(treeItems) {
   });
 }
 
+function ensureSelectHasTreeOptions(selectEl, treeItems) {
+  if (!selectEl) return;
+
+  const existingValues = new Set(
+    Array.from(selectEl.options || [])
+      .map((option) => String(option.value || "").trim())
+      .filter(Boolean)
+  );
+
+  normaliseTreeItems(treeItems).forEach((item) => {
+    const value = getTreeItemValue(item);
+    if (!value || existingValues.has(value)) return;
+
+    const option = document.createElement("option");
+    option.value = value;
+    option.textContent =
+      item.label ||
+      item.display_label ||
+      item.display_en ||
+      item.chip_label ||
+      value;
+
+    selectEl.appendChild(option);
+    existingValues.add(value);
+  });
+}
+
 function buildChildrenByParent(treeItems, treeLookupName) {
   const childrenByParent = new Map();
 
@@ -8477,11 +8504,13 @@ function renderAdvancedFilterTreePicker({
   const existing = document.getElementById(treeId);
   if (existing) existing.remove();
 
-  const treeItems = Array.isArray(monumentLookups?.[treeLookupName])
+    const treeItems = Array.isArray(monumentLookups?.[treeLookupName])
     ? monumentLookups[treeLookupName]
     : [];
 
   const normalisedTreeItems = normaliseTreeItems(treeItems);
+
+  ensureSelectHasTreeOptions(selectEl, normalisedTreeItems);
 
   const selectedValues = new Set(
     Array.from(selectEl.selectedOptions).map((option) => String(option.value))
