@@ -1498,6 +1498,26 @@ body {
   color: #6b7280;
 }
 
+.legacy-tree-depth-0 > .legacy-tree-row {
+  padding-left: 0;
+}
+
+.legacy-tree-depth-1 > .legacy-tree-row {
+  padding-left: 1.25rem;
+}
+
+.legacy-tree-depth-2 > .legacy-tree-row {
+  padding-left: 2.5rem;
+}
+
+.legacy-tree-depth-3 > .legacy-tree-row {
+  padding-left: 3.75rem;
+}
+
+.legacy-tree-depth-4 > .legacy-tree-row {
+  padding-left: 5rem;
+}
+
 .filter-live-results-text {
   display: flex;
   align-items: baseline;

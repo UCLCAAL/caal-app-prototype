@@ -3492,6 +3492,132 @@ function sortLegacyTreeItems(items, treeLookupName) {
   });
 }
 
+function getTreeItemValue(item) {
+  return String(
+    item?.value ||
+    item?.canonical_value ||
+    item?.concept_id ||
+    ""
+  ).trim();
+}
+
+function getTreeItemConceptId(item) {
+  return String(item?.concept_id || "").trim();
+}
+
+function getTreeItemParentId(item) {
+  return String(item?.parent_id || "").trim();
+}
+
+function normaliseTreeItems(treeItems) {
+  return (Array.isArray(treeItems) ? treeItems : []).map((item) => {
+    const conceptId = getTreeItemConceptId(item);
+    const parentId = getTreeItemParentId(item);
+    const value = getTreeItemValue(item) || conceptId;
+
+    return {
+      ...item,
+      concept_id: conceptId,
+      parent_id: parentId,
+      value,
+      label: item.label || item.display_label || item.display_en || value,
+      chip_label:
+        item.chip_label ||
+        item.path_label ||
+        item.path_label_en ||
+        item.label ||
+        item.display_label ||
+        item.display_en ||
+        value,
+      level: String(item.level || "").trim().toUpperCase()
+    };
+  });
+}
+
+function buildChildrenByParent(treeItems, treeLookupName) {
+  const childrenByParent = new Map();
+
+  treeItems.forEach((item) => {
+    const parentId = getTreeItemParentId(item);
+    if (!parentId) return;
+
+    if (!childrenByParent.has(parentId)) {
+      childrenByParent.set(parentId, []);
+    }
+
+    childrenByParent.get(parentId).push(item);
+  });
+
+  childrenByParent.forEach((children, parentId) => {
+    childrenByParent.set(
+      parentId,
+      sortLegacyTreeItems(children, treeLookupName)
+    );
+  });
+
+  return childrenByParent;
+}
+
+function getTopTreeItems(treeItems, treeLookupName) {
+  const allConceptIds = new Set(
+    treeItems
+      .map((item) => getTreeItemConceptId(item))
+      .filter(Boolean)
+  );
+
+  return sortLegacyTreeItems(
+    treeItems.filter((item) => {
+      const parentId = getTreeItemParentId(item);
+      return !parentId || !allConceptIds.has(parentId);
+    }),
+    treeLookupName
+  );
+}
+
+function getDescendantTreeChecks(picker, conceptId, checkboxClass) {
+  const descendants = [];
+  const queue = [String(conceptId || "").trim()].filter(Boolean);
+
+  while (queue.length) {
+    const parentId = queue.shift();
+
+    const children = Array.from(
+      picker.querySelectorAll(
+        `.${checkboxClass}[data-parent-id="${CSS.escape(parentId)}"]`
+      )
+    );
+
+    children.forEach((child) => {
+      descendants.push(child);
+
+      const childConceptId = String(child.dataset.conceptId || "").trim();
+      if (childConceptId) {
+        queue.push(childConceptId);
+      }
+    });
+  }
+
+  return descendants;
+}
+
+function getAncestorTreeChecks(picker, checkbox, checkboxClass) {
+  const ancestors = [];
+  let parentId = String(checkbox?.dataset?.parentId || "").trim();
+
+  while (parentId) {
+    const parent = picker.querySelector(
+      `.${checkboxClass}[data-concept-id="${CSS.escape(parentId)}"]`
+    );
+
+    if (!parent) break;
+
+    ancestors.push(parent);
+    parentId = String(parent.dataset.parentId || "").trim();
+  }
+
+  return ancestors;
+}
+
 function mRenderLegacyTreePicker({
   fieldBase,
   count,
@@ -3510,38 +3636,9 @@ function mRenderLegacyTreePicker({
     ? monumentLookups[treeLookupName]
     : [];
 
-  const normalisedTreeItems = treeItems.map((item) => ({
-    ...item,
-    concept_id: String(item.concept_id || "").trim(),
-    parent_id: String(item.parent_id || "").trim(),
-    level: String(item.level || "").trim().toUpperCase()
-  }));
-
-  const topItems = sortLegacyTreeItems(
-    normalisedTreeItems.filter((item) =>
-      !item.parent_id || item.level === "L1" || item.level === "1"
-    ),
-    treeLookupName
-  );
-
-  const childrenByParent = new Map();
-
-  normalisedTreeItems.forEach((item) => {
-    if (!item.parent_id || item.level === "L1" || item.level === "1") return;
-
-    if (!childrenByParent.has(item.parent_id)) {
-      childrenByParent.set(item.parent_id, []);
-    }
-
-    childrenByParent.get(item.parent_id).push(item);
-  });
-
-  childrenByParent.forEach((children, parentId) => {
-    childrenByParent.set(
-      parentId,
-      sortLegacyTreeItems(children, treeLookupName)
-    );
-  });
+  const normalisedTreeItems = normaliseTreeItems(treeItems);
+  const topItems = getTopTreeItems(normalisedTreeItems, treeLookupName);
+  const childrenByParent = buildChildrenByParent(normalisedTreeItems, treeLookupName);
 
     function treeChipLabel(item) {
     const base = item.chip_label || item.label || item.value || "";
@@ -3567,105 +3664,108 @@ function mRenderLegacyTreePicker({
     return `${base}${disambiguation}${date}`;
   };
 
-  const rowsHtml = topItems.length
-    ? topItems.map((parent) => {
-        const children = childrenByParent.get(parent.concept_id) || [];
-        const parentChecked = selectedValues.includes(String(parent.value));
+  function renderTreeNode(item, depth = 0) {
+    const conceptId = getTreeItemConceptId(item);
+    const parentId = getTreeItemParentId(item);
+    const value = getTreeItemValue(item);
+    const children = childrenByParent.get(conceptId) || [];
+    const checked = selectedValues.includes(String(value));
+    const hasChildren = children.length > 0;
 
-        return `
-          <div class="legacy-tree-parent" data-concept-id="${parent.concept_id}">
-            <div class="legacy-tree-row legacy-tree-row-parent">
-              ${
-                children.length
-                  ? `
-                    <button
-                      type="button"
-                      class="legacy-tree-toggle"
-                      data-tree-toggle="${parent.concept_id}"
-                      aria-expanded="false"
-                    >
-                      ▸
-                    </button>
-                  `
-                  : `<span class="legacy-tree-toggle-spacer"></span>`
-              }
-
-              <label>
-                <input
-                  type="checkbox"
-                  class="legacy-tree-check"
-                  data-value="${mSafeValue(parent.value)}"
-                  data-concept-id="${mSafeValue(parent.concept_id)}"
-                  data-parent-id=""
-                  data-chip-label="${mSafeValue(treeChipLabel(parent))}"
-                  ${parentChecked ? "checked" : ""}
+    return `
+      <div
+        class="legacy-tree-node legacy-tree-depth-${depth} ${depth === 0 ? "legacy-tree-parent" : ""}"
+        data-concept-id="${mAttributeValue(conceptId)}"
+        data-parent-id="${mAttributeValue(parentId)}"
+      >
+        <div class="legacy-tree-row ${depth === 0 ? "legacy-tree-row-parent" : "legacy-tree-row-child"}">
+          ${
+            hasChildren
+              ? `
+                <button
+                  type="button"
+                  class="legacy-tree-toggle"
+                  data-tree-toggle="${mAttributeValue(conceptId)}"
+                  aria-expanded="false"
                 >
-                <span>${itemLabel(parent)}</span>
-              </label>
-            </div>
+                  ▸
+                </button>
+              `
+              : `<span class="legacy-tree-toggle-spacer"></span>`
+          }
 
-            <div class="legacy-tree-children" data-tree-children="${parent.concept_id}" hidden>
-              ${children.map((child) => {
-                const childChecked = selectedValues.includes(String(child.value));
+          <label>
+            <input
+              type="checkbox"
+              class="legacy-tree-check"
+              data-value="${mAttributeValue(value)}"
+              data-concept-id="${mAttributeValue(conceptId)}"
+              data-parent-id="${mAttributeValue(parentId)}"
+              data-chip-label="${mAttributeValue(treeChipLabel(item))}"
+              ${checked ? "checked" : ""}
+            >
+            <span>${itemLabel(item)}</span>
+          </label>
+        </div>
 
-                return `
-                  <label class="legacy-tree-row legacy-tree-row-child">
-                    <input
-                      type="checkbox"
-                      class="legacy-tree-check"
-                      data-value="${mSafeValue(child.value)}"
-                      data-concept-id="${mSafeValue(child.concept_id)}"
-                      data-parent-id="${mSafeValue(parent.concept_id)}"
-                      data-chip-label="${mSafeValue(treeChipLabel(child))}"
-                      ${childChecked ? "checked" : ""}
-                    >
-                    <span>${itemLabel(child)}</span>
-                  </label>
-                `;
-              }).join("")}
-            </div>
-          </div>
-        `;
-      }).join("")
-    : `
-      <div class="section-empty">
-        ${t("no_tree_lookup_loaded", "No lookup values loaded. Please refresh the page or check the lookup response.")}
+        ${
+          hasChildren
+            ? `
+              <div
+                class="legacy-tree-children"
+                data-tree-children="${mAttributeValue(conceptId)}"
+                hidden
+              >
+                ${children.map((child) => renderTreeNode(child, depth + 1)).join("")}
+              </div>
+            `
+            : ""
+        }
       </div>
     `;
+  }
 
-  return `
-    <div
-      class="detail-item${fullWidth ? " full-width" : ""} legacy-tree-picker"
-      data-field-base="${mAttributeValue(fieldBase)}"
-      data-field-count="${count}"
-      data-original-value="${mAttributeValue(selectedValues.join(", "))}"
-    >
-      <span class="detail-label">${label}</span>
+    const rowsHtml = topItems.length
+      ? topItems.map((item) => renderTreeNode(item, 0)).join("")
+      : `
+        <div class="section-empty">
+          ${t("no_tree_lookup_loaded", "No lookup values loaded. Please refresh the page or check the lookup response.")}
+        </div>
+      `;
 
+    return `
       <div
-        class="selected-filter-chips monument-edit-selected-chips"
-        id="${chipsId}"
-        data-tree-chip-container
-      ></div>
-
-      <input
-        type="search"
-        class="form-control legacy-tree-search"
-        placeholder="${mSafeValue(searchPlaceholder)}"
+        class="detail-item${fullWidth ? " full-width" : ""} legacy-tree-picker"
+        data-field-base="${mAttributeValue(fieldBase)}"
+        data-field-count="${count}"
+        data-original-value="${mAttributeValue(selectedValues.join(", "))}"
       >
+        <span class="detail-label">${label}</span>
 
-      <div class="legacy-tree" id="${inputId}">
-        ${rowsHtml}
+        <div
+          class="selected-filter-chips monument-edit-selected-chips"
+          id="${chipsId}"
+          data-tree-chip-container
+        ></div>
+
+        <input
+          type="search"
+          class="form-control legacy-tree-search"
+          placeholder="${mAttributeValue(searchPlaceholder || t("search", "Search..."))}"
+        >
+
+        <div class="legacy-tree" id="${inputId}">
+          ${rowsHtml}
+        </div>
+
+        <p class="filter-help">
+          ${t("filter_click_toggle_help", "Click values to select or deselect. Selected values appear above.")}
+          ${" "}
+          ${t("maximum_values_help", "Maximum: {count}.").replace("{count}", count)}
+        </p>
       </div>
-
-      <p class="filter-help">
-        ${t("filter_click_toggle_help", "Click values to select or deselect. Selected values appear above.")}
-        ${" "}
-        ${t("maximum_values_help", "Maximum: {count}.").replace("{count}", count)}
-      </p>
-    </div>
-  `;
-}
+    `;
+  }
 
 function mRenderEditMultiSelectChips(selectEl) {
   if (!selectEl) return;
@@ -3886,6 +3986,52 @@ function wireLegacyTreePickers() {
     }
 
     renderLegacyTreeChips(picker);
+  });
+}
+
+function filterLegacyTree(picker, queryValue) {
+  const query = String(queryValue || "").trim().toLowerCase();
+
+  const nodes = Array.from(picker.querySelectorAll(".legacy-tree-node"));
+
+  if (!query) {
+    nodes.forEach((node) => {
+      node.hidden = false;
+    });
+    return;
+  }
+
+  nodes.forEach((node) => {
+    node.hidden = true;
+  });
+
+  nodes.forEach((node) => {
+    const row = node.querySelector(":scope > .legacy-tree-row");
+    const text = row?.textContent?.toLowerCase() || "";
+
+    if (!text.includes(query)) return;
+
+    node.hidden = false;
+
+    let parent = node.parentElement?.closest(".legacy-tree-node");
+
+    while (parent) {
+      parent.hidden = false;
+
+      const childrenBlock = parent.querySelector(":scope > .legacy-tree-children");
+      const toggleBtn = parent.querySelector(":scope > .legacy-tree-row [data-tree-toggle]");
+
+      if (childrenBlock) {
+        childrenBlock.hidden = false;
+      }
+
+      if (toggleBtn) {
+        toggleBtn.textContent = "▾";
+        toggleBtn.setAttribute("aria-expanded", "true");
+      }
+
+      parent = parent.parentElement?.closest(".legacy-tree-node");
+    }
   });
 }
 
@@ -5193,7 +5339,10 @@ function getMonumentCurrentFilters() {
   return {
     text: siteSearch ? siteSearch.value.trim() : "",
     caalId: filterCaalId ? filterCaalId.value.trim() : "",
-    monumentTypes: mSelectedValues(filterMonumentType),
+    monumentTypes: getDescendantTreeValuesFromLookup(
+      "monument_type_tree",
+      mSelectedValues(filterMonumentType)
+    ),
     classifications: mSelectedValues(filterClassification),
     designations: mSelectedValues(filterDesignation),
     religions: mSelectedValues(filterReligion),
@@ -7988,6 +8137,56 @@ function getSelectedOptionData(selectEl) {
     }));
 }
 
+function getDescendantTreeValuesFromLookup(treeLookupName, selectedValues) {
+  const treeItems = normaliseTreeItems(monumentLookups?.[treeLookupName] || []);
+  const childrenByParent = buildChildrenByParent(treeItems, treeLookupName);
+
+  const valueToConceptIds = new Map();
+
+  treeItems.forEach((item) => {
+    const value = getTreeItemValue(item);
+    const conceptId = getTreeItemConceptId(item);
+
+    if (!value || !conceptId) return;
+
+    if (!valueToConceptIds.has(value)) {
+      valueToConceptIds.set(value, []);
+    }
+
+    valueToConceptIds.get(value).push(conceptId);
+  });
+
+  const expanded = new Set(
+    (Array.isArray(selectedValues) ? selectedValues : [])
+      .map((value) => String(value || "").trim())
+      .filter(Boolean)
+  );
+
+  function addDescendants(conceptId) {
+    const children = childrenByParent.get(conceptId) || [];
+
+    children.forEach((child) => {
+      const childValue = getTreeItemValue(child);
+      const childConceptId = getTreeItemConceptId(child);
+
+      if (childValue) {
+        expanded.add(childValue);
+      }
+
+      if (childConceptId) {
+        addDescendants(childConceptId);
+      }
+    });
+  }
+
+  selectedValues.forEach((value) => {
+    const conceptIds = valueToConceptIds.get(String(value || "").trim()) || [];
+    conceptIds.forEach(addDescendants);
+  });
+
+  return Array.from(expanded);
+}
+
 function getSelectedLegacyTreeValues(picker) {
   return Array.from(picker.querySelectorAll(".legacy-tree-check:checked"))
     .map((checkbox) => checkbox.dataset.value)
@@ -7995,39 +8194,37 @@ function getSelectedLegacyTreeValues(picker) {
 }
 
 function enforceLegacyTreeSelectionRules(picker, changedCheckbox) {
-  const maxCount = Number(picker.dataset.fieldCount || 6);
-  const fieldBase = picker.dataset.fieldBase || "Values";
+  if (!picker || !changedCheckbox) return;
 
-  if (!changedCheckbox.checked) return;
+  const changedConceptId = String(changedCheckbox.dataset.conceptId || "").trim();
 
-  const changedConceptId = changedCheckbox.dataset.conceptId;
-  const changedParentId = changedCheckbox.dataset.parentId;
+  /*
+    Editing rule:
+    A selected value should represent the most secure classification level.
+    Do not auto-select descendants. If a parent is selected, it is saved as itself.
+    To avoid contradictory branch values, uncheck ancestors and descendants.
+  */
+  if (changedCheckbox.checked) {
+    getAncestorTreeChecks(picker, changedCheckbox, "legacy-tree-check").forEach((ancestorCheckbox) => {
+      ancestorCheckbox.checked = false;
+    });
 
-  if (changedParentId) {
-    const parentCheckbox = picker.querySelector(
-      `.legacy-tree-check[data-concept-id="${CSS.escape(changedParentId)}"]`
-    );
-
-    if (parentCheckbox) {
-      parentCheckbox.checked = false;
-    }
-  } else {
-    picker
-      .querySelectorAll(`.legacy-tree-check[data-parent-id="${CSS.escape(changedConceptId)}"]`)
-      .forEach((childCheckbox) => {
-        childCheckbox.checked = false;
-      });
+    getDescendantTreeChecks(picker, changedConceptId, "legacy-tree-check").forEach((descendantCheckbox) => {
+      descendantCheckbox.checked = false;
+    });
   }
 
+  const maxCount = Number(picker.dataset.fieldCount || 6);
   const checked = Array.from(
     picker.querySelectorAll(".legacy-tree-check:checked")
   );
 
   if (checked.length > maxCount) {
     changedCheckbox.checked = false;
+
     alert(
       t("legacy_multi_select_limit", "{label} can store a maximum of {count} values.")
-        .replace("{label}", mLabel(fieldBase, fieldBase))
+        .replace("{label}", mLabel(picker.dataset.fieldBase || "Values", picker.dataset.fieldBase || "Values"))
         .replace("{count}", maxCount)
     );
   }
@@ -8134,36 +8331,47 @@ function updateLegacyTreeChangedState(picker) {
   }
 }
 
-function filterLegacyTree(picker, queryValue) {
+function filterAdvancedFilterTree(wrapper, queryValue) {
   const query = String(queryValue || "").trim().toLowerCase();
 
-  picker.querySelectorAll(".legacy-tree-parent").forEach((parentBlock) => {
-    const parentRow = parentBlock.querySelector(".legacy-tree-row-parent");
-    const childrenBlock = parentBlock.querySelector(".legacy-tree-children");
-    const toggleBtn = parentBlock.querySelector("[data-tree-toggle]");
+  const nodes = Array.from(wrapper.querySelectorAll(".legacy-tree-node"));
 
-    const parentText = parentRow?.textContent?.toLowerCase() || "";
-    let anyChildMatch = false;
-
-    parentBlock.querySelectorAll(".legacy-tree-row-child").forEach((childRow) => {
-      const childText = childRow.textContent.toLowerCase();
-      const childMatches = !query || childText.includes(query);
-
-      childRow.hidden = !childMatches;
-      if (childMatches) anyChildMatch = true;
+  if (!query) {
+    nodes.forEach((node) => {
+      node.hidden = false;
     });
+    return;
+  }
 
-    const parentMatches = !query || parentText.includes(query);
-    const blockMatches = parentMatches || anyChildMatch;
+  nodes.forEach((node) => {
+    node.hidden = true;
+  });
 
-    parentBlock.hidden = !blockMatches;
+  nodes.forEach((node) => {
+    const row = node.querySelector(":scope > .legacy-tree-row");
+    const text = row?.textContent?.toLowerCase() || "";
 
-    if (childrenBlock && query) {
-      childrenBlock.hidden = !anyChildMatch && !parentMatches;
-      if (toggleBtn) {
-        toggleBtn.textContent = childrenBlock.hidden ? "▸" : "▾";
-        toggleBtn.setAttribute("aria-expanded", String(!childrenBlock.hidden));
+    if (!text.includes(query)) return;
+
+    node.hidden = false;
+
+    let parent = node.parentElement?.closest(".legacy-tree-node");
+    while (parent) {
+      parent.hidden = false;
+
+      const childrenBlock = parent.querySelector(":scope > .legacy-tree-children");
+      const toggleBtn = parent.querySelector(":scope > .legacy-tree-row [data-tree-toggle]");
+
+      if (childrenBlock) {
+        childrenBlock.hidden = false;
       }
+
+      if (toggleBtn) {
+        toggleBtn.textContent = "▾";
+        toggleBtn.setAttribute("aria-expanded", "true");
+      }
+
+      parent = parent.parentElement?.closest(".legacy-tree-node");
     }
   });
 }
@@ -8273,42 +8481,14 @@ function renderAdvancedFilterTreePicker({
     ? monumentLookups[treeLookupName]
     : [];
 
-  const normalisedTreeItems = treeItems.map((item) => ({
-    ...item,
-    concept_id: String(item.concept_id || "").trim(),
-    parent_id: String(item.parent_id || "").trim(),
-    level: String(item.level || "").trim().toUpperCase()
-  }));
+  const normalisedTreeItems = normaliseTreeItems(treeItems);
 
   const selectedValues = new Set(
     Array.from(selectEl.selectedOptions).map((option) => String(option.value))
   );
 
-  const topItems = sortLegacyTreeItems(
-    normalisedTreeItems.filter((item) =>
-      !item.parent_id || item.level === "L1" || item.level === "1"
-    ),
-    treeLookupName
-  );
-
-  const childrenByParent = new Map();
-
-  normalisedTreeItems.forEach((item) => {
-    if (!item.parent_id || item.level === "L1" || item.level === "1") return;
-
-    if (!childrenByParent.has(item.parent_id)) {
-      childrenByParent.set(item.parent_id, []);
-    }
-
-    childrenByParent.get(item.parent_id).push(item);
-  });
-
-  childrenByParent.forEach((children, parentId) => {
-    childrenByParent.set(
-      parentId,
-      sortLegacyTreeItems(children, treeLookupName)
-    );
-  });
+  const topItems = getTopTreeItems(normalisedTreeItems, treeLookupName);
+  const childrenByParent = buildChildrenByParent(normalisedTreeItems, treeLookupName);
 
     function advancedTreeChipLabel(item) {
       const base = item.chip_label || item.label || item.value || "";
@@ -8334,66 +8514,69 @@ function renderAdvancedFilterTreePicker({
       return `${base}${disambiguation}${date}`;
     };
 
-  const rowsHtml = topItems.length
-    ? topItems.map((parent) => {
-        const children = childrenByParent.get(parent.concept_id) || [];
-        const parentChecked = selectedValues.has(String(parent.value));
+  function renderTreeNode(item, depth = 0) {
+    const conceptId = getTreeItemConceptId(item);
+    const parentId = getTreeItemParentId(item);
+    const value = getTreeItemValue(item);
+    const children = childrenByParent.get(conceptId) || [];
+    const checked = selectedValues.has(String(value));
+    const hasChildren = children.length > 0;
 
-        return `
-          <div class="legacy-tree-parent" data-concept-id="${parent.concept_id}">
-            <div class="legacy-tree-row legacy-tree-row-parent">
-              ${
-                children.length
-                  ? `
-                    <button
-                      type="button"
-                      class="legacy-tree-toggle"
-                      data-tree-toggle="${parent.concept_id}"
-                      aria-expanded="false"
-                    >
-                      ▸
-                    </button>
-                  `
-                  : `<span class="legacy-tree-toggle-spacer"></span>`
-              }
-
-              <label>
-                <input
-                  type="checkbox"
-                  class="advanced-filter-tree-check"
-                  data-value="${mSafeValue(parent.value)}"
-                  data-concept-id="${mSafeValue(parent.concept_id)}"
-                  data-parent-id=""
-                  data-chip-label="${mSafeValue(advancedTreeChipLabel(parent))}"
-                  ${parentChecked ? "checked" : ""}
+    return `
+      <div
+        class="legacy-tree-node legacy-tree-depth-${depth} ${depth === 0 ? "legacy-tree-parent" : ""}"
+        data-concept-id="${mAttributeValue(conceptId)}"
+        data-parent-id="${mAttributeValue(parentId)}"
+      >
+        <div class="legacy-tree-row ${depth === 0 ? "legacy-tree-row-parent" : "legacy-tree-row-child"}">
+          ${
+            hasChildren
+              ? `
+                <button
+                  type="button"
+                  class="legacy-tree-toggle"
+                  data-tree-toggle="${mAttributeValue(conceptId)}"
+                  aria-expanded="false"
                 >
-                <span>${itemLabel(parent)}</span>
-              </label>
-            </div>
+                  ▸
+                </button>
+              `
+              : `<span class="legacy-tree-toggle-spacer"></span>`
+          }
 
-            <div class="legacy-tree-children" data-tree-children="${parent.concept_id}" hidden>
-              ${children.map((child) => {
-                const childChecked = selectedValues.has(String(child.value));
+          <label>
+            <input
+              type="checkbox"
+              class="advanced-filter-tree-check"
+              data-value="${mAttributeValue(value)}"
+              data-concept-id="${mAttributeValue(conceptId)}"
+              data-parent-id="${mAttributeValue(parentId)}"
+              data-chip-label="${mAttributeValue(advancedTreeChipLabel(item))}"
+              ${checked ? "checked" : ""}
+            >
+            <span>${itemLabel(item)}</span>
+          </label>
+        </div>
 
-                return `
-                  <label class="legacy-tree-row legacy-tree-row-child">
-                    <input
-                      type="checkbox"
-                      class="advanced-filter-tree-check"
-                      data-value="${mSafeValue(child.value)}"
-                      data-concept-id="${mSafeValue(child.concept_id)}"
-                      data-parent-id="${mSafeValue(parent.concept_id)}"
-                      data-chip-label="${mSafeValue(advancedTreeChipLabel(child))}"
-                      ${childChecked ? "checked" : ""}
-                    >
-                    <span>${itemLabel(child)}</span>
-                  </label>
-                `;
-              }).join("")}
-            </div>
-          </div>
-        `;
-      }).join("")
+        ${
+          hasChildren
+            ? `
+              <div
+                class="legacy-tree-children"
+                data-tree-children="${mAttributeValue(conceptId)}"
+                hidden
+              >
+                ${children.map((child) => renderTreeNode(child, depth + 1)).join("")}
+              </div>
+            `
+            : ""
+        }
+      </div>
+    `;
+  }
+
+  const rowsHtml = topItems.length
+    ? topItems.map((item) => renderTreeNode(item, 0)).join("")
     : `
       <div class="section-empty">
         ${t("no_tree_lookup_loaded", "No lookup values loaded. Please refresh the page or check the lookup response.")}
@@ -8530,6 +8713,14 @@ function getAdvancedFilterTreeChildCheckboxes(wrapper, parentConceptId) {
   );
 }
 
+function getAdvancedFilterTreeDescendantCheckboxes(wrapper, parentConceptId) {
+  return getDescendantTreeChecks(
+    wrapper,
+    parentConceptId,
+    "advanced-filter-tree-check"
+  );
+}
+
 function getAdvancedFilterTreeParentCheckbox(wrapper, childCheckbox) {
   if (!wrapper || !childCheckbox?.dataset?.parentId) return null;
 
@@ -8541,72 +8732,77 @@ function getAdvancedFilterTreeParentCheckbox(wrapper, childCheckbox) {
 function updateAdvancedFilterTreeParentStates(wrapper) {
   if (!wrapper) return;
 
-  wrapper
-    .querySelectorAll('.advanced-filter-tree-check[data-parent-id=""]')
-    .forEach((parentCheckbox) => {
-      const parentConceptId = parentCheckbox.dataset.conceptId;
-      const children = getAdvancedFilterTreeChildCheckboxes(wrapper, parentConceptId);
+  const allCheckboxes = Array.from(
+    wrapper.querySelectorAll(".advanced-filter-tree-check")
+  );
 
-      if (!children.length) {
-        parentCheckbox.indeterminate = false;
-        return;
-      }
+  allCheckboxes.forEach((checkbox) => {
+    checkbox.indeterminate = false;
+  });
 
-      const parentValueIsSelected = parentCheckbox.checked;
+  /*
+    Work bottom-up so L4 affects L3, then L3 affects L2, then L2 affects L1.
+  */
+  allCheckboxes
+    .slice()
+    .reverse()
+    .forEach((checkbox) => {
+      const conceptId = String(checkbox.dataset.conceptId || "").trim();
+      if (!conceptId) return;
+
+      const children = getAdvancedFilterTreeChildCheckboxes(wrapper, conceptId);
+      if (!children.length) return;
+
       const checkedChildren = children.filter((child) => child.checked);
+      const indeterminateChildren = children.filter((child) => child.indeterminate);
+
       const allChildrenSelected =
-        children.length > 0 && checkedChildren.length === children.length;
-      const someChildrenSelected = checkedChildren.length > 0;
+        children.length > 0 &&
+        checkedChildren.length === children.length &&
+        indeterminateChildren.length === 0;
 
-      if (parentValueIsSelected && allChildrenSelected) {
-        parentCheckbox.checked = true;
-        parentCheckbox.indeterminate = false;
+      const someChildrenSelected =
+        checkedChildren.length > 0 ||
+        indeterminateChildren.length > 0;
+
+      if (allChildrenSelected && checkbox.checked) {
+        checkbox.indeterminate = false;
         return;
       }
 
-      if (parentValueIsSelected || someChildrenSelected) {
-        parentCheckbox.checked = false;
-        parentCheckbox.indeterminate = true;
+      if (someChildrenSelected) {
+        checkbox.checked = false;
+        checkbox.indeterminate = true;
         return;
       }
 
-      parentCheckbox.checked = false;
-      parentCheckbox.indeterminate = false;
+      checkbox.indeterminate = false;
     });
 }
 
 function enforceAdvancedFilterTreeSelectionRules(wrapper, changedCheckbox) {
   if (!wrapper || !changedCheckbox) return;
 
-  const changedConceptId = changedCheckbox.dataset.conceptId;
-  const changedParentId = changedCheckbox.dataset.parentId;
-  const isParent = !changedParentId;
+  const changedConceptId = String(changedCheckbox.dataset.conceptId || "").trim();
 
-  if (isParent) {
-    const children = getAdvancedFilterTreeChildCheckboxes(wrapper, changedConceptId);
+  changedCheckbox.indeterminate = false;
 
-    if (children.length) {
-      /*
-        If the parent was unchecked or indeterminate and the user clicks it,
-        the browser sets checked=true before this handler runs.
-        So checked=true means select the whole branch.
-        checked=false means clear the whole branch.
-      */
-      const shouldSelectBranch = changedCheckbox.checked;
+  /*
+    Filter rule:
+    A checked parent is a search instruction meaning parent + descendants.
+    Do not visually tick descendants, because that makes the UI look as if the user
+    explicitly selected every child.
+  */
+  if (changedCheckbox.checked) {
+    getAncestorTreeChecks(wrapper, changedCheckbox, "advanced-filter-tree-check").forEach((ancestorCheckbox) => {
+      ancestorCheckbox.checked = false;
+      ancestorCheckbox.indeterminate = true;
+    });
 
-      changedCheckbox.indeterminate = false;
-
-      children.forEach((childCheckbox) => {
-        childCheckbox.checked = shouldSelectBranch;
-        childCheckbox.indeterminate = false;
-      });
-    }
-  } else {
-    const parentCheckbox = getAdvancedFilterTreeParentCheckbox(wrapper, changedCheckbox);
-
-    if (parentCheckbox) {
-      parentCheckbox.indeterminate = false;
-    }
+    getDescendantTreeChecks(wrapper, changedConceptId, "advanced-filter-tree-check").forEach((descendantCheckbox) => {
+      descendantCheckbox.checked = false;
+      descendantCheckbox.indeterminate = false;
+    });
   }
 
   updateAdvancedFilterTreeParentStates(wrapper);
@@ -8615,34 +8811,45 @@ function enforceAdvancedFilterTreeSelectionRules(wrapper, changedCheckbox) {
 function filterAdvancedFilterTree(wrapper, queryValue) {
   const query = String(queryValue || "").trim().toLowerCase();
 
-  wrapper.querySelectorAll(".legacy-tree-parent").forEach((parentBlock) => {
-    const parentRow = parentBlock.querySelector(".legacy-tree-row-parent");
-    const childrenBlock = parentBlock.querySelector(".legacy-tree-children");
-    const toggleBtn = parentBlock.querySelector("[data-tree-toggle]");
+  const nodes = Array.from(wrapper.querySelectorAll(".legacy-tree-node"));
 
-    const parentText = parentRow?.textContent?.toLowerCase() || "";
-    let anyChildMatch = false;
-
-    parentBlock.querySelectorAll(".legacy-tree-row-child").forEach((childRow) => {
-      const childText = childRow.textContent.toLowerCase();
-      const childMatches = !query || childText.includes(query);
-
-      childRow.hidden = !childMatches;
-      if (childMatches) anyChildMatch = true;
+  if (!query) {
+    nodes.forEach((node) => {
+      node.hidden = false;
     });
+    return;
+  }
 
-    const parentMatches = !query || parentText.includes(query);
-    const blockMatches = parentMatches || anyChildMatch;
+  nodes.forEach((node) => {
+    node.hidden = true;
+  });
 
-    parentBlock.hidden = !blockMatches;
+  nodes.forEach((node) => {
+    const row = node.querySelector(":scope > .legacy-tree-row");
+    const text = row?.textContent?.toLowerCase() || "";
 
-    if (childrenBlock && query) {
-      childrenBlock.hidden = !anyChildMatch && !parentMatches;
+    if (!text.includes(query)) return;
+
+    node.hidden = false;
+
+    let parent = node.parentElement?.closest(".legacy-tree-node");
+
+    while (parent) {
+      parent.hidden = false;
+
+      const childrenBlock = parent.querySelector(":scope > .legacy-tree-children");
+      const toggleBtn = parent.querySelector(":scope > .legacy-tree-row [data-tree-toggle]");
+
+      if (childrenBlock) {
+        childrenBlock.hidden = false;
+      }
 
       if (toggleBtn) {
-        toggleBtn.textContent = childrenBlock.hidden ? "▸" : "▾";
-        toggleBtn.setAttribute("aria-expanded", String(!childrenBlock.hidden));
+        toggleBtn.textContent = "▾";
+        toggleBtn.setAttribute("aria-expanded", "true");
       }
+
+      parent = parent.parentElement?.closest(".legacy-tree-node");
     }
   });
 }
