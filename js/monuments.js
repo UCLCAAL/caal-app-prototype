@@ -13966,6 +13966,10 @@ function wireMonumentChangedFieldHighlights(root = recordDetails) {
   });
 });
 
+function getInitialTextFromUrl() {
+  return new URLSearchParams(window.location.search).get("text");
+}
+
 // --------------------------------------------------------
 // Initial load
 // --------------------------------------------------------
@@ -14058,6 +14062,8 @@ document.addEventListener("DOMContentLoaded", async () => {
   const initialCaalId = getInitialCaalIdFromUrl();
   const initialScope = getInitialScopeFromUrl();
 
+  const initialText = getInitialTextFromUrl();
+
   applyMonumentScopeUiForSession(session, {
     setDefault: !initialCaalId && !initialScope
   });
@@ -14068,6 +14074,10 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   if (initialCaalId && filterCaalId) {
     filterCaalId.value = initialCaalId;
+  }
+
+  if (!initialCaalId && initialText && siteSearch) {
+    siteSearch.value = initialText;
   }
 
   setMonumentsLoading(

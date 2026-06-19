@@ -3053,10 +3053,7 @@ async function loadFullArchiveRecord(record, langOverride = null) {
 
   const lang = archiveCurrentLanguageCode(langOverride);
 
-  const liveRecord = getRecentlySavedArchiveRecord(record);
-
   if (
-    liveRecord &&
     archiveUserCanUseLiveCacheWorkaround() &&
     recordId !== null &&
     recordId !== undefined &&
@@ -5535,6 +5532,10 @@ window.addEventListener("beforeunload", (event) => {
   event.returnValue = "";
 });
 
+function getInitialTextFromUrl() {
+  return new URLSearchParams(window.location.search).get("text");
+}
+
 document.addEventListener("DOMContentLoaded", async () => {
   const session = await requireSession();
   if (!session) return;
@@ -5583,6 +5584,9 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   const initialCaalId = getInitialCaalIdFromUrl();
   const initialScope = getInitialScopeFromUrl();
+
+  const initialText = getInitialTextFromUrl();
+
   const normalisedInitialScope = normaliseArchiveScopeForSession(initialScope, session);
 
   applyArchiveScopeUiForSession(session, {
@@ -5593,6 +5597,10 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   if (initialCaalId && archiveFilterCaalId) {
     archiveFilterCaalId.value = initialCaalId;
+  }
+
+  if (!initialCaalId && initialText && archiveSearch) {
+    archiveSearch.value = initialText;
   }
 
   renderArchiveEmptyState();

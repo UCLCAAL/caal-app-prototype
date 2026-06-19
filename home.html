@@ -76,6 +76,48 @@
       </div>
     </section>
 
+    <section class="home-global-search" aria-label="Global CAAL search" data-i18n-aria-label="global_caal_search">
+    <div class="home-global-search-header">
+      <h3 data-i18n="search_caal_database">Search CAAL database</h3>
+
+      <span
+        class="coming-soon-wrapper"
+        title="Advanced database search will be added soon."
+        data-i18n-title="advanced_database_search_coming_soon"
+      >
+        <button
+          type="button"
+          class="action-btn"
+          disabled
+          aria-disabled="true"
+          data-i18n="open_full_database_search"
+        >
+          Open full database search
+        </button>
+      </span>
+    </div>
+
+    <form class="home-global-search-form" id="homeGlobalSearchForm">
+      <input
+        type="search"
+        id="homeGlobalSearchInput"
+        class="form-control home-global-search-input"
+        placeholder="Search by name, CAAL_ID, title, institution, or related resource..."
+        data-i18n-placeholder="home_global_search_placeholder"
+        autocomplete="off"
+        spellcheck="false"
+      >
+
+      <button type="submit" class="action-btn primary" data-i18n="search">
+        Search
+      </button>
+    </form>
+
+    <div class="home-global-search-status" id="homeGlobalSearchStatus" hidden></div>
+
+    <div class="home-global-search-results" id="homeGlobalSearchResults" hidden></div>
+  </section>
+
     <section class="home-actions" aria-label="Workspace sections" data-i18n-aria-label="workspace_sections">
       <a href="monuments.html" class="home-card">
         <h3 data-i18n="nav_monuments">Monuments</h3>

@@ -163,11 +163,10 @@
 }
 
 .home-hero-logo {
-  width: 180px;
-  max-width: 35%;
+  width: clamp(230px, 18vw, 310px);
+  max-width: 34%;
   height: auto;
-  display: block;
-  flex-shrink: 0;
+  object-fit: contain;
 }
 
 .home-hero-text h2 {
@@ -4679,4 +4678,341 @@ Popup preview */
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.home-global-search {
+  width: min(1120px, calc(100% - 2rem));
+  margin: 1.25rem auto 1.5rem;
+  padding: 1rem;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  border-radius: 0.85rem;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 0.35rem 1.25rem rgba(0, 0, 0, 0.06);
+}
+
+.home-global-search-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.85rem;
+}
+
+.home-global-search-header h3 {
+  margin: 0;
+  font-size: 1.05rem;
+}
+
+.home-global-search-form {
+  display: flex;
+  gap: 0.6rem;
+  align-items: center;
+}
+
+.home-global-search-input {
+  flex: 1;
+  min-width: 0;
+}
+
+.home-global-search-status {
+  margin-top: 0.75rem;
+  font-size: 0.9rem;
+  color: #5f6b76;
+}
+
+.home-global-search-results {
+  margin-top: 0.9rem;
+}
+
+.home-global-results-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.55rem;
+  color: #263238;
+}
+
+.home-global-results-heading span {
+  font-size: 0.85rem;
+  color: #5f6b76;
+}
+
+.home-global-results-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(15.5rem, 1fr));
+  gap: 0.75rem;
+  max-height: 58vh;
+  overflow-y: auto;
+  padding-right: 0.15rem;
+}
+
+.home-global-result-group {
+  min-width: 0;
+}
+
+.home-global-result-group h4 {
+  margin: 0 0 0.45rem;
+  font-size: 0.9rem;
+  color: #263238;
+}
+
+.home-global-result-group h4 span {
+  font-weight: 400;
+  color: #5f6b76;
+}
+
+.home-global-result-stack {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.home-global-result-card {
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  border-radius: 0.55rem;
+  background: #fff;
+  padding: 0.65rem;
+}
+
+.home-global-result-card h5 {
+  margin: 0;
+  font-size: 0.92rem;
+  line-height: 1.25;
+  color: #263238;
+}
+
+.home-global-result-id {
+  margin-top: 0.2rem;
+  font-size: 0.8rem;
+  color: #5f6b76;
+}
+
+.home-global-result-source {
+  margin-top: 0.2rem;
+  font-size: 0.76rem;
+  color: #7a8793;
+}
+
+.home-global-result-related {
+  margin-top: 0.35rem;
+  font-size: 0.8rem;
+  color: #5f6b76;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.home-global-result-actions {
+  display: flex;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  margin-top: 0.55rem;
+}
+
+.home-global-result-actions .action-btn {
+  font-size: 0.78rem;
+  padding: 0.28rem 0.5rem;
+}
+
+.home-global-search-empty {
+  padding: 0.75rem;
+  border-radius: 0.55rem;
+  background: rgba(0, 0, 0, 0.035);
+  color: #5f6b76;
+}
+
+.home-global-result-group-heading {
+  margin: 0 0 0.45rem;
+  font-size: 0.9rem;
+  color: #263238;
+}
+
+.home-global-result-group-title {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.home-global-result-group-count {
+  font-weight: 400;
+  color: #5f6b76;
+}
+
+.home-global-group-more-link {
+  margin-left: 0.35rem;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: #3f6f5f;
+  text-decoration: none;
+}
+
+.home-global-group-more-link:hover {
+  text-decoration: underline;
+}
+
+.home-global-result-id-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.2rem;
+  color: #5f6b76;
+}
+
+.home-global-result-id {
+  font-size: 0.8rem;
+  color: inherit;
+}
+
+.home-global-result-id-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.2rem;
+  color: #5f6b76;
+}
+
+.home-global-result-id {
+  font-size: 0.8rem;
+  color: inherit;
+}
+
+.home-global-result-id-row .copy-field-btn {
+  flex: 0 0 auto;
+}
+
+.home-global-copy-icon-btn:hover {
+  background: rgba(0, 0, 0, 0.05);
+  color: #263238;
+}
+
+.home-global-copy-icon-btn.is-copied {
+  color: #3f6f5f;
+  border-color: rgba(63, 111, 95, 0.4);
+  background: rgba(63, 111, 95, 0.08);
+}
+
+.coming-soon-wrapper {
+  display: inline-block;
+  cursor: not-allowed;
+}
+
+.coming-soon-wrapper .action-btn[disabled] {
+  pointer-events: none;
+  opacity: 0.6;
+}
+
+@media (max-width: 760px) {
+  .home-global-search-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .home-global-search-form {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .home-global-results-grid {
+    grid-template-columns: 1fr;
+    max-height: none;
+  }
+}
+
+.home-global-results-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(21rem, 1fr));
+  gap: 0.85rem;
+  max-height: 58vh;
+  overflow-y: auto;
+  padding-right: 0.15rem;
+}
+
+.home-global-result-group-heading {
+  margin: 0 0 0.45rem;
+  font-size: 0.9rem;
+  color: #263238;
+}
+
+.home-global-result-group-title {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  flex-wrap: wrap;
+}
+
+.home-global-result-group-count {
+  font-weight: 400;
+  color: #5f6b76;
+}
+
+.home-global-group-more-link {
+  margin-left: 0.35rem;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: #3f6f5f;
+  text-decoration: none;
+}
+
+.home-global-group-more-link:hover {
+  text-decoration: underline;
+}
+
+.home-global-result-card {
+  border: 1px solid rgba(0, 0, 0, 0.14);
+  border-radius: 0.55rem;
+  background: #fff;
+  padding: 0.7rem 0.8rem;
+}
+
+.home-global-result-card-compact h5 {
+  margin: 0;
+  font-size: 0.92rem;
+  line-height: 1.25;
+  color: #263238;
+}
+
+.home-global-result-id-row {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.25rem;
+  color: #5f6b76;
+}
+
+.home-global-result-id {
+  font-size: 0.82rem;
+  color: inherit;
+}
+
+.home-global-result-id-row .copy-field-btn {
+  flex: 0 0 auto;
+}
+
+.home-global-result-source {
+  margin-top: 0.2rem;
+  font-size: 0.76rem;
+  color: #7a8793;
+}
+
+.home-global-result-related {
+  margin-top: 0.35rem;
+  font-size: 0.8rem;
+  color: #5f6b76;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.home-global-result-actions {
+  display: flex;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+  margin-top: 0.55rem;
+}
+
+.home-global-result-actions .action-btn {
+  font-size: 0.78rem;
+  padding: 0.28rem 0.5rem;
 }
