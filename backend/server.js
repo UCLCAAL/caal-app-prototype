@@ -15,6 +15,7 @@ const lookupRoutes = require("./lookups");
 const archiveRoutes = require("./archive");
 const monumentsRoutes = require("./monuments");
 const recordsRoutes = require("./records");
+const resourceSearchRoutes = require("./resourceSearch");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -110,6 +111,7 @@ app.use("/api/ui", uiRoutes);
 app.use("/api/lookups", lookupRoutes);
 app.use("/api/archive", archiveRoutes);
 app.use("/api/records", recordsRoutes);
+app.use("/api", resourceSearchRoutes);
 app.use("/api", monumentsRoutes);
 
 // --------------------------------------------------------

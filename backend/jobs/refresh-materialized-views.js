@@ -12,6 +12,16 @@ const MATERIALIZED_VIEWS = [
   {
     name: "ui.mv_archive_caal_app",
     cacheKey: "archive_caal_cache"
+  },
+
+  // Shared resource-search caches used by Archive, Monuments, and later global search.
+  {
+    name: "ui.mv_resource_identity",
+    cacheKey: "resource_identity_cache"
+  },
+  {
+    name: "ui.mv_resource_related_search",
+    cacheKey: "resource_related_search_cache"
   }
 ];
 

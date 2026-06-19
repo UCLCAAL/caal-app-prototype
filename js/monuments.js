@@ -190,6 +190,10 @@ let monumentMoveDebounceTimer = null;
 let monumentFilterDebounceTimer = null;
 let monumentScopeChangeDebounceTimer = null;
 
+let monumentResourceSearchAbortController = null;
+let monumentResourceSearchRecords = [];
+let monumentResourceSearchPanel = null;
+
 let suppressNextMapMoveReload = false;
 
 let monumentListRequestSeq = 0;
@@ -2853,6 +2857,8 @@ function setMonumentRecordOpening(isOpening) {
         ".result-card",
         ".result-preview-btn",
         ".result-centre-btn",
+        ".monument-resource-search-card-related",
+        ".monument-resource-preview-btn",
         ".related-id-chip",
         ".monument-master-id-chip",
         "#monumentCloseRecordBtn",
@@ -3129,11 +3135,16 @@ function renderNoScopeSelectedState() {
       "No record scopes are selected."
     );
   }
+  monumentRenderResourceSearchResults([]);
 }
 
 function scheduleMonumentSearchAndMapRedraw() {
   if (monumentFilterDebounceTimer) {
     clearTimeout(monumentFilterDebounceTimer);
+  }
+
+  if (!monumentShouldRunResourceSearch()) {
+    monumentRenderResourceSearchResults([]);
   }
 
   setResultsCountLoading();
@@ -3148,14 +3159,15 @@ function scheduleMonumentSearchAndMapRedraw() {
 }
 
 function mLabel(name, fallback = null) {
-  return monumentLabels[name] || fallback || name;
+  return monumentLabels?.[name] || fallback || name;
 }
 
 function mSafeValue(value) {
   if (value === null || value === undefined || value === "") {
     return `<span class="empty-value">${t("not_recorded", "Not recorded")}</span>`;
   }
-  return value;
+
+  return mAttributeValue(value);
 }
 
 function mDateOnly(value) {
@@ -5420,6 +5432,528 @@ function buildMonumentQueryParams({ includePaging = true } = {}) {
   return params;
 }
 
+// resource search helpers
+function monumentResourceSearchQuery() {
+  return String(siteSearch?.value || "").trim();
+}
+
+function monumentShouldRunResourceSearch() {
+  return monumentResourceSearchQuery().length >= 2;
+}
+
+function monumentEnsureResourceSearchPanel() {
+  if (
+    monumentResourceSearchPanel &&
+    document.body.contains(monumentResourceSearchPanel)
+  ) {
+    return monumentResourceSearchPanel;
+  }
+
+  if (!resultsList) return null;
+
+  monumentResourceSearchPanel = document.createElement("div");
+  monumentResourceSearchPanel.id = "monumentResourceSearchPanel";
+  monumentResourceSearchPanel.className = "monument-resource-search-panel";
+  monumentResourceSearchPanel.hidden = true;
+
+  resultsList.insertAdjacentElement("afterend", monumentResourceSearchPanel);
+
+  return monumentResourceSearchPanel;
+}
+
+function monumentSafeSearchText(value, fallback = "") {
+  const text = String(value ?? fallback ?? "").trim();
+
+  if (!text) {
+    return `<span class="empty-value">${t("not_recorded", "Not recorded")}</span>`;
+  }
+
+  return mAttributeValue(text);
+}
+
+function monumentResourceTypeLabel(record) {
+  const type = String(record?.record_type || "").trim();
+
+  switch (type) {
+    case "archive":
+      return mLabel("Archive", "Archive");
+
+    case "monument":
+      return mLabel("Monuments", "Monuments");
+
+    case "institution":
+      return mLabel("Institutions", "Institutions");
+
+    case "dataset":
+      return mLabel("Datasets", "Datasets");
+
+    case "rs3_poly":
+      return mLabel("RS3 polygons", "RS3 polygons");
+
+    case "rs3_line":
+      return mLabel("RS3 lines", "RS3 lines");
+
+    case "rs3_group":
+      return mLabel("RS3 groups", "RS3 groups");
+
+    case "vernacular":
+      return mLabel("Vernacular", "Vernacular");
+
+    default:
+      return record?.dataset_label || t("caal_record", "CAAL record");
+  }
+}
+
+function monumentTruncateText(value, maxLength = 55) {
+  const text = String(value || "").trim();
+
+  if (text.length <= maxLength) {
+    return text;
+  }
+
+  return `${text.slice(0, maxLength).trim()}...`;
+}
+
+function monumentRelatedToLine(record) {
+  const relatedId = String(record?.matched_related_caal_id || "").trim();
+
+  if (!relatedId) return "";
+
+  const relatedLabel = monumentTruncateText(
+    record?.matched_related_display_label,
+    55
+  );
+
+  const relatedText = relatedLabel
+    ? `${relatedId} - ${relatedLabel}`
+    : relatedId;
+
+  return `
+    <div class="monument-resource-related-line">
+      ${t("related_to", "Related to")} ${monumentSafeSearchText(relatedText)}
+    </div>
+  `;
+}
+
+function monumentRelatedMatchKey(record) {
+  return [
+    record?.matched_related_record_type || "",
+    record?.matched_related_caal_id || "",
+    record?.matched_related_display_label || ""
+  ].join("::").toLowerCase();
+}
+
+function monumentResourceResultKey(record) {
+  return [
+    record?.record_type || "",
+    record?.caal_id || ""
+  ].join("::").toLowerCase();
+}
+
+function monumentCollapseRelatedRecords(rows) {
+  const byMonumentId = new Map();
+
+  rows.forEach((record) => {
+    const key = String(record?.caal_id || "").trim().toLowerCase();
+    if (!key) return;
+
+    if (!byMonumentId.has(key)) {
+      byMonumentId.set(key, {
+        ...record,
+        _relatedMatches: []
+      });
+    }
+
+    const collapsed = byMonumentId.get(key);
+    const matchKey = monumentRelatedMatchKey(record);
+
+    const alreadyHasMatch = collapsed._relatedMatches.some((match) => {
+      return monumentRelatedMatchKey(match) === matchKey;
+    });
+
+    if (!alreadyHasMatch) {
+      collapsed._relatedMatches.push(record);
+    }
+  });
+
+  return Array.from(byMonumentId.values());
+}
+
+function monumentCollapsePreviewOnlyRecords(rows) {
+  const byResource = new Map();
+
+  rows.forEach((record) => {
+    const key = monumentResourceResultKey(record);
+    if (!key || byResource.has(key)) return;
+
+    byResource.set(key, record);
+  });
+
+  return Array.from(byResource.values());
+}
+
+function monumentRelatedToLines(record, { limit = 3 } = {}) {
+  const matches = Array.isArray(record?._relatedMatches) && record._relatedMatches.length
+    ? record._relatedMatches
+    : [record];
+
+  const visibleMatches = matches.slice(0, limit);
+
+  const lines = visibleMatches.map((match) => {
+    return monumentRelatedToLine(match);
+  }).join("");
+
+  const remaining = matches.length - visibleMatches.length;
+
+  if (remaining <= 0) {
+    return lines;
+  }
+
+  return `
+    ${lines}
+    <div class="monument-resource-related-more">
+      ${t("more_related_matches", "+ {count} more related matches").replace("{count}", remaining)}
+    </div>
+  `;
+}
+
+function monumentGroupResourceSearchRecords(records) {
+  const rows = (Array.isArray(records) ? records : []).map((record, index) => ({
+    ...record,
+    _resourceSearchIndex: index
+  }));
+
+  const nativeRelatedRows = rows.filter((record) => {
+    return record.record_type === "monument" && record.match_type === "related";
+  });
+
+  const otherPreviewRows = rows.filter((record) => {
+    if (record.record_type === "monument") return false;
+
+    return (
+      record.match_type === "direct" ||
+      record.match_type === "exact_caal_id"
+    );
+  });
+
+  return {
+    nativeRelated: monumentCollapseRelatedRecords(nativeRelatedRows),
+    otherPreview: monumentCollapsePreviewOnlyRecords(otherPreviewRows)
+  };
+}
+
+async function monumentFetchResourceSearchResults(query) {
+  if (monumentResourceSearchAbortController) {
+    monumentResourceSearchAbortController.abort();
+  }
+
+  monumentResourceSearchAbortController = new AbortController();
+
+  const params = new URLSearchParams();
+  params.set("q", query);
+  params.set("context", "monuments");
+  params.set("limit", "40");
+
+  const response = await fetch(`/api/search/resources?${params.toString()}`, {
+    method: "GET",
+    credentials: "include",
+    signal: monumentResourceSearchAbortController.signal
+  });
+
+  const data = await response.json();
+
+  if (!response.ok || !data.ok) {
+    throw new Error(
+      data.detail ||
+      data.error ||
+      "Resource search failed"
+    );
+  }
+
+  return Array.isArray(data.records) ? data.records : [];
+}
+
+async function monumentLoadResourceSearchResults() {
+  const panel = monumentEnsureResourceSearchPanel();
+
+  if (!panel) return;
+
+  const query = monumentResourceSearchQuery();
+
+  if (query.length < 2) {
+    monumentResourceSearchRecords = [];
+    monumentRenderResourceSearchResults([]);
+    return;
+  }
+
+  panel.hidden = false;
+  panel.innerHTML = `
+    <div class="monument-resource-search-loading">
+      <span class="mini-spinner"></span>
+      ${t("searching_related_caal_records", "Searching related CAAL records...")}
+    </div>
+  `;
+
+  try {
+    const records = await monumentFetchResourceSearchResults(query);
+    monumentResourceSearchRecords = records;
+    monumentRenderResourceSearchResults(records);
+  } catch (error) {
+    if (error.name === "AbortError") return;
+
+    console.warn("Monument resource search failed:", error);
+
+    panel.hidden = false;
+    panel.innerHTML = `
+      <div class="monument-resource-search-error">
+        ${t("could_not_load_related_record", "Could not load related record")}
+      </div>
+    `;
+  }
+}
+
+function monumentRenderNativeRelatedResourceCard(record, index) {
+  const relatedLines = monumentRelatedToLines(record, { limit: 3 });
+
+  const resourceIndex = Number.isInteger(record._resourceSearchIndex)
+    ? record._resourceSearchIndex
+    : index;
+
+  return `
+    <div
+      class="monument-resource-search-card monument-resource-search-card-related"
+      data-resource-search-index="${resourceIndex}"
+      role="button"
+      tabindex="0"
+    >
+      <div class="monument-resource-card-title">
+        ${monumentSafeSearchText(record.display_label || record.caal_id)}
+      </div>
+
+      <div class="monument-resource-card-id">
+        ${monumentSafeSearchText(record.caal_id)}
+      </div>
+
+      ${relatedLines}
+    </div>
+  `;
+}
+
+function monumentRenderPreviewOnlyResourceCard(record, index) {
+  const resourceIndex = Number.isInteger(record._resourceSearchIndex)
+    ? record._resourceSearchIndex
+    : index;
+
+  const typeLabel = monumentResourceTypeLabel(record);
+  const caalId = String(record?.caal_id || "").trim();
+  const title = record?.display_label || caalId;
+
+  return `
+    <div
+      class="monument-resource-search-card monument-resource-search-card-preview-only"
+      data-resource-search-index="${resourceIndex}"
+    >
+      <div class="monument-resource-preview-row">
+        <div class="monument-resource-preview-text">
+          <div class="monument-resource-card-compact-line">
+            <span class="monument-resource-type">${monumentSafeSearchText(typeLabel)}</span>
+            <span class="monument-resource-card-id">${monumentSafeSearchText(caalId)}</span>
+          </div>
+
+          <div class="monument-resource-card-title monument-resource-card-title-compact">
+            ${monumentSafeSearchText(title)}
+          </div>
+        </div>
+
+        <button
+          type="button"
+          class="monument-resource-preview-btn"
+          data-resource-search-index="${resourceIndex}"
+          title="${t("preview", "Preview")}"
+          aria-label="${t("record_preview", "Record preview")}: ${mAttributeValue(caalId)}"
+        >
+          ${svgEyeIcon()}
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+function monumentRenderResourceSearchSection(title, records, renderCard) {
+  if (!records.length) return "";
+
+  return `
+    <section class="monument-resource-search-section">
+      <h4 class="monument-resource-search-heading">
+        ${title} <span class="monument-resource-search-count">(${records.length})</span>
+      </h4>
+
+      <div class="monument-resource-search-list">
+        ${records.map(renderCard).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function monumentRenderResourceSearchResults(records) {
+  const panel = monumentEnsureResourceSearchPanel();
+
+  if (!panel) return;
+
+  const groups = monumentGroupResourceSearchRecords(records);
+
+  if (!groups.nativeRelated.length && !groups.otherPreview.length) {
+    panel.hidden = true;
+    panel.innerHTML = "";
+    return;
+  }
+
+  panel.hidden = false;
+
+  panel.innerHTML = `
+    ${monumentRenderResourceSearchSection(
+      t("related_records", "Related records"),
+      groups.nativeRelated,
+      monumentRenderNativeRelatedResourceCard
+    )}
+
+    ${monumentRenderResourceSearchSection(
+      t("other_caal_records", "Other CAAL records"),
+      groups.otherPreview,
+      monumentRenderPreviewOnlyResourceCard
+    )}
+  `;
+
+  monumentWireResourceSearchCards();
+}
+
+async function monumentPreviewResourceSearchRecord(record) {
+  const caalId = String(record?.caal_id || "").trim();
+
+  if (!caalId) return;
+
+  await openRelatedRecordPreview(caalId);
+}
+
+async function monumentOpenResourceSearchMonumentRecord(record) {
+  const caalId = String(record?.caal_id || "").trim();
+
+  if (!caalId || monumentRecordOpenInProgress) return;
+  if (!monumentConfirmLoseChanges()) return;
+
+  setMonumentRecordOpening(true);
+  setMonumentsLoading(true, t("loading_full_record", "Loading full record..."));
+
+  try {
+    const lang =
+      (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
+      window.appSession?.profile?.preferred_language ||
+      "en";
+
+    const response = await fetch(
+      `/api/records/resolve?caal_id=${encodeURIComponent(caalId)}&lang=${encodeURIComponent(lang)}`,
+      {
+        method: "GET",
+        credentials: "include"
+      }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok || !data.ok || !data.record) {
+      alert(data.error || t("could_not_load_full_monument_record", "Could not load full monument record"));
+      return;
+    }
+
+    if (data.record_type !== "monument") {
+      await monumentPreviewResourceSearchRecord(record);
+      return;
+    }
+
+    const fullRecord = mergeLiveGeometryForRecentlySavedRecord(data.record);
+
+    monumentPendingNewRecord = null;
+    monumentIsEditMode = false;
+    monumentIsDirty = false;
+    monumentIsAddMode = false;
+    monumentSelectedRecord = fullRecord;
+
+    monumentSyncModeVisualState();
+    updateAddModeUI();
+    clearPendingPickPoint();
+    clearRelationshipStateForNewSelection();
+
+    renderMonumentRecordDetails(fullRecord);
+    updateSelectedResultCard();
+
+    if (map && fullRecord.geometry?.coordinates) {
+      drawSelectedMonumentHighlight(fullRecord);
+      ensureRecordVisibleOnMap(fullRecord);
+    }
+  } catch (error) {
+    console.error("Could not open resource-search monument record:", error);
+    alert(
+      error.message ||
+      t("could_not_load_full_monument_record", "Could not load full monument record")
+    );
+  } finally {
+    setMonumentsLoading(false);
+    setMonumentRecordOpening(false);
+  }
+}
+
+function monumentWireResourceSearchCards() {
+  const panel = monumentEnsureResourceSearchPanel();
+
+  if (!panel) return;
+
+  panel.querySelectorAll(".monument-resource-preview-btn").forEach((btn) => {
+    if (btn.dataset.resourcePreviewWired === "true") return;
+
+    btn.dataset.resourcePreviewWired = "true";
+
+    btn.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const index = Number(btn.dataset.resourceSearchIndex);
+      const record = monumentResourceSearchRecords[index];
+
+      if (!record) return;
+
+      await monumentPreviewResourceSearchRecord(record);
+    });
+  });
+
+  panel.querySelectorAll(".monument-resource-search-card-related").forEach((card) => {
+    if (card.dataset.resourceCardWired === "true") return;
+
+    card.dataset.resourceCardWired = "true";
+
+    const openOrPreview = async () => {
+      const index = Number(card.dataset.resourceSearchIndex);
+      const record = monumentResourceSearchRecords[index];
+
+      if (!record) return;
+
+      if (monumentIsEditMode) {
+        await monumentPreviewResourceSearchRecord(record);
+        return;
+      }
+
+      await monumentOpenResourceSearchMonumentRecord(record);
+    };
+
+    card.addEventListener("click", openOrPreview);
+
+    card.addEventListener("keydown", async (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+
+      event.preventDefault();
+      await openOrPreview();
+    });
+  });
+}
 
 // determine dates
 let culturalPeriodLookup = {};
@@ -7753,28 +8287,27 @@ function renderRelatedMonumentModal(record, caalId, fullRecordUrl) {
     getRecordRelations(record).length > 0;
 
   monumentPreviewBody.innerHTML = `
-    <div class="related-preview-compact-header">
-      <div class="related-preview-meta">
-        <span class="related-record-type-badge">
-          ${t("nav_monuments", "Monument")}
-        </span>
+    <div class="record-title related-record-title related-preview-title-card">
+      <div class="related-preview-title-main">
+        <h3>${mSafeValue(title)}</h3>
+        <p>${mSafeValue(caalId)}</p>
 
-        <span class="related-preview-caal-id">
-          ${mSafeValue(caalId)}
-        </span>
+        <div class="record-title-actions related-preview-title-actions">
+          ${relatedPreviewBackButtonHtml()}
+
+          ${
+            fullRecordUrl
+              ? `<button type="button" class="action-btn" id="openRelatedFullRecordBtn">
+                  ${t("open_full_record", "Open full record")}
+                </button>`
+              : ""
+          }
+        </div>
       </div>
 
-      <div class="record-title-actions">
-        ${relatedPreviewBackButtonHtml()}
-
-        ${
-          fullRecordUrl
-            ? `<button type="button" class="action-btn" id="openRelatedFullRecordBtn">
-                ${t("open_full_record", "Open full record")}
-              </button>`
-            : ""
-        }
-      </div>
+      <span class="related-record-type-badge">
+        ${mLabel("Monuments", "Monuments")}
+      </span>
     </div>
 
     <div class="group-stack">
@@ -7864,25 +8397,27 @@ function renderRelatedArchiveModal(record, caalId, fullRecordUrl) {
   monumentPreviewTitle.textContent = title;
 
   monumentPreviewBody.innerHTML = `
-    <div class="related-preview-compact-header">
-      <div class="related-preview-meta">
-        <span class="related-record-type-badge">
-          ${mLabel("Archive", "Archive")}
-        </span>
-        <span class="related-preview-caal-id">${mSafeValue(caalId)}</span>
+    <div class="record-title related-record-title related-preview-title-card">
+      <div class="related-preview-title-main">
+        <h3>${mSafeValue(title)}</h3>
+        <p>${mSafeValue(caalId)}</p>
+
+        <div class="record-title-actions related-preview-title-actions">
+          ${relatedPreviewBackButtonHtml()}
+
+          ${
+            fullRecordUrl
+              ? `<button type="button" class="action-btn" id="openRelatedFullRecordBtn">
+                  ${t("open_full_record", "Open full record")}
+                </button>`
+              : ""
+          }
+        </div>
       </div>
 
-      <div class="record-title-actions">
-        ${relatedPreviewBackButtonHtml()}
-
-        ${
-          fullRecordUrl
-            ? `<button type="button" class="action-btn" id="openRelatedFullRecordBtn">
-                ${t("open_full_record", "Open full record")}
-              </button>`
-            : ""
-        }
-      </div>
+      <span class="related-record-type-badge">
+        ${mLabel("Archive", "Archive")}
+      </span>
     </div>
 
     <div class="group-stack">
@@ -9287,6 +9822,8 @@ async function loadMonumentListRecords() {
     updateMapOptionsState();
     renderMonumentPageInfo();
     updateMapStatusLine();
+
+    await monumentLoadResourceSearchResults();
   } catch (error) {
     if (requestSeq !== monumentListRequestSeq) {
       return;
@@ -9821,7 +10358,7 @@ function renderStackedCoordinateWarning(records) {
     kind === "exact"
       ? t(
           "stacked_exact_coordinate_warning",
-          "{count} records share the same mapped coordinate. This may be an interim location."
+          "{count} records share the same mapped coordinate."
         )
       : t(
           "stacked_nearby_records_warning",
@@ -11036,6 +11573,28 @@ function svgCopyIcon() {
   `;
 }
 
+function svgEyeIcon() {
+  return `
+    <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16">
+      <path
+        d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.8"
+        stroke-linejoin="round"
+      />
+      <circle
+        cx="12"
+        cy="12"
+        r="2.8"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.8"
+      />
+    </svg>
+  `;
+}
+
 function copyablePreviewValue(label, value) {
   const cleanValue = String(value || "").trim();
 
@@ -11231,7 +11790,7 @@ function renderMonumentResultsList(records) {
       return `
         <div
           class="result-card ${isSelected ? "is-selected" : ""} ${isRecentSave ? "recent-save-card" : ""}"
-          data-result-index="${index}"updateSelectedResultCard
+          data-result-index="${index}"
         >
           <div class="result-card-topline">
             <strong>${mSafeValue(monumentResultTitle(record))}</strong>

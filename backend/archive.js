@@ -2347,33 +2347,57 @@ router.post("/admin/refresh-caal-cache", async (req, res) => {
   }
 
   const refreshed = [];
+  const refreshedBy = currentSession?.user?.username || "web_admin";
+
+  async function refreshMaterializedView(viewName, cacheKey, note) {
+    await pool.query(`REFRESH MATERIALIZED VIEW CONCURRENTLY ${viewName}`);
+    refreshed.push(viewName);
+
+    await pool.query(`ANALYZE ${viewName}`);
+
+    if (cacheKey) {
+      await pool.query(
+        `
+        INSERT INTO ui.app_cache_status (
+          cache_key,
+          refreshed_at,
+          refreshed_by,
+          note
+        )
+        VALUES (
+          $1,
+          now(),
+          $2,
+          $3
+        )
+        ON CONFLICT (cache_key)
+        DO UPDATE SET
+          refreshed_at = EXCLUDED.refreshed_at,
+          refreshed_by = EXCLUDED.refreshed_by,
+          note = EXCLUDED.note
+        `,
+        [cacheKey, refreshedBy, note]
+      );
+    }
+  }
 
   try {
-    await pool.query(`REFRESH MATERIALIZED VIEW CONCURRENTLY ui.mv_archive_caal_app`);
-    await pool.query(`ANALYZE ui.mv_archive_caal_app`);
-    refreshed.push("ui.mv_archive_caal_app");
+    await refreshMaterializedView(
+      "ui.mv_archive_caal_app",
+      "archive_caal_cache",
+      "ui.mv_archive_caal_app refreshed from archive web admin button"
+    );
 
-    await pool.query(
-      `
-      INSERT INTO ui.app_cache_status (
-        cache_key,
-        refreshed_at,
-        refreshed_by,
-        note
-      )
-      VALUES (
-        'archive_caal_cache',
-        now(),
-        $1,
-        'ui.mv_archive_caal_app refreshed from web admin button'
-      )
-      ON CONFLICT (cache_key)
-      DO UPDATE SET
-        refreshed_at = EXCLUDED.refreshed_at,
-        refreshed_by = EXCLUDED.refreshed_by,
-        note = EXCLUDED.note
-      `,
-      [currentSession?.user?.username || "web_admin"]
+    await refreshMaterializedView(
+      "ui.mv_resource_identity",
+      "resource_identity_cache",
+      "ui.mv_resource_identity refreshed from archive web admin button"
+    );
+
+    await refreshMaterializedView(
+      "ui.mv_resource_related_search",
+      "resource_related_search_cache",
+      "ui.mv_resource_related_search refreshed from archive web admin button"
     );
 
     return res.json({

@@ -179,6 +179,9 @@ function rememberArchiveSaveSummary(summary) {
 let archiveMessages = {};
 
 let archiveFilterDebounceTimer = null;
+let archiveResourceSearchAbortController = null;
+let archiveResourceSearchRecords = [];
+let archiveResourceSearchPanel = null;
 
 let archiveActiveLanguage = null;
 
@@ -510,6 +513,11 @@ function archiveScheduleFilterReload() {
   }
 
   archiveRenderActiveFilterChips();
+
+  if (!archiveShouldRunResourceSearch()) {
+    archiveRenderResourceSearchResults([]);
+  }
+
   setArchiveResultsCountLoading();
 
   archiveFilterDebounceTimer = setTimeout(() => {
@@ -1681,6 +1689,547 @@ function archiveBuildQueryParams({ limit = archiveLimit, offset = archiveOffset 
   return params;
 }
 
+function archiveResourceSearchQuery() {
+  return String(archiveSearch?.value || "").trim();
+}
+
+function archiveShouldRunResourceSearch() {
+  return archiveResourceSearchQuery().length >= 2;
+}
+
+function archiveEnsureResourceSearchPanel() {
+  if (
+    archiveResourceSearchPanel &&
+    document.body.contains(archiveResourceSearchPanel)
+  ) {
+    return archiveResourceSearchPanel;
+  }
+
+  if (!archiveResultsList) return null;
+
+  archiveResourceSearchPanel = document.createElement("div");
+  archiveResourceSearchPanel.id = "archiveResourceSearchPanel";
+  archiveResourceSearchPanel.className = "archive-resource-search-panel";
+  archiveResourceSearchPanel.hidden = true;
+
+  archiveResultsList.insertAdjacentElement("afterend", archiveResourceSearchPanel);
+
+  return archiveResourceSearchPanel;
+}
+
+function archiveSafeSearchText(value, fallback = "") {
+  const text = String(value ?? fallback ?? "").trim();
+
+  if (!text) {
+    return `<span class="empty-value">${t("not_recorded", "Not recorded")}</span>`;
+  }
+
+  return archiveAttributeValue(text);
+}
+
+function archiveResourceTypeLabel(record) {
+  const type = String(record?.record_type || "").trim();
+
+  switch (type) {
+    case "archive":
+      return t("archive_record", "Archive");
+
+    case "monument":
+      return archiveLabel("Monuments", "Monuments");
+
+    case "institution":
+      return t("institution", "Institution");
+
+    case "dataset":
+      return t("dataset", "Dataset");
+
+    case "rs3_poly":
+      return t("rs3_polygons", "RS polygons");
+
+    case "rs3_line":
+      return t("rs3_line", "RS lines");
+
+    case "rs3_group":
+      return t("rs3_group", "RS groups");
+
+    case "vernacular":
+      return t("vernacular", "Vernacular");
+
+    default:
+      return record?.dataset_label || t("caal_record", "CAAL record");
+  }
+}
+
+function archiveRelatedToLine(record) {
+  const relatedId = String(record?.matched_related_caal_id || "").trim();
+
+  if (!relatedId) return "";
+
+  const relatedLabel = String(record?.matched_related_display_label || "").trim();
+  const relatedText = relatedLabel
+    ? `${relatedId} - ${relatedLabel}`
+    : relatedId;
+
+  return `
+    <div class="archive-resource-related-line">
+      ${t("related_to", "Related to")} ${archiveSafeSearchText(relatedText)}
+    </div>
+  `;
+}
+
+function archiveRelatedToLines(record, { limit = 3 } = {}) {
+  const matches = Array.isArray(record?._relatedMatches) && record._relatedMatches.length
+    ? record._relatedMatches
+    : [record];
+
+  const visibleMatches = matches.slice(0, limit);
+
+  const lines = visibleMatches.map((match) => {
+    return archiveRelatedToLine(match);
+  }).join("");
+
+  const remaining = matches.length - visibleMatches.length;
+
+  if (remaining <= 0) {
+    return lines;
+  }
+
+  return `
+    ${lines}
+    <div class="archive-resource-related-more">
+      ${t("more_related_matches", "+ {count} more related matches").replace("{count}", remaining)}
+    </div>
+  `;
+}
+
+function archiveResourceResultKey(record) {
+  return [
+    record?.record_type || "",
+    record?.caal_id || ""
+  ].join("::").toLowerCase();
+}
+
+function archiveRelatedMatchKey(record) {
+  return [
+    record?.matched_related_record_type || "",
+    record?.matched_related_caal_id || "",
+    record?.matched_related_display_label || ""
+  ].join("::").toLowerCase();
+}
+
+function archiveCollapseRelatedArchiveRecords(rows) {
+  const byArchiveId = new Map();
+
+  rows.forEach((record) => {
+    const key = String(record?.caal_id || "").trim().toLowerCase();
+    if (!key) return;
+
+    if (!byArchiveId.has(key)) {
+      byArchiveId.set(key, {
+        ...record,
+        _relatedMatches: []
+      });
+    }
+
+    const collapsed = byArchiveId.get(key);
+    const matchKey = archiveRelatedMatchKey(record);
+
+    const alreadyHasMatch = collapsed._relatedMatches.some((match) => {
+      return archiveRelatedMatchKey(match) === matchKey;
+    });
+
+    if (!alreadyHasMatch) {
+      collapsed._relatedMatches.push(record);
+    }
+  });
+
+  return Array.from(byArchiveId.values());
+}
+
+function archiveCollapsePreviewOnlyRecords(rows) {
+  const byResource = new Map();
+
+  rows.forEach((record) => {
+    const key = archiveResourceResultKey(record);
+    if (!key || byResource.has(key)) return;
+
+    byResource.set(key, record);
+  });
+
+  return Array.from(byResource.values());
+}
+
+function archiveGroupResourceSearchRecords(records) {
+  const rows = (Array.isArray(records) ? records : []).map((record, index) => ({
+    ...record,
+    _resourceSearchIndex: index
+  }));
+
+  const nativeRelatedRows = rows.filter((record) => {
+    return record.record_type === "archive" && record.match_type === "related";
+  });
+
+  const otherPreviewRows = rows.filter((record) => {
+    if (record.record_type === "archive") return false;
+
+    return (
+      record.match_type === "direct" ||
+      record.match_type === "exact_caal_id"
+    );
+  });
+
+  return {
+    nativeRelated: archiveCollapseRelatedArchiveRecords(nativeRelatedRows),
+    otherPreview: archiveCollapsePreviewOnlyRecords(otherPreviewRows)
+  };
+}
+
+async function archiveFetchResourceSearchResults(query) {
+  if (archiveResourceSearchAbortController) {
+    archiveResourceSearchAbortController.abort();
+  }
+
+  archiveResourceSearchAbortController = new AbortController();
+
+  const params = new URLSearchParams();
+  params.set("q", query);
+  params.set("context", "archive");
+  params.set("limit", "40");
+
+  const response = await fetch(`/api/search/resources?${params.toString()}`, {
+    method: "GET",
+    credentials: "include",
+    signal: archiveResourceSearchAbortController.signal
+  });
+
+  const data = await response.json();
+
+  if (!response.ok || !data.ok) {
+    throw new Error(
+      data.detail ||
+      data.error ||
+      "Resource search failed"
+    );
+  }
+
+  return Array.isArray(data.records) ? data.records : [];
+}
+
+async function archiveLoadResourceSearchResults() {
+  const panel = archiveEnsureResourceSearchPanel();
+
+  if (!panel) return;
+
+  const query = archiveResourceSearchQuery();
+
+  if (query.length < 2) {
+    archiveResourceSearchRecords = [];
+    archiveRenderResourceSearchResults([]);
+    return;
+  }
+
+  panel.hidden = false;
+  panel.innerHTML = `
+    <div class="archive-resource-search-loading">
+      <span class="mini-spinner"></span>
+      ${t("searching", "Searching...")}
+    </div>
+  `;
+
+  try {
+    const records = await archiveFetchResourceSearchResults(query);
+    archiveResourceSearchRecords = records;
+    archiveRenderResourceSearchResults(records);
+  } catch (error) {
+    if (error.name === "AbortError") return;
+
+    console.warn("Archive resource search failed:", error);
+
+    panel.hidden = false;
+    panel.innerHTML = `
+      <div class="archive-resource-search-error">
+        ${t("could_not_load_related_record", "Could not load related record")}
+      </div>
+    `;
+  }
+}
+
+function archiveRenderNativeRelatedResourceCard(record, index) {
+  const relatedLines = archiveRelatedToLines(record, { limit: 3 });
+
+  const resourceIndex = Number.isInteger(record._resourceSearchIndex)
+    ? record._resourceSearchIndex
+    : index;
+
+  return `
+    <div
+      class="archive-resource-search-card archive-resource-search-card-related"
+      data-resource-search-index="${resourceIndex}"
+      data-resource-search-action="open-archive"
+      role="button"
+      tabindex="0"
+    >
+      <div class="archive-resource-card-title">
+        ${archiveSafeSearchText(record.display_label || record.caal_id)}
+      </div>
+
+      <div class="archive-resource-card-id">
+        ${archiveSafeSearchText(record.caal_id)}
+      </div>
+
+      ${relatedLines}
+    </div>
+  `;
+}
+
+function archiveRenderPreviewOnlyResourceCard(record, index) {
+  const resourceIndex = Number.isInteger(record._resourceSearchIndex)
+    ? record._resourceSearchIndex
+    : index;
+
+  const typeLabel = archiveResourceTypeLabel(record);
+  const caalId = String(record?.caal_id || "").trim();
+  const title = record?.display_label || caalId;
+
+  return `
+    <div
+      class="archive-resource-search-card archive-resource-search-card-preview-only"
+      data-resource-search-index="${resourceIndex}"
+    >
+      <div class="archive-resource-preview-row">
+        <div class="archive-resource-preview-text">
+          <div class="archive-resource-card-compact-line">
+            <span class="archive-resource-type">${archiveSafeSearchText(typeLabel)}</span>
+            <span class="archive-resource-card-id">${archiveSafeSearchText(caalId)}</span>
+          </div>
+
+          <div class="archive-resource-card-title archive-resource-card-title-compact">
+            ${archiveSafeSearchText(title)}
+          </div>
+        </div>
+
+        <button
+          type="button"
+          class="archive-resource-preview-btn"
+          data-resource-search-index="${resourceIndex}"
+          title="${t("preview", "Preview")}"
+          aria-label="${t("record_preview", "Record preview")}: ${archiveAttributeValue(caalId)}"
+        >
+          ${archiveSvgEyeIcon()}
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+function archiveRenderResourceSearchSection(title, records, renderCard) {
+  if (!records.length) return "";
+
+  return `
+    <section class="archive-resource-search-section">
+      <h4 class="archive-resource-search-heading">
+        ${title} <span class="archive-resource-search-count">(${records.length})</span>
+      </h4>
+
+      <div class="archive-resource-search-list">
+        ${records.map(renderCard).join("")}
+      </div>
+    </section>
+  `;
+}
+
+function archiveRenderResourceSearchResults(records) {
+  const panel = archiveEnsureResourceSearchPanel();
+
+  if (!panel) return;
+
+  const groups = archiveGroupResourceSearchRecords(records);
+
+  if (!groups.nativeRelated.length && !groups.otherPreview.length) {
+    panel.hidden = true;
+    panel.innerHTML = "";
+    return;
+  }
+
+  panel.hidden = false;
+
+  panel.innerHTML = `
+    ${archiveRenderResourceSearchSection(
+      t("related_records", "Related records"),
+      groups.nativeRelated,
+      archiveRenderNativeRelatedResourceCard
+    )}
+
+    ${archiveRenderResourceSearchSection(
+      t("other_caal_records", "Other CAAL records"),
+      groups.otherPreview,
+      archiveRenderPreviewOnlyResourceCard
+    )}
+  `;
+
+  archiveWireResourceSearchCards();
+}
+
+async function archiveOpenResourceSearchArchiveRecord(record) {
+  const caalId = String(record?.caal_id || "").trim();
+
+  if (!caalId || archiveRecordOpenInProgress) return;
+  if (!archiveConfirmLoseChanges()) return;
+
+  setArchiveRecordOpening(true);
+  setArchiveLoading(true, t("loading_full_record", "Loading full record..."));
+
+  try {
+    const resolved = await loadDirectLinkedRecord(caalId);
+
+    if (resolved?.record_type !== "archive" || !resolved.record) {
+      await archivePreviewResourceSearchRecord(record);
+      return;
+    }
+
+    archivePendingNewRecord = null;
+    archiveSelectedRecord = resolved.record;
+    archiveIsEditMode = false;
+    archiveIsDirty = false;
+
+    archiveRenderRecordDetails(resolved.record);
+    archiveUpdateSelectedResultCard();
+  } catch (error) {
+    console.error("Could not open resource-search archive record:", error);
+    alert(
+      error.message ||
+      t("could_not_load_full_archive_record", "Could not load full archive record")
+    );
+  } finally {
+    setArchiveLoading(false);
+    setArchiveRecordOpening(false);
+  }
+}
+
+function archiveOpenGenericResourceSearchPreview(record) {
+  if (!archivePreviewModal || !archivePreviewBody || !archivePreviewTitle) return;
+
+  const title = record?.display_label || record?.caal_id || t("record_preview", "Record preview");
+  const typeLabel = archiveResourceTypeLabel(record);
+  const fullRecordUrl =
+    typeof getRelatedRecordUrl === "function"
+      ? getRelatedRecordUrl(record.caal_id, record.record_type, null)
+      : null;
+
+  archivePreviewTitle.textContent = title;
+
+  archivePreviewBody.innerHTML = `
+    <div class="record-title related-record-title">
+      <div>
+        <h3>${archiveSafeSearchText(title)}</h3>
+        <p>${archiveSafeSearchText(record?.caal_id)}</p>
+      </div>
+
+      <span class="related-record-type-badge">
+        ${archiveSafeSearchText(typeLabel)}
+      </span>
+
+      ${
+        fullRecordUrl
+          ? `<button type="button" class="action-btn" id="archiveOpenAssociatedFullRecordBtn">
+              ${t("open_full_record", "Open full record")}
+            </button>`
+          : ""
+      }
+    </div>
+
+    <div class="group-stack">
+      <div class="group-block">
+        <div class="group-grid">
+          <div class="detail-item full-width section-header">
+            <span class="detail-section-title">${t("record_preview", "Record preview")}</span>
+          </div>
+
+          ${archiveCopyableDetailItem(archiveLabel("CAAL_ID", "CAAL_ID"), record?.caal_id)}
+          ${archiveRenderDetailItem(t("record_type", "Record type"), typeLabel)}
+          ${archiveRenderDetailItem(t("title_or_name", "Title or name"), record?.display_label, true)}
+          ${archiveRenderDetailItem(t("source_table", "Source table"), record?.source_table)}
+        </div>
+      </div>
+    </div>
+  `;
+
+  archivePreviewModal.hidden = false;
+  archiveWireCopyFieldButtons(archivePreviewModal);
+  archiveWireAssociatedPreviewButtons(fullRecordUrl);
+}
+
+async function archivePreviewResourceSearchRecord(record) {
+  const caalId = String(record?.caal_id || "").trim();
+
+  if (!caalId) return;
+
+  if (record.record_type === "archive" || record.record_type === "monument") {
+    await archiveOpenAssociatedRecord(caalId);
+    return;
+  }
+
+  if (record.record_type === "institution") {
+    await archiveOpenInstitutionPreview(caalId);
+    return;
+  }
+
+  archiveOpenGenericResourceSearchPreview(record);
+}
+
+function archiveWireResourceSearchCards() {
+  const panel = archiveEnsureResourceSearchPanel();
+
+  if (!panel) return;
+
+  panel.querySelectorAll(".archive-resource-preview-btn").forEach((btn) => {
+    if (btn.dataset.resourcePreviewWired === "true") return;
+
+    btn.dataset.resourcePreviewWired = "true";
+
+    btn.addEventListener("click", async (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      const index = Number(btn.dataset.resourceSearchIndex);
+      const record = archiveResourceSearchRecords[index];
+
+      if (!record) return;
+
+      await archivePreviewResourceSearchRecord(record);
+    });
+  });
+
+  panel.querySelectorAll(".archive-resource-search-card-related").forEach((card) => {
+    if (card.dataset.resourceCardWired === "true") return;
+
+    card.dataset.resourceCardWired = "true";
+
+    const openOrPreview = async () => {
+      const index = Number(card.dataset.resourceSearchIndex);
+      const record = archiveResourceSearchRecords[index];
+
+      if (!record) return;
+
+      if (archiveIsEditMode) {
+        await archivePreviewResourceSearchRecord(record);
+        return;
+      }
+
+      await archiveOpenResourceSearchArchiveRecord(record);
+    };
+
+    card.addEventListener("click", openOrPreview);
+
+    card.addEventListener("keydown", async (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+
+      event.preventDefault();
+      await openOrPreview();
+    });
+  });
+}
+
 // edit/add helpers
 async function archiveDeleteCurrentRecord() {
   const record = archiveSelectedRecord;
@@ -2323,6 +2872,28 @@ function archiveSvgCopyIcon() {
         stroke="currentColor"
         stroke-width="1.8"
         stroke-linecap="round"
+      />
+    </svg>
+  `;
+}
+
+function archiveSvgEyeIcon() {
+  return `
+    <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16">
+      <path
+        d="M2.5 12s3.5-6 9.5-6 9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6Z"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.8"
+        stroke-linejoin="round"
+      />
+      <circle
+        cx="12"
+        cy="12"
+        r="2.8"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.8"
       />
     </svg>
   `;
@@ -3007,7 +3578,7 @@ function archiveRenderAssociatedMonumentPreview(record, caalId, fullRecordUrl) {
       </div>
 
       <span class="related-record-type-badge">
-        ${archiveLabel("Monument", "Monument")}
+        ${archiveLabel("Monuments", "Monuments")}
       </span>
 
       ${
@@ -3042,7 +3613,7 @@ function archiveRenderAssociatedMonumentPreview(record, caalId, fullRecordUrl) {
       <div class="group-block">
         <div class="group-grid">
           <div class="detail-item full-width section-header">
-            <span class="detail-section-title">${archiveLabel("Monument", "Monument")}</span>
+            <span class="detail-section-title">${archiveLabel("Monuments", "Monuments")}</span>
           </div>
 
           ${archiveRenderDetailItem(archiveLabel("Monument Type1", "Monument Type1"), record.summary?.monument_type1)}
@@ -3498,6 +4069,7 @@ function renderArchiveNoScopeSelectedState() {
     t("no_record_scopes_sources_short", "No record scopes selected")
   );
 
+  archiveRenderResourceSearchResults([]);
   renderArchivePageInfo();
 }
 
@@ -3658,9 +4230,11 @@ async function loadArchiveRecords(limit = 100, offset = 0, options = {}) {
     archiveRecentlySavedRecords = [];
   }
 
-  renderArchiveResultsList(archiveVisibleRecords);
-  renderArchivePageInfo();
-}
+    renderArchiveResultsList(archiveVisibleRecords);
+    renderArchivePageInfo();
+
+    await archiveLoadResourceSearchResults();
+  }
 
 
 // Filter logic

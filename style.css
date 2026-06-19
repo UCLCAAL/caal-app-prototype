@@ -4319,3 +4319,364 @@ Popup preview */
   padding-left: 1.35rem;
   border-left: 1px solid #e1e5e8;
 }
+
+
+
+.archive-resource-search-panel {
+  margin-top: 0.75rem;
+}
+
+.archive-resource-search-section {
+  margin-top: 0.75rem;
+}
+
+.archive-resource-search-heading {
+  margin: 0.55rem 0 0.35rem;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.archive-resource-search-count {
+  font-weight: 400;
+  opacity: 0.75;
+}
+
+.archive-resource-search-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.archive-resource-search-card {
+  border: 1px solid rgba(0, 0, 0, 0.16);
+  border-radius: 0.45rem;
+  background: #fff;
+  padding: 0.55rem 0.65rem;
+  cursor: pointer;
+}
+
+.archive-resource-search-card:hover {
+  background: rgba(0, 0, 0, 0.035);
+}
+
+.archive-resource-search-card:focus {
+  outline: 2px solid rgba(0, 0, 0, 0.35);
+  outline-offset: 2px;
+}
+
+.archive-resource-search-card-related {
+  border-left: 3px solid rgba(0, 0, 0, 0.45);
+}
+
+.archive-resource-search-card-preview-only {
+  border-style: dashed;
+  opacity: 0.88;
+  padding: 0.45rem 0.55rem;
+}
+
+.archive-resource-search-card-preview-only:hover {
+  opacity: 1;
+}
+
+.archive-resource-card-title {
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+.archive-resource-card-title-compact {
+  font-weight: 500;
+  font-size: 0.9rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.archive-resource-card-id {
+  font-size: 0.8rem;
+  opacity: 0.78;
+  margin-top: 0.15rem;
+}
+
+.archive-resource-card-compact-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  align-items: baseline;
+  font-size: 0.78rem;
+  opacity: 0.82;
+}
+
+.archive-resource-type {
+  font-weight: 650;
+}
+
+.archive-resource-related-line {
+  margin-top: 0.35rem;
+  font-size: 0.82rem;
+  line-height: 1.25;
+  opacity: 0.85;
+}
+
+.archive-resource-open-full-btn {
+  margin-top: 0.35rem;
+  padding: 0.2rem 0.45rem;
+  font-size: 0.78rem;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  border-radius: 0.35rem;
+  background: rgba(0, 0, 0, 0.03);
+  cursor: pointer;
+}
+
+.archive-resource-open-full-btn:hover {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.archive-resource-search-loading,
+.archive-resource-search-error {
+  margin-top: 0.6rem;
+  font-size: 0.85rem;
+  opacity: 0.8;
+}
+
+.archive-resource-preview-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.archive-resource-preview-text {
+  min-width: 0;
+  flex: 1;
+}
+
+.archive-resource-preview-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.85rem;
+  height: 1.85rem;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.03);
+  color: inherit;
+  cursor: pointer;
+}
+
+.archive-resource-preview-btn:hover {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.archive-resource-preview-btn:focus {
+  outline: 2px solid rgba(0, 0, 0, 0.35);
+  outline-offset: 2px;
+}
+
+.archive-resource-related-more {
+  margin-top: 0.25rem;
+  font-size: 0.78rem;
+  opacity: 0.7;
+}
+
+.archive-resource-search-card-preview-only {
+  cursor: default;
+}
+
+.archive-resource-search-card-preview-only:hover {
+  background: inherit;
+  opacity: 0.88;
+}
+
+.archive-resource-search-card-preview-only:focus {
+  outline: none;
+}
+
+.archive-resource-search-card-preview-only .archive-resource-preview-btn {
+  cursor: pointer;
+}
+
+
+.monument-resource-search-panel {
+  margin-top: 0.75rem;
+}
+
+.monument-resource-search-section {
+  margin-top: 0.75rem;
+}
+
+.monument-resource-search-heading {
+  margin: 0.55rem 0 0.35rem;
+  font-size: 0.9rem;
+  font-weight: 700;
+}
+
+.monument-resource-search-count {
+  font-weight: 400;
+  opacity: 0.75;
+}
+
+.monument-resource-search-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+}
+
+.monument-resource-search-card {
+  border: 1px solid rgba(0, 0, 0, 0.16);
+  border-radius: 0.45rem;
+  background: #fff;
+  padding: 0.55rem 0.65rem;
+}
+
+.monument-resource-search-card-related {
+  cursor: pointer;
+  border-left: 3px solid rgba(0, 0, 0, 0.45);
+}
+
+.monument-resource-search-card-related:hover {
+  background: rgba(0, 0, 0, 0.035);
+}
+
+.monument-resource-search-card-related:focus {
+  outline: 2px solid rgba(0, 0, 0, 0.35);
+  outline-offset: 2px;
+}
+
+.monument-resource-search-card-preview-only {
+  cursor: default;
+  border-style: dashed;
+  opacity: 0.88;
+  padding: 0.45rem 0.55rem;
+}
+
+.monument-resource-search-card-preview-only:hover {
+  background: #fff;
+  opacity: 0.88;
+}
+
+.monument-resource-search-card-preview-only:focus {
+  outline: none;
+}
+
+.monument-resource-card-title {
+  font-weight: 650;
+  line-height: 1.25;
+}
+
+.monument-resource-card-title-compact {
+  font-weight: 500;
+  font-size: 0.9rem;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.monument-resource-card-id {
+  font-size: 0.8rem;
+  opacity: 0.78;
+  margin-top: 0.15rem;
+}
+
+.monument-resource-card-compact-line {
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+  align-items: baseline;
+  font-size: 0.78rem;
+  opacity: 0.82;
+}
+
+.monument-resource-type {
+  font-weight: 650;
+}
+
+.monument-resource-related-line {
+  margin-top: 0.35rem;
+  font-size: 0.82rem;
+  line-height: 1.25;
+  opacity: 0.85;
+}
+
+.monument-resource-related-more {
+  margin-top: 0.25rem;
+  font-size: 0.78rem;
+  opacity: 0.7;
+}
+
+.monument-resource-preview-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.monument-resource-preview-text {
+  min-width: 0;
+  flex: 1;
+}
+
+.monument-resource-preview-btn {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.85rem;
+  height: 1.85rem;
+  border: 1px solid rgba(0, 0, 0, 0.25);
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.03);
+  color: inherit;
+  cursor: pointer;
+}
+
+.monument-resource-preview-btn:hover {
+  background: rgba(0, 0, 0, 0.08);
+}
+
+.monument-resource-preview-btn:focus {
+  outline: 2px solid rgba(0, 0, 0, 0.35);
+  outline-offset: 2px;
+}
+
+.monument-resource-search-loading,
+.monument-resource-search-error {
+  margin-top: 0.6rem;
+  font-size: 0.85rem;
+  opacity: 0.8;
+}
+
+.related-preview-title-card {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.related-preview-title-main {
+  min-width: 0;
+  flex: 1;
+}
+
+.related-preview-title-main h3 {
+  margin: 0;
+}
+
+.related-preview-title-main p {
+  margin: 0.2rem 0 0;
+  color: #5f6b76;
+}
+
+.related-preview-title-actions {
+  margin-top: 0.75rem;
+}
+
+.related-preview-title-card .related-record-type-badge {
+  flex: 0 0 auto;
+}
+
+.monument-resource-related-line {
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
