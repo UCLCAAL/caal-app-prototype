@@ -27,6 +27,9 @@ let homeGlobalSearchAbortController = null;
 let homeGlobalSearchTimer = null;
 let homeGlobalSearchRecords = [];
 
+let homeGlobalSearchTotal = 0;
+let homeGlobalSearchTotalsByType = {};
+
 function homeCurrentLanguageCode() {
   return (
     (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
@@ -162,7 +165,6 @@ async function homeFetchGlobalSearch(query) {
   const params = new URLSearchParams();
   params.set("q", query);
   params.set("context", "global");
-  params.set("limit", "36");
   params.set("lang", homeCurrentLanguageCode());
 
   const response = await fetch(`/api/search/resources?${params.toString()}`, {
@@ -181,7 +183,11 @@ async function homeFetchGlobalSearch(query) {
     );
   }
 
-  return Array.isArray(data.records) ? data.records : [];
+  return {
+    records: Array.isArray(data.records) ? data.records : [],
+    total: Number(data.total || 0),
+    totalsByRecordType: data.totals_by_record_type || {}
+  };
 }
 
 function homeSetSearchStatus(message, { loading = false, hidden = false } = {}) {
@@ -276,7 +282,7 @@ function homeRenderGlobalSearchResults(records) {
   resultsEl.innerHTML = `
     <div class="home-global-results-heading">
       <strong>${t("top_matches", "Top matches")}</strong>
-      <span>${rows.length} ${t("records", "records")}</span>
+      <span>${homeGlobalSearchTotal} ${t("records", "records")}</span>
     </div>
 
     <div class="home-global-results-grid">
@@ -295,12 +301,15 @@ function homeRenderResultGroup(group) {
   const visible = group.records.slice(0, 6);
   const fullSearchUrl = homeFullSearchUrlForType(group.type);
 
+  const totalForGroup =
+    Number(homeGlobalSearchTotalsByType[group.type]) || group.records.length;
+
   return `
     <section class="home-global-result-group">
       <h4 class="home-global-result-group-heading">
         <span class="home-global-result-group-title">
           ${homeSafeText(label)}
-          <span class="home-global-result-group-count">(${group.records.length})</span>
+          <span class="home-global-result-group-count">(${totalForGroup})</span>
 
           ${
             fullSearchUrl
@@ -432,6 +441,9 @@ async function homeRunGlobalSearch(query) {
 
   if (cleanQuery.length < 2) {
     homeGlobalSearchRecords = [];
+    homeGlobalSearchTotal = 0;
+    homeGlobalSearchTotalsByType = {};
+
     homeSetSearchStatus("", { hidden: true });
 
     const resultsEl = document.getElementById("homeGlobalSearchResults");
@@ -448,10 +460,14 @@ async function homeRunGlobalSearch(query) {
   });
 
   try {
-    const records = await homeFetchGlobalSearch(cleanQuery);
-    homeGlobalSearchRecords = records;
+    const result = await homeFetchGlobalSearch(cleanQuery);
+
+    homeGlobalSearchRecords = result.records;
+    homeGlobalSearchTotal = result.total;
+    homeGlobalSearchTotalsByType = result.totalsByRecordType;
+
     homeSetSearchStatus("", { hidden: true });
-    homeRenderGlobalSearchResults(records);
+    homeRenderGlobalSearchResults(result.records);
   } catch (error) {
     if (error.name === "AbortError") return;
 

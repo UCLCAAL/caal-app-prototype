@@ -18,7 +18,7 @@ function parseLimit(value) {
 function parseContext(value) {
   const context = String(value || "").trim().toLowerCase();
 
-  if (["archive", "monuments", "home"].includes(context)) {
+  if (["archive", "monuments", "home", "global"].includes(context)) {
     return context;
   }
 
@@ -83,6 +83,7 @@ router.get("/search/resources", async (req, res) => {
           CASE
             WHEN $2 = 'archive' AND ri.record_type = 'archive' THEN 1
             WHEN $2 = 'monuments' AND ri.record_type = 'monument' THEN 1
+            WHEN $2 IN ('home', 'global') THEN 1
             ELSE 3
           END AS rank_group,
 
@@ -111,6 +112,7 @@ router.get("/search/resources", async (req, res) => {
           CASE
             WHEN $2 = 'archive' AND rs.returned_record_type = 'archive' THEN 2
             WHEN $2 = 'monuments' AND rs.returned_record_type = 'monument' THEN 2
+            WHEN $2 IN ('home', 'global') THEN 2
             ELSE 4
           END AS rank_group,
 
@@ -145,36 +147,157 @@ router.get("/search/resources", async (req, res) => {
       deduped AS (
         SELECT DISTINCT ON (
           match_type,
-          caal_id,
+          record_type,
+          source_schema,
+          source_table,
+          source_row_id,
           COALESCE(matched_related_caal_id, '')
         )
           *
         FROM combined
         ORDER BY
           match_type,
-          caal_id,
+          record_type,
+          source_schema,
+          source_table,
+          source_row_id,
           COALESCE(matched_related_caal_id, ''),
           rank_group,
           display_label
+      ),
+
+      home_unique_resources AS (
+        SELECT DISTINCT ON (
+          record_type,
+          source_schema,
+          source_table,
+          source_row_id
+        )
+          *
+        FROM deduped
+        ORDER BY
+          record_type,
+          source_schema,
+          source_table,
+          source_row_id,
+          rank_group,
+          CASE match_type
+            WHEN 'exact_caal_id' THEN 1
+            WHEN 'direct' THEN 2
+            WHEN 'related' THEN 3
+            ELSE 9
+          END,
+          display_label
+      ),
+
+      totals AS (
+        SELECT
+          COUNT(*)::int AS total
+        FROM (
+          SELECT DISTINCT
+            record_type,
+            source_schema,
+            source_table,
+            source_row_id
+          FROM deduped
+        ) unique_resources
+      ),
+
+      totals_by_type AS (
+        SELECT
+          COALESCE(
+            jsonb_object_agg(record_type, n ORDER BY record_type),
+            '{}'::jsonb
+          ) AS totals_by_record_type
+        FROM (
+          SELECT
+            record_type,
+            COUNT(*)::int AS n
+          FROM (
+            SELECT DISTINCT
+              record_type,
+              source_schema,
+              source_table,
+              source_row_id
+            FROM deduped
+          ) unique_resources
+          GROUP BY record_type
+        ) x
+      ),
+
+      preview_ranked AS (
+        SELECT
+          d.*,
+          ROW_NUMBER() OVER (
+            PARTITION BY d.record_type
+            ORDER BY
+              d.rank_group,
+              d.display_label,
+              d.caal_id,
+              d.matched_related_display_label
+          ) AS rn_by_type,
+
+          ROW_NUMBER() OVER (
+            ORDER BY
+              d.rank_group,
+              d.record_type,
+              d.display_label,
+              d.caal_id,
+              d.matched_related_display_label
+          ) AS rn_global
+        FROM home_unique_resources d
+      ),
+
+      preview AS (
+        SELECT *
+        FROM preview_ranked
+        WHERE
+          (
+            $2 IN ('home', 'global')
+            AND rn_by_type <= 6
+          )
+          OR
+          (
+            $2 NOT IN ('home', 'global')
+          )
+        ORDER BY
+          CASE record_type
+            WHEN 'monument' THEN 1
+            WHEN 'archive' THEN 2
+            WHEN 'institution' THEN 3
+            WHEN 'dataset' THEN 4
+            WHEN 'rs3_poly' THEN 5
+            WHEN 'rs3_line' THEN 6
+            WHEN 'rs3_group' THEN 7
+            WHEN 'vernacular' THEN 8
+            ELSE 99
+          END,
+          rank_group,
+          display_label,
+          caal_id
       )
 
-      SELECT *
-      FROM deduped
-      ORDER BY
-        rank_group,
-        record_type,
-        display_label,
-        matched_related_display_label
-      LIMIT $3
+      SELECT
+        COALESCE(
+          jsonb_agg(to_jsonb(preview) - 'rn_by_type' - 'rn_global'),
+          '[]'::jsonb
+        ) AS records,
+        (SELECT total FROM totals) AS total,
+        (SELECT totals_by_record_type FROM totals_by_type) AS totals_by_record_type
+      FROM preview;
       `,
-      [q, context, limit]
+      [q, context]
     );
+
+    const row = result.rows[0] || {};
 
     return res.json({
       ok: true,
       query: q,
       context,
-      records: result.rows
+      records: Array.isArray(row.records) ? row.records : [],
+      total: Number(row.total || 0),
+      totals_by_record_type: row.totals_by_record_type || {}
     });
   } catch (error) {
     console.error("Resource search failed:");

@@ -5652,7 +5652,6 @@ async function monumentFetchResourceSearchResults(query) {
   const params = new URLSearchParams();
   params.set("q", query);
   params.set("context", "monuments");
-  params.set("limit", "40");
 
   const response = await fetch(`/api/search/resources?${params.toString()}`, {
     method: "GET",

@@ -4704,14 +4704,11 @@ Popup preview */
 }
 
 .home-global-search-form {
-  display: flex;
-  gap: 0.6rem;
-  align-items: center;
+  display: block;
 }
 
 .home-global-search-input {
-  flex: 1;
-  min-width: 0;
+  width: 100%;
 }
 
 .home-global-search-status {
