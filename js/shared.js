@@ -306,6 +306,56 @@ function getLocalizedCountryName(countryName, lang = getCurrentLanguage()) {
   return countries[key]?.[lang] || countryName || "";
 }
 
+function getWorkspaceCountryDisplayForms(session = window.appSession) {
+  const workspaceCode = getSessionWorkspaceCodeForDisplay(session);
+  const lang =
+    (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
+    session?.profile?.preferred_language ||
+    "en";
+
+  if (workspaceCode === "kz") {
+    return {
+      country: {
+        en: "Kazakhstan",
+        ru: "Казахстан",
+        kk: "Қазақстан"
+      }[lang] || "Kazakhstan",
+
+      countryGenitive: {
+        en: "Kazakhstan",
+        ru: "Казахстана",
+        kk: "Қазақстан"
+      }[lang] || "Kazakhstan",
+
+      workspaceTitle: {
+        en: "Kazakhstan records workspace",
+        ru: "Рабочее пространство записей Казахстана",
+        kk: "Қазақстан жазбаларының жұмыс кеңістігі"
+      }[lang] || "Kazakhstan records workspace",
+
+      homeSubtitle: {
+        en: "CAAL Kazakhstan",
+        ru: "CAAL Казахстан",
+        kk: "CAAL Қазақстан"
+      }[lang] || "CAAL Kazakhstan",
+
+      monumentsSubtitle: {
+        en: "Kazakhstan monuments workspace",
+        ru: "Рабочее пространство памятников Казахстана",
+        kk: "Қазақстан ескерткіштерінің жұмыс кеңістігі"
+      }[lang] || "Kazakhstan monuments workspace",
+
+      archiveSubtitle: {
+        en: "Kazakhstan archive workspace",
+        ru: "Рабочее пространство архива Казахстана",
+        kk: "Қазақстан архивінің жұмыс кеңістігі"
+      }[lang] || "Kazakhstan archive workspace"
+    };
+  }
+
+  return null;
+}
+
 function getWorkspaceCountryName(session = window.appSession) {
   const rawCountryName =
     session?.profile?.country_display ||
@@ -346,6 +396,7 @@ function getWorkspaceHeaderTitle(session = window.appSession) {
 
 function getWorkspacePageSubtitle(page, session = window.appSession) {
   const workspaceCode = getSessionWorkspaceCodeForDisplay(session);
+  const workspaceForms = getWorkspaceCountryDisplayForms(session);
   const countryName = getWorkspaceCountryName(session);
 
   if (workspaceCode === "caal") {
@@ -358,6 +409,12 @@ function getWorkspacePageSubtitle(page, session = window.appSession) {
     }
 
     return t("shared_caal_records_workspace", "Shared CAAL records workspace");
+  }
+
+  if (workspaceForms) {
+    if (page === "archive") return workspaceForms.archiveSubtitle;
+    if (page === "monuments") return workspaceForms.monumentsSubtitle;
+    return workspaceForms.homeSubtitle;
   }
 
   if (page === "archive") {
