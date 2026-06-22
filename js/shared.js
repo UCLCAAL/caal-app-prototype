@@ -287,14 +287,39 @@ function getWorkspaceCode() {
   return appSession?.profile?.workspace_code || null;
 }
 
+function getLocalizedCountryName(countryName, lang = getCurrentLanguage()) {
+  const key = String(countryName || "").trim().toLowerCase();
+
+  const countries = {
+    kazakhstan: {
+      en: "Kazakhstan",
+      ru: "Казахстан",
+      zh: "哈萨克斯坦",
+      kk: "Қазақстан",
+      ky: "Казакстан",
+      tg: "Қазоқистон",
+      tk: "Gazagystan",
+      uz: "Qozog'iston"
+    }
+  };
+
+  return countries[key]?.[lang] || countryName || "";
+}
+
 function getWorkspaceCountryName(session = window.appSession) {
-  return (
+  const rawCountryName =
     session?.profile?.country_display ||
     session?.profile?.country ||
     session?.user?.country_display ||
     session?.user?.country ||
-    ""
-  );
+    "";
+
+  const lang =
+    (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
+    session?.profile?.preferred_language ||
+    "en";
+
+  return getLocalizedCountryName(rawCountryName, lang);
 }
 
 function getSessionWorkspaceCodeForDisplay(session = window.appSession) {
