@@ -280,6 +280,67 @@ async function rebuildMonumentAdminBoundaryMembership() {
   console.log("[MV refresh] Done ui.monument_admin_boundary_membership");
 }
 
+async function rebuildResourceAdminBoundaryMembership() {
+  // Derives from mv_resource_viewer_base; if the base was skipped this run,
+  // membership cannot have changed either.
+  if (skippedThisRun.has("ui.mv_resource_viewer_base")) {
+    console.log("[MV refresh] Skipping ui.resource_admin_boundary_membership (viewer base skipped)");
+    return;
+  }
+
+  console.log("[MV refresh] Rebuilding ui.resource_admin_boundary_membership...");
+
+  const client = await pool.connect();
+
+  try {
+    await client.query(`
+      CREATE TEMP TABLE tmp_resource_admin_boundary_membership AS
+      SELECT
+        b.record_type,
+        b.source_schema,
+        b.source_table,
+        b.source_row_id,
+        b.caal_id,
+        ab.boundary_id::text AS boundary_id,
+        ab.admin_level,
+        ab.country_iso3,
+        now() AS matched_at
+      FROM ui.mv_resource_viewer_base b
+      JOIN ui.mv_admin_boundaries_map ab
+        ON ST_Intersects(b.centroid_4326, ab.geom)
+      WHERE b.centroid_4326 IS NOT NULL
+    `);
+
+    await client.query("BEGIN");
+
+    try {
+      await client.query(`TRUNCATE ui.resource_admin_boundary_membership`);
+
+      await client.query(`
+        INSERT INTO ui.resource_admin_boundary_membership (
+          record_type, source_schema, source_table, source_row_id,
+          caal_id, boundary_id, admin_level, country_iso3, matched_at
+        )
+        SELECT
+          record_type, source_schema, source_table, source_row_id,
+          caal_id, boundary_id, admin_level, country_iso3, matched_at
+        FROM tmp_resource_admin_boundary_membership
+      `);
+
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    }
+
+    await client.query(`ANALYZE ui.resource_admin_boundary_membership`);
+  } finally {
+    client.release();
+  }
+
+  console.log("[MV refresh] Done ui.resource_admin_boundary_membership");
+}
+
 async function main() {
   const startedAt = new Date();
 
@@ -319,6 +380,13 @@ async function main() {
     } catch (error) {
       failed = true;
       console.error("[MV refresh] Failed rebuilding ui.monument_admin_boundary_membership:");
+      console.error(error);
+    }
+    try {
+      await rebuildResourceAdminBoundaryMembership();
+    } catch (error) {
+      failed = true;
+      console.error("[MV refresh] Failed rebuilding ui.resource_admin_boundary_membership:");
       console.error(error);
     }
   } finally {

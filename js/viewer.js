@@ -164,13 +164,15 @@ VIEWER_RECORD_TYPES.forEach((type) => {
 
 const VIEWER_OPTIONAL_MAP_TYPES = [
   "survey_grid_region",
-  "survey_grid"
+  "survey_grid",
+  "admin_boundary"
 ];
 
 const VIEWER_ALWAYS_GEOMETRY_TYPES = [
   "institution",
   "survey_grid",
-  "survey_grid_region"
+  "survey_grid_region",
+  "admin_boundary"
 ];
 
 const VIEWER_ALL_MAP_TYPES = [
@@ -240,6 +242,11 @@ const VIEWER_LAYER_IDS = {
     source: "viewer-survey-grid",
     fill: "viewer-survey-grid-fill",
     outline: "viewer-survey-grid-outline"
+  },
+  admin_boundary: {
+    source: "viewer-admin-boundary",
+    fill: "viewer-admin-boundary-fill",
+    outline: "viewer-admin-boundary-outline"
   }
 };
 
@@ -274,6 +281,7 @@ const VIEWER_COLOURS = {
   national: "#B7791F",
   allCaal: "#C95A4A",
   related: "#7C3AED",
+  admin_boundary: "#64748B",
   survey_grid_region: "#111827",
   survey_grid: "#F2F2F2"
 };
@@ -1698,6 +1706,212 @@ function wireViewerRelatedDetailChips() {
     });
 }
 
+function setViewerSelectedBoundary(boundaryId) {
+  const filter = ["==", ["get", "boundary_id"], boundaryId || "___none___"];
+  ["viewer-admin-boundary-selected-fill", "viewer-admin-boundary-selected-outline"]
+    .forEach((id) => {
+      if (viewerMap.getLayer(id)) viewerMap.setFilter(id, filter);
+    });
+}
+
+async function loadBoundarySummaryIntoPopup(thisPopup, boundaryId) {
+  const target = thisPopup.getElement()
+    ?.querySelector("[data-boundary-summary]");
+
+  if (!target || !boundaryId) return;
+
+  target.innerHTML = `<span class="mini-spinner"></span>`;
+
+  try {
+    const lang =
+      (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
+      activeLang ||
+      "en";
+
+    const r = await fetch(
+      `/api/viewer/boundary-summary?boundary_id=${encodeURIComponent(boundaryId)}&lang=${encodeURIComponent(lang)}`,
+      { method: "GET", credentials: "include" }
+    );
+
+    const data = await r.json();
+
+    if (!data.ok || viewerPopup !== thisPopup) return;
+
+    target.innerHTML = renderViewerBoundarySummaryHtml(data.summary);
+  } catch {
+    target.innerHTML = escapeHtml(t("summary_failed", "Summary unavailable."));
+  }
+}
+
+function showViewerReferencePopup(feature, lngLat) {
+  const props = feature?.properties || {};
+  const type = String(props.record_type || "");
+
+  let bodyHtml = "";
+
+  if (type === "survey_grid") {
+    bodyHtml = `
+      <div>${escapeHtml(t("survey_status", "Survey status"))}:
+        <strong>${escapeHtml(props.survey_status || t("not_recorded", "Not recorded"))}</strong></div>
+      <div>${escapeHtml(t("site_count", "Sites"))}:
+        <strong>${formatCount(props.site_count || 0)}</strong></div>
+      <div>${escapeHtml(t("checked", "Checked"))}:
+        <strong>${props.checked === true || props.checked === "true"
+          ? t("yes", "Yes") : t("no", "No")}</strong></div>
+    `;
+  } else if (type === "survey_grid_region") {
+    bodyHtml = `
+      <div>${escapeHtml(t("survey_status", "Survey status"))}:
+        <strong>${escapeHtml(props.survey_status || t("not_recorded", "Not recorded"))}</strong></div>
+      <div>${escapeHtml(t("site_count", "Sites"))}:
+        <strong>${formatCount(props.site_count || 0)}</strong></div>
+      <div>${escapeHtml(t("cells_checked", "Cells checked"))}:
+        <strong>${formatCount(props.checked_cell_count || 0)} /
+        ${formatCount(props.grid_cell_count || 0)}</strong></div>
+    `;
+  } else if (type === "admin_boundary") {
+    const boundaryName =
+      props.admin_name ||
+      props.boundary_id ||
+      "";
+
+    bodyHtml = `
+      <div class="map-popup viewer-single-map-popup-card viewer-boundary-popup-card">
+        <div class="map-popup-title-btn viewer-map-popup-open-title">
+          ${escapeHtml(boundaryName)}
+        </div>
+
+        <div class="map-popup-meta viewer-popup-id-line">
+          <span class="${viewerLayerIconClass("admin_boundary")} viewer-popup-type-icon" aria-hidden="true">
+            ${viewerLayerIcon("admin_boundary")}
+          </span>
+          <span>${escapeHtml(t("admin_boundary", "Administrative boundary"))}</span>
+        </div>
+
+        <div class="map-popup-meta">
+          ${escapeHtml(t("admin_level", "Admin level"))}: ${escapeHtml(props.admin_level || "")}
+        </div>
+
+        <div class="viewer-popup-related-line viewer-boundary-summary-line" data-boundary-summary>
+          <button type="button" class="action-btn subtle js-load-boundary-summary">
+            ${escapeHtml(t("show_region_summary", "Show region summary"))}
+          </button>
+        </div>
+      </div>
+    `;
+  } else {
+    return;
+  }
+
+  if (viewerPopup) {
+    viewerPopup.remove();
+    viewerPopup = null;
+  }
+
+  viewerPopup = new maplibregl.Popup({
+    closeButton: true,
+    closeOnClick: false,
+    maxWidth: "340px",
+    className: "monument-single-hover-popup viewer-single-map-popup viewer-reference-popup"
+  })
+    .setLngLat(lngLat)
+    .setHTML(bodyHtml)
+    .addTo(viewerMap);
+
+  
+  if (type === "admin_boundary") {
+    setViewerSelectedBoundary(props.boundary_id || null);
+    viewerPopup.on("close", () => setViewerSelectedBoundary(null));
+
+    const thisPopup = viewerPopup;
+    const boundaryId = props.boundary_id || "";
+
+    thisPopup.getElement()
+      ?.querySelector(".js-load-boundary-summary")
+      ?.addEventListener("click", async () => {
+        await loadBoundarySummaryIntoPopup(thisPopup, boundaryId);
+      });
+
+    // Auto-load, so it behaves more like the monument popup summary.
+    loadBoundarySummaryIntoPopup(thisPopup, boundaryId);
+  }
+}
+
+const viewerReferencePopupLayersBound = new Set();
+
+function bindViewerReferenceLayerPopups() {
+  if (!viewerMap) return;
+
+  [
+    "viewer-survey-grid-fill",
+    "viewer-survey-grid-region-fill",
+    "viewer-admin-boundary-fill"
+  ].forEach((layerId) => {
+    if (viewerReferencePopupLayersBound.has(layerId)) return;
+    if (!viewerMap.getLayer(layerId)) return;
+
+    viewerMap.on("mouseenter", layerId, () => {
+      viewerMap.getCanvas().style.cursor = "pointer";
+    });
+
+    viewerMap.on("mouseleave", layerId, () => {
+      viewerMap.getCanvas().style.cursor = "";
+    });
+
+    viewerMap.on("click", layerId, (e) => {
+      const f = e.features?.[0];
+      if (!f) return;
+
+      showViewerReferencePopup(f, e.lngLat);
+    });
+
+    viewerReferencePopupLayersBound.add(layerId);
+  });
+}
+
+function renderViewerBoundarySummaryHtml(summary) {
+  const counts = Array.isArray(summary?.counts_by_type) ? summary.counts_by_type : [];
+  const topTypes = Array.isArray(summary?.top_monument_types) ? summary.top_monument_types : [];
+
+  const countsHtml = counts.map((c) => `
+    <span class="related-mini-item" title="${escapeHtml(c.record_type)}">
+      <span class="${caalRecordTypeIconClass(c.record_type)}">
+        ${caalRecordTypeIconSvg(c.record_type)}
+      </span>
+      ${formatCount(c.count)}
+    </span>
+  `).join("");
+
+  const typesHtml = topTypes.map((tRow) => `
+    <li>${escapeHtml(tRow.monument_type)}: <strong>${formatCount(tRow.count)}</strong></li>
+  `).join("");
+
+  const conditionHtml = summary?.avg_condition
+    ? `
+      <div class="viewer-ref-summary-block">
+        ${escapeHtml(t("avg_condition", "Avg condition (levels 2+)"))}:
+        <strong>${summary.avg_condition}</strong>
+        <span class="muted">
+          (${formatCount(summary.records_with_condition)} ${escapeHtml(t("records", "records"))})
+        </span>
+      </div>
+    `
+    : "";
+
+  return `
+    <div class="viewer-ref-summary-block viewer-ref-summary-counts">
+      ${countsHtml || escapeHtml(t("no_records_in_boundary", "No records in this region."))}
+    </div>
+    ${typesHtml ? `
+      <div class="viewer-ref-summary-block">
+        <div class="muted">${escapeHtml(t("top_monument_types", "Top monument types"))}</div>
+        <ul class="viewer-ref-summary-list">${typesHtml}</ul>
+      </div>
+    ` : ""}
+    ${conditionHtml}
+  `;
+}
+
 // --------------------------------------------------------
 // STATE
 // --------------------------------------------------------
@@ -2271,6 +2485,10 @@ function getVisibleMapLayerTypes() {
     }
   }
 
+  if (showCentralAsiaBordersCheckbox?.checked === true) {
+    visible.push("admin_boundary");
+  }
+
   return Array.from(new Set(visible));
 }
 
@@ -2308,6 +2526,10 @@ function getGeometryQueryRecordTypes() {
     } else {
       optionalMapTypes.push("survey_grid");
     }
+  }
+
+  if (showCentralAsiaBordersCheckbox?.checked === true) {
+    optionalMapTypes.push("admin_boundary");
   }
 
   return Array.from(new Set([
@@ -5128,6 +5350,7 @@ function initViewerMap() {
       viewerMapLoaded = true;
       viewerLayerEventsBound = new Set();
       viewerCentroidEventsBound = false;
+      viewerReferencePopupLayersBound.clear();
 
       try {
         await loadViewerMap();
@@ -5152,6 +5375,21 @@ async function loadViewerMap() {
 
   const geometryLayers = getGeometryQueryRecordTypes();
   const clusterLayers = getClusterQueryRecordTypes();
+
+  const hasReferenceLayers =
+    geometryLayers.includes("survey_grid_region") ||
+    geometryLayers.includes("survey_grid") ||
+    geometryLayers.includes("admin_boundary");
+
+  const shouldShowMapLoading =
+    hasReferenceLayers ||
+    geometryLayers.length > 0;
+
+  if (shouldShowMapLoading) {
+    setViewerLoading(true, t("loading_map_layers", "Loading map layers..."));
+  }
+
+  try {
 
   if (!geometryLayers.length && !clusterLayers.length) {
     Object.keys(VIEWER_CLUSTER_GROUPS).forEach((groupKey) => {
@@ -5189,24 +5427,30 @@ async function loadViewerMap() {
   params.set("layers", geometryLayers.join(","));
   params.set("zoom", String(viewerMap.getZoom()));
 
-  const response = await fetch(`/api/viewer/map?${params.toString()}`, {
-    method: "GET",
-    credentials: "include"
-  });
+    const response = await fetch(`/api/viewer/map?${params.toString()}`, {
+      method: "GET",
+      credentials: "include"
+    });
 
-  const data = await response.json();
+    const data = await response.json();
 
-  if (!response.ok || !data.ok) {
-    throw new Error(data.detail || data.error || "Failed to load viewer map");
-  }
+    if (!response.ok || !data.ok) {
+      throw new Error(data.detail || data.error || "Failed to load viewer map");
+    }
 
-  viewerMapLayers = data.layers || {};
-  drawViewerMapLayers(viewerMapLayers);
-  renderViewerMapLabels();
-  updateViewerMapModeVisibility();
-  updateShowResultsOnMapButton();
-  updateMapStatusLine();
-  renderViewerLegend();
+    viewerMapLayers = data.layers || {};
+    drawViewerMapLayers(viewerMapLayers);
+    renderViewerMapLabels();
+    updateViewerMapModeVisibility();
+    updateShowResultsOnMapButton();
+    updateMapStatusLine();
+    renderViewerLegend();
+
+    } finally {
+      if (shouldShowMapLoading) {
+        setViewerLoading(false);
+      }
+    }
 }
 
 function getViewerMapMode() {
@@ -5530,6 +5774,7 @@ function clearViewerCentroidLayer() {
   });
 
   viewerCentroidEventsBound = false;
+  viewerReferencePopupLayersBound.clear();
 }
 
 function updateViewerMapModeVisibility() {
@@ -5611,6 +5856,7 @@ function drawViewerMapLayers(layers) {
 
   updateViewerMapModeVisibility();
   bringViewerLayersToFront();
+  
 }
 
 function surveyGridStatusFillColourExpression() {
@@ -5740,13 +5986,83 @@ function ensureViewerSource(recordType, geojson) {
 }
 
 function ensureViewerStyleLayers(recordType) {
+  if (!viewerMap || !viewerMapLoaded) return;
+
   const ids = VIEWER_LAYER_IDS[recordType];
   if (!ids) return;
 
+  if (!viewerMap.getSource(ids.source)) return;
+
+  // Reference overlay: administrative boundaries
+  if (recordType === "admin_boundary") {
+    if (!viewerMap.getLayer(ids.fill)) {
+      viewerMap.addLayer({
+        id: ids.fill,
+        type: "fill",
+        source: ids.source,
+        filter: VIEWER_POLYGON_GEOMETRY_FILTER,
+        paint: {
+          "fill-color": VIEWER_COLOURS.admin_boundary,
+          "fill-opacity": 0.06
+        }
+      });
+    }
+
+    if (!viewerMap.getLayer(ids.outline)) {
+      viewerMap.addLayer({
+        id: ids.outline,
+        type: "line",
+        source: ids.source,
+        filter: VIEWER_POLYGON_GEOMETRY_FILTER,
+        paint: {
+          "line-color": VIEWER_COLOURS.admin_boundary,
+          "line-width": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            3, 0.6,
+            5, 0.9,
+            8, 1.2,
+            10, 1.6
+          ],
+          "line-opacity": 0.75
+        }
+      });
+    }
+
+    if (!viewerMap.getLayer("viewer-admin-boundary-selected-fill")) {
+      viewerMap.addLayer({
+        id: "viewer-admin-boundary-selected-fill",
+        type: "fill",
+        source: ids.source,
+        filter: ["==", ["get", "boundary_id"], "___none___"],
+        paint: {
+          "fill-color": "#FDE047",
+          "fill-opacity": 0.25
+        }
+      });
+    }
+
+    if (!viewerMap.getLayer("viewer-admin-boundary-selected-outline")) {
+      viewerMap.addLayer({
+        id: "viewer-admin-boundary-selected-outline",
+        type: "line",
+        source: ids.source,
+        filter: ["==", ["get", "boundary_id"], "___none___"],
+        paint: {
+          "line-color": "#EAB308",
+          "line-width": 2.5,
+          "line-opacity": 0.95
+        }
+      });
+    }
+
+    bindViewerReferenceLayerPopups();
+    return;
+  }
+
+  // Reference overlay: survey grids
   if (
-    recordType === "rs3_poly" ||
-    recordType === "rs3_group" ||
-    recordType === "vernacular" ||
     recordType === "survey_grid" ||
     recordType === "survey_grid_region"
   ) {
@@ -5771,7 +6087,6 @@ function ensureViewerStyleLayers(recordType) {
         filter: VIEWER_POLYGON_GEOMETRY_FILTER,
         paint: {
           "line-color": surveyGridLineColour(recordType),
-
           "line-width":
             recordType === "survey_grid_region"
               ? [
@@ -5782,42 +6097,69 @@ function ensureViewerStyleLayers(recordType) {
                   4, 0.9,
                   5, 1.2
                 ]
-              : recordType === "survey_grid"
-                ? [
-                    "interpolate",
-                    ["linear"],
-                    ["zoom"],
-                    5, 0.35,
-                    7, 0.55,
-                    10, 0.8,
-                    12, 1.1
-                  ]
-                : [
-                    "interpolate",
-                    ["linear"],
-                    ["zoom"],
-                    4, 0.7,
-                    8, 1.2,
-                    12, 2
-                  ],
-
-          "line-opacity":
-            recordType === "survey_grid_region"
-              ? 0.85
-              : recordType === "survey_grid"
-                ? 0.9
-                : 0.9
+              : [
+                  "interpolate",
+                  ["linear"],
+                  ["zoom"],
+                  5, 0.35,
+                  7, 0.55,
+                  10, 0.8,
+                  12, 1.1
+                ],
+          "line-opacity": recordType === "survey_grid_region" ? 0.85 : 0.9
         }
       });
     }
 
-    if (recordType !== "survey_grid_region") {
-      bindViewerLayerEvents(recordType, [ids.fill, ids.outline]);
-    }
-
+    bindViewerReferenceLayerPopups();
     return;
   }
 
+  // Resource polygons
+  if (
+    recordType === "rs3_poly" ||
+    recordType === "rs3_group" ||
+    recordType === "vernacular"
+  ) {
+    if (!viewerMap.getLayer(ids.fill)) {
+      viewerMap.addLayer({
+        id: ids.fill,
+        type: "fill",
+        source: ids.source,
+        filter: VIEWER_POLYGON_GEOMETRY_FILTER,
+        paint: {
+          "fill-color": VIEWER_COLOURS[recordType],
+          "fill-opacity": surveyGridFillOpacity(recordType)
+        }
+      });
+    }
+
+    if (!viewerMap.getLayer(ids.outline)) {
+      viewerMap.addLayer({
+        id: ids.outline,
+        type: "line",
+        source: ids.source,
+        filter: VIEWER_POLYGON_GEOMETRY_FILTER,
+        paint: {
+          "line-color": VIEWER_COLOURS[recordType],
+          "line-width": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            4, 0.7,
+            8, 1.2,
+            12, 2
+          ],
+          "line-opacity": 0.9
+        }
+      });
+    }
+
+    bindViewerLayerEvents(recordType, [ids.fill, ids.outline]);
+    return;
+  }
+
+  // Resource lines
   if (recordType === "rs3_line") {
     if (!viewerMap.getLayer(ids.line)) {
       viewerMap.addLayer({
@@ -5844,26 +6186,26 @@ function ensureViewerStyleLayers(recordType) {
     return;
   }
 
+  // Institution points
   if (recordType === "institution") {
     if (!viewerMap.getLayer(ids.circle)) {
       viewerMap.addLayer({
         id: ids.circle,
         type: "circle",
         source: ids.source,
-        filter: ["==", ["geometry-type"], "Point"],
         paint: {
           "circle-radius": [
             "interpolate",
             ["linear"],
             ["zoom"],
-            4, 5,
-            8, 7,
-            12, 9
+            4, 4,
+            8, 6,
+            12, 8
           ],
           "circle-color": VIEWER_COLOURS.institution,
+          "circle-opacity": 0.9,
           "circle-stroke-color": "#ffffff",
-          "circle-stroke-width": 1.5,
-          "circle-opacity": 0.95
+          "circle-stroke-width": 1.5
         }
       });
     }
@@ -5969,12 +6311,18 @@ function clearAllViewerMapLayers() {
   });
 
   viewerLayerEventsBound = new Set();
+  viewerReferencePopupLayersBound.clear();
 }
 
 function bringViewerLayersToFront() {
   if (!viewerMap) return;
 
   const orderedLayers = [
+    "viewer-admin-boundary-fill",
+    "viewer-admin-boundary-outline",
+    "viewer-admin-boundary-selected-fill",
+    "viewer-admin-boundary-selected-outline",
+
     "viewer-survey-grid-region-fill",
     "viewer-survey-grid-region-outline",
     "viewer-survey-grid-fill",
@@ -7143,7 +7491,17 @@ function wireViewerEvents() {
   }
 
   if (showCentralAsiaBordersCheckbox) {
-    showCentralAsiaBordersCheckbox.addEventListener("change", updateMapOptionsState);
+    showCentralAsiaBordersCheckbox.addEventListener("change", async () => {
+      if (borderStyleOptions) {
+        borderStyleOptions.hidden = !showCentralAsiaBordersCheckbox.checked;
+      }
+
+      try {
+        await loadViewerMap();
+      } catch (error) {
+        console.error("Admin boundary layer reload failed:", error);
+      }
+    });
   }
 
   if (showMapLabelsCheckbox) {

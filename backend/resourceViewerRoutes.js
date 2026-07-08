@@ -58,6 +58,13 @@ const ALLOWED_RECORD_TYPES = new Set([
   "archive"
 ]);
 
+const ALLOWED_VIEWER_LAYER_TYPES = new Set([
+  ...ALLOWED_RECORD_TYPES,
+  "survey_grid_region",
+  "survey_grid",
+  "admin_boundary"
+]);
+
 const ALLOWED_SCOPES = new Set([
   "workspace",
   "national_ref",
@@ -66,6 +73,114 @@ const ALLOWED_SCOPES = new Set([
 
 const DEFAULT_LIMIT = 100;
 const MAX_LIMIT = 250;
+
+const VIEWER_REFERENCE_LAYER_CONFIG = {
+  survey_grid: {
+    mv: "ui.mv_resource_viewer_survey_grid_map",
+    geomColumn: "geom_4326",
+    propsSql: `
+      v.survey_status,
+      v.site_count,
+      v.checked,
+      NULL::integer AS grid_cell_count,
+      NULL::integer AS checked_cell_count,
+      NULL::text AS boundary_id,
+      NULL::integer AS admin_level,
+      NULL::text AS boundary_name
+    `,
+    props: ["survey_status", "site_count", "checked",
+            "grid_cell_count", "checked_cell_count"]
+  },
+
+  survey_grid_region: {
+    mv: "ui.mv_resource_viewer_survey_grid_region_map",
+    geomColumn: "geom_4326",
+    propsSql: `
+      v.survey_status,
+      v.site_count,
+      NULL::boolean AS checked,
+      v.grid_cell_count,
+      v.checked_cell_count,
+      NULL::text AS boundary_id,
+      NULL::integer AS admin_level,
+      NULL::text AS boundary_name
+    `,
+    props: ["survey_status", "site_count", "checked",
+            "grid_cell_count", "checked_cell_count"]
+  },
+
+  admin_boundary: {
+    mv: "ui.mv_admin_boundaries_map",
+    geomColumn: "geom",
+    propsSql: `
+      NULL::text AS survey_status,
+      NULL::integer AS site_count,
+      NULL::boolean AS checked,
+      NULL::integer AS grid_cell_count,
+      NULL::integer AS checked_cell_count,
+      v.boundary_id::text AS boundary_id,
+      v.admin_level,
+      v.admin_name AS admin_name        -- display column
+    `,
+    props: ["boundary_id", "admin_level", "admin_name"]
+  }
+};
+
+const VIEWER_REFERENCE_LAYERS = new Set(
+  Object.keys(VIEWER_REFERENCE_LAYER_CONFIG)
+);
+
+function requestedViewerLayerTypes(req) {
+  const raw =
+    parseCsvParam(req.query.layers).length
+      ? parseCsvParam(req.query.layers)
+      : parseCsvParam(req.query.recordTypes);
+
+  const types = raw.length
+    ? raw
+    : Array.from(ALLOWED_RECORD_TYPES);
+
+  return unique(types).filter((type) => ALLOWED_VIEWER_LAYER_TYPES.has(type));
+}
+
+async function loadReferenceLayer(recordType, req) {
+  const config = VIEWER_REFERENCE_LAYER_CONFIG[recordType];
+  if (!config) return emptyFeatureCollection();
+
+  const simplifyTolerance = mapSimplifyToleranceForZoom(req.query.zoom);
+  const g = config.geomColumn;
+
+  const result = await pool.query(
+    `
+    SELECT
+      '${recordType}'::text AS record_type,
+      ${config.propsSql},
+      CASE
+        WHEN $1::double precision > 0
+          AND GeometryType(v.${g}) IN
+              ('MULTIPOLYGON', 'POLYGON', 'MULTILINESTRING', 'LINESTRING')
+        THEN ST_AsGeoJSON(
+          ST_SimplifyPreserveTopology(v.${g}, $1::double precision)
+        )::json
+        ELSE ST_AsGeoJSON(v.${g})::json
+      END AS geometry
+    FROM ${sqlIdentFromSafeMv(config.mv)} v
+    WHERE v.${g} IS NOT NULL
+    `,
+    [simplifyTolerance]
+  );
+
+  return {
+    type: "FeatureCollection",
+    features: result.rows
+      .filter((row) => row.geometry)
+      .map((row) => {
+        const properties = { record_type: row.record_type };
+        config.props.forEach((p) => { properties[p] = row[p]; });
+        return { type: "Feature", geometry: row.geometry, properties };
+      })
+  };
+}
 
 // ========================================================
 // SESSION / PARAM HELPERS
@@ -612,7 +727,11 @@ function buildViewerWhereSql({
         SELECT 1
         FROM jsonb_each_text(${p}filter_risk_levels) AS risk(key, value)
         WHERE risk.key = ANY($${index}::text[])
-          AND ui.int_or_null(risk.value) >= $${index + 1}::int
+          AND CASE
+                WHEN btrim(risk.value) ~ '^-?\\d+$'
+                THEN btrim(risk.value)::int
+                ELSE NULL
+              END >= $${index + 1}::int
       )
     `);
 
@@ -623,7 +742,11 @@ function buildViewerWhereSql({
       EXISTS (
         SELECT 1
         FROM jsonb_each_text(${p}filter_risk_levels) AS risk(key, value)
-        WHERE ui.int_or_null(risk.value) >= $${index}::int
+        WHERE CASE
+                WHEN btrim(risk.value) ~ '^-?\\d+$'
+                THEN btrim(risk.value)::int
+                ELSE NULL
+              END >= $${index}::int
       )
     `);
 
@@ -1319,13 +1442,18 @@ router.get("/map", async (req, res) => {
   const session = requireSession(req, res);
   if (!session) return;
 
-  const requestedLayers = requestedRecordTypes(req);
+  const requestedLayers = requestedViewerLayerTypes(req);
   const lang = viewerLangFromReq(req, session);
 
   try {
     const layers = {};
 
     for (const recordType of requestedLayers) {
+      if (VIEWER_REFERENCE_LAYERS.has(recordType)) {
+        layers[recordType] = await loadReferenceLayer(recordType, req);
+        continue;
+      }
+
       const mvName = VIEWER_LAYER_MVS[recordType];
 
       if (!mvName) {
@@ -1463,7 +1591,7 @@ router.get("/centroids", async (req, res) => {
         v.display_label,
         ${viewerMonumentTypePathDisplaySql("v", lang)} AS monument_type_path,
         ${sourceScopeCaseSql("$1", "v")} AS source_scope,
-        ${storageScopeCaseSql()} AS storage_scope,
+        ${storageScopeCaseSql("v")} AS storage_scope,
         ${isEditableSql("$1", "v")} AS is_editable,
         ST_AsGeoJSON(v.centroid_4326, 6)::json AS geometry
       FROM ${VIEWER_BASE_MV} v
@@ -1539,7 +1667,7 @@ router.get("/record", async (req, res) => {
           v.caal_id,
           v.display_label,
           ${sourceScopeCaseSql("$1", "v")} AS source_scope,
-          ${storageScopeCaseSql()} AS storage_scope,
+          ${storageScopeCaseSql("v")} AS storage_scope,
           ${isEditableSql("$1", "v")} AS is_editable,
           ${viewerDisplayJsonSql("v", lang)} AS display,
           ${viewerMonumentTypePathDisplaySql("v", lang)} AS monument_type_path,
@@ -1771,6 +1899,110 @@ router.get("/related-summary", async (req, res) => {
   }
 });
 
+router.get("/boundary-summary", async (req, res) => {
+  const session = requireSession(req, res);
+  if (!session) return;
+
+  const boundaryId = String(req.query.boundary_id || "").trim();
+
+  if (!boundaryId) {
+    return res.status(400).json({ ok: false, error: "boundary_id is required" });
+  }
+
+  try {
+    const lang = viewerLangFromReq(req, session);
+    const safeLang = safeViewerLang(lang);   // same helper the MV lang columns use
+
+    const result = await pool.query(
+      `
+      WITH members AS (
+        SELECT record_type, source_schema, source_table, source_row_id
+        FROM ui.resource_admin_boundary_membership
+        WHERE boundary_id = $1
+      ),
+
+      type_counts AS (
+        SELECT record_type, COUNT(*)::integer AS n
+        FROM members
+        GROUP BY record_type
+
+        UNION ALL
+
+        SELECT 'monument' AS record_type, COUNT(*)::integer AS n
+        FROM ui.monument_admin_boundary_membership
+        WHERE boundary_id::text = $1
+      ),
+
+      base_rows AS (
+        SELECT b.*
+        FROM members m
+        JOIN ui.mv_resource_viewer_base b
+          ON  b.source_schema = m.source_schema
+          AND b.source_table  = m.source_table
+          AND b.source_row_id = m.source_row_id
+          AND b.record_type   = m.record_type
+      ),
+
+      top_types AS (
+        SELECT
+          COALESCE(
+            b.list_monument_type1_${safeLang},
+            b.list_monument_type1_en,
+            b.list_monument_type1,
+            'Unspecified'
+          ) AS monument_type,
+          COUNT(*)::integer AS n
+        FROM base_rows b
+        WHERE b.record_type IN ('rs3_poly', 'rs3_line', 'rs3_group')
+        GROUP BY 1
+        ORDER BY n DESC
+        LIMIT 5
+      ),
+
+      condition_stats AS (
+        SELECT
+          ROUND(AVG(c.level)::numeric, 1)::float AS avg_condition,
+          COUNT(DISTINCT (b.source_schema, b.source_table, b.source_row_id))
+            ::integer AS records_with_condition
+        FROM base_rows b
+        CROSS JOIN LATERAL unnest(b.filter_condition_levels) AS c(level)
+      )
+
+      SELECT
+        (SELECT jsonb_agg(jsonb_build_object('record_type', record_type, 'count', n)
+                          ORDER BY n DESC)
+           FROM type_counts WHERE n > 0)                       AS counts_by_type,
+        (SELECT jsonb_agg(jsonb_build_object('monument_type', monument_type, 'count', n)
+                          ORDER BY n DESC)
+           FROM top_types)                                     AS top_monument_types,
+        (SELECT avg_condition FROM condition_stats)            AS avg_condition,
+        (SELECT records_with_condition FROM condition_stats)   AS records_with_condition
+      `,
+      [boundaryId]
+    );
+
+    const row = result.rows[0] || {};
+
+    return res.json({
+      ok: true,
+      summary: {
+        counts_by_type: row.counts_by_type || [],
+        top_monument_types: row.top_monument_types || [],
+        avg_condition: row.avg_condition,
+        records_with_condition: row.records_with_condition || 0
+      }
+    });
+  } catch (error) {
+    console.error("Boundary summary failed:", error);
+
+    return res.status(500).json({
+      ok: false,
+      error: "Boundary summary failed",
+      detail: error.message
+    });
+  }
+});
+
 router.get("/related-map", async (req, res) => {
   const currentSession = req.session?.appSession || null;
 
@@ -1808,13 +2040,24 @@ router.get("/related-map", async (req, res) => {
       ),
 
       rel AS (
-        SELECT
+        SELECT DISTINCT ON (f.caal_id_norm)
           e.relation_types,
           e.relation_directions,
           f.*
         FROM edges e
         JOIN ui.v_related_map_features f
           ON f.caal_id_norm = e.related_caal_id_norm
+        ORDER BY
+          f.caal_id_norm,
+          CASE f.record_type
+            WHEN 'monument'  THEN 1
+            WHEN 'rs3_poly'  THEN 2
+            WHEN 'rs3_group' THEN 3
+            WHEN 'rs3_line'  THEN 4
+            ELSE 5
+          END,
+          f.source_schema,
+          f.source_row_id
       )
 
       SELECT
