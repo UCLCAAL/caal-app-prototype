@@ -1032,7 +1032,8 @@ function buildMonumentListRecord(row, lang, currentAppUserId = null, canEditCaal
     source_scope: row.source_scope,
     storage_scope: row.storage_scope,
     is_promoted: row.is_promoted,
-    is_editable: row.is_editable
+    is_editable: row.is_editable,
+    related_counts: row.related_counts || {}
   };
 
   return {
@@ -1048,10 +1049,11 @@ function buildMonumentListRecord(row, lang, currentAppUserId = null, canEditCaal
       monument_type1:
         row.monument_type1_display ||
         row["Monument Type1"] ||
-        row.classification_display ||
-        row["Classification"],
+        null,
       longitude: firstDefined(row["Longitude"], row.longitude, row.geom_lng),
-      latitude: firstDefined(row["Latitude"], row.latitude, row.geom_lat)
+      latitude: firstDefined(row["Latitude"], row.latitude, row.geom_lat),
+
+      related_counts: row.related_counts || {}
     },
 
     raw,
@@ -1127,7 +1129,8 @@ function buildMonumentMapRecord(row, lang, currentAppUserId = null, canEditCaal 
       cultural_period1: row.cultural_period1_display || row["Cultural Period1"],
       religion1: row.religion1_display || row["Religion1"],
       longitude: firstDefined(row["Longitude"], row.longitude, row.geom_lng),
-      latitude: firstDefined(row["Latitude"], row.latitude, row.geom_lat)
+      latitude: firstDefined(row["Latitude"], row.latitude, row.geom_lat),
+      related_counts: row.related_counts || {}
     },
 
     raw,
@@ -3155,13 +3158,35 @@ router.get("/monuments", async (req, res) => {
             ON rr.caal_id = m."CAAL_ID"
           WHERE rr.created_by_app_user_id = $1
             AND COALESCE(rr.status, '') <> 'deleted'
+        ),
+        page AS (
+          SELECT *
+          FROM workspace_rows
+          ORDER BY
+            "Tstamp" DESC NULLS LAST,
+            id DESC
+          LIMIT $${shiftedValues.length + 1} OFFSET $${shiftedValues.length + 2}
         )
-        SELECT *
-        FROM workspace_rows
+        SELECT
+          p.*,
+          rc.related_counts
+        FROM page p
+        LEFT JOIN LATERAL (
+          SELECT COALESCE(jsonb_object_agg(x.record_type, x.n), '{}'::jsonb)
+                 AS related_counts
+          FROM (
+            SELECT
+              r.related_record_type AS record_type,
+              COUNT(DISTINCT lower(btrim(r.related_caal_id)))::integer AS n
+            FROM ui.mv_resource_related_search r
+            WHERE lower(btrim(r.returned_caal_id)) = lower(btrim(p."CAAL_ID"))
+              AND r.returned_record_type = 'monument'
+            GROUP BY r.related_record_type
+          ) x
+        ) rc ON true
         ORDER BY
-          "Tstamp" DESC NULLS LAST,
-          id DESC
-        LIMIT $${shiftedValues.length + 1} OFFSET $${shiftedValues.length + 2}
+          p."Tstamp" DESC NULLS LAST,
+          p.id DESC
       `;
 
       const dataResult = await pool.query(dataSql, [
@@ -3249,40 +3274,68 @@ router.get("/monuments", async (req, res) => {
     const safeLang = safeMonumentLang(lang);
 
     const dataSql = `
+      WITH page AS (
+        SELECT
+          combined.id,
+          combined."CAAL_ID",
+          combined."Primary Name",
+          combined."Primary Name (English)",
+          combined."Other Names",
+          combined."Country",
+          combined."Designation",
+          combined."Classification",
+          combined.classification_display,
+          combined."Monument Type1",
+          combined.monument_type1_display,
+          combined."Longitude",
+          combined."Latitude",
+          combined."Tstamp",
+          combined.created_by_app_user_id,
+          combined.source_scope,
+          combined.storage_scope,
+          combined.is_promoted,
+          combined.is_editable
+        FROM (
+          ${unionSql}
+        ) combined
+        ${finalWhereSql}
+        ORDER BY
+          CASE combined.source_scope
+            WHEN 'workspace' THEN 0
+            WHEN 'national_ref' THEN 1
+            WHEN 'all_caal' THEN 2
+            ELSE 3
+          END,
+          combined."Tstamp" DESC NULLS LAST,
+          combined.id DESC
+        LIMIT $${finalValues.length + 1} OFFSET $${finalValues.length + 2}
+      )
       SELECT
-        combined.id,
-        combined."CAAL_ID",
-        combined."Primary Name",
-        combined."Primary Name (English)",
-        combined."Other Names",
-        combined."Country",
-        combined."Designation",
-        combined."Classification",
-        combined.classification_display,
-        combined."Monument Type1",
-        combined.monument_type1_display,
-        combined."Longitude",
-        combined."Latitude",
-        combined."Tstamp",
-        combined.created_by_app_user_id,
-        combined.source_scope,
-        combined.storage_scope,
-        combined.is_promoted,
-        combined.is_editable
-      FROM (
-        ${unionSql}
-      ) combined
-      ${finalWhereSql}
+        p.*,
+        rc.related_counts
+      FROM page p
+      LEFT JOIN LATERAL (
+        SELECT COALESCE(jsonb_object_agg(x.record_type, x.n), '{}'::jsonb)
+               AS related_counts
+        FROM (
+          SELECT
+            r.related_record_type AS record_type,
+            COUNT(DISTINCT lower(btrim(r.related_caal_id)))::integer AS n
+          FROM ui.mv_resource_related_search r
+          WHERE lower(btrim(r.returned_caal_id)) = lower(btrim(p."CAAL_ID"))
+            AND r.returned_record_type = 'monument'
+          GROUP BY r.related_record_type
+        ) x
+      ) rc ON true
       ORDER BY
-        CASE combined.source_scope
+        CASE p.source_scope
           WHEN 'workspace' THEN 0
           WHEN 'national_ref' THEN 1
           WHEN 'all_caal' THEN 2
           ELSE 3
         END,
-        combined."Tstamp" DESC NULLS LAST,
-        combined.id DESC
-      LIMIT $${finalValues.length + 1} OFFSET $${finalValues.length + 2}
+        p."Tstamp" DESC NULLS LAST,
+        p.id DESC
     `;
 
     const hasFreeTextSearch = hasExpensiveFreeTextSearch(req);

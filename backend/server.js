@@ -17,6 +17,8 @@ const monumentsRoutes = require("./monuments");
 const recordsRoutes = require("./records");
 const resourceSearchRoutes = require("./resourceSearch");
 
+const resourceViewerRoutes = require("./resourceViewerRoutes");
+
 const app = express();
 const PORT = process.env.PORT || 3000;
 const appRoot = path.join(__dirname, "..");
@@ -113,6 +115,7 @@ app.use("/api/archive", archiveRoutes);
 app.use("/api/records", recordsRoutes);
 app.use("/api", resourceSearchRoutes);
 app.use("/api", monumentsRoutes);
+app.use("/api/viewer", resourceViewerRoutes);
 
 // --------------------------------------------------------
 // Static frontend

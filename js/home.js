@@ -62,6 +62,32 @@ function homeTruncateText(value, maxLength = 74) {
   return `${text.slice(0, maxLength).trim()}...`;
 }
 
+function homeResourceTypeIcon(recordOrType) {
+  const recordType =
+    typeof recordOrType === "string"
+      ? recordOrType
+      : recordOrType?.record_type;
+
+  if (typeof caalRecordTypeIconSvg === "function") {
+    return caalRecordTypeIconSvg(recordType);
+  }
+
+  return "";
+}
+
+function homeResourceTypeIconClass(recordOrType) {
+  const recordType =
+    typeof recordOrType === "string"
+      ? recordOrType
+      : recordOrType?.record_type;
+
+  if (typeof caalRecordTypeIconClass === "function") {
+    return caalRecordTypeIconClass(recordType);
+  }
+
+  return "caal-record-type-icon";
+}
+
 function homeResourceTypeLabel(record) {
   const type = String(record?.record_type || "").trim();
 
@@ -257,6 +283,20 @@ function homeFullSearchUrlForType(recordType) {
     return `archive.html?${params.toString()}`;
   }
 
+  if (
+    [
+      "rs3_poly",
+      "rs3_line",
+      "rs3_group",
+      "institution",
+      "vernacular",
+      "dataset"
+    ].includes(recordType)
+  ) {
+    params.set("recordTypes", recordType);
+    return `viewer.html?${params.toString()}`;
+  }
+
   return null;
 }
 
@@ -306,25 +346,34 @@ function homeRenderResultGroup(group) {
 
   return `
     <section class="home-global-result-group">
-      <h4 class="home-global-result-group-heading">
-        <span class="home-global-result-group-title">
-          ${homeSafeText(label)}
-          <span class="home-global-result-group-count">(${totalForGroup})</span>
+      <div class="home-global-result-group-header">
+        <div class="home-global-result-group-main">
+          <span class="${homeResourceTypeIconClass(group.type)} home-global-result-group-icon">
+            ${homeResourceTypeIcon(group.type)}
+          </span>
 
-          ${
-            fullSearchUrl
-              ? `<a
-                  class="home-global-group-more-link"
-                  href="${homeSafeText(fullSearchUrl)}"
-                  target="_blank"
-                  rel="noopener"
-                >
-                  ${t("view_all", "View all")}
-                </a>`
-              : ""
-          }
-        </span>
-      </h4>
+          <span class="home-global-result-group-title-text">
+            ${homeSafeText(label)}
+          </span>
+
+          <span class="home-global-result-group-count">
+            ${totalForGroup}
+          </span>
+        </div>
+
+        ${
+          fullSearchUrl
+            ? `<a
+                class="home-global-group-more-link"
+                href="${homeSafeText(fullSearchUrl)}"
+                target="_blank"
+                rel="noopener"
+              >
+                ${t("view_all", "View all")}
+              </a>`
+            : ""
+        }
+      </div>
 
       <div class="home-global-result-stack">
         ${visible.map((record, index) => homeRenderResultCard(record, index, group.type)).join("")}
@@ -337,23 +386,20 @@ function homeRenderResultCard(record, index, groupType = "") {
   const caalId = String(record?.caal_id || "").trim();
   const title = record?.display_label || caalId;
   const fullUrl = homeResultUrl(record);
-
-  const sourceLabel =
-    record?.dataset_label ||
-    record?.source_table ||
-    record?.source_schema ||
-    "";
-
   const typeLabel = homeResourceTypeLabel(record);
-
-  const showSourceLabel =
-    sourceLabel &&
-    String(sourceLabel).trim().toLowerCase() !== String(typeLabel).trim().toLowerCase() &&
-    String(sourceLabel).trim().toLowerCase() !== String(groupType).trim().toLowerCase();
 
   return `
     <article class="home-global-result-card home-global-result-card-compact">
       <h5>${homeSafeText(title)}</h5>
+
+      <div class="home-global-result-type-row">
+        <span class="${homeResourceTypeIconClass(record)} home-global-result-card-icon">
+          ${homeResourceTypeIcon(record)}
+        </span>
+        <span class="home-global-result-type-label">
+          ${homeSafeText(typeLabel)}
+        </span>
+      </div>
 
       <div class="home-global-result-id-row">
         <span class="home-global-result-id">
@@ -374,12 +420,6 @@ function homeRenderResultCard(record, index, groupType = "") {
             : ""
         }
       </div>
-
-      ${
-        showSourceLabel
-          ? `<div class="home-global-result-source">${homeSafeText(sourceLabel)}</div>`
-          : ""
-      }
 
       ${homeRelatedLine(record)}
 

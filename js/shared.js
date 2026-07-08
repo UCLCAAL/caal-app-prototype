@@ -894,15 +894,40 @@ function buildRecordUrl(pageName, caalId, scope = null) {
 }
 
 function getRelatedRecordUrl(caalId, recordType, sourceScope = null) {
-  if (recordType === "archive") {
-    return buildRecordUrl("archive.html", caalId, sourceScope);
+  const id = String(caalId || "").trim();
+  const type = String(recordType || "").trim();
+
+  if (!id) return null;
+
+  if (type === "monument") {
+    return buildRecordUrl("monuments.html", id);
   }
 
-  if (recordType === "monument") {
-    return buildRecordUrl("monuments.html", caalId, sourceScope);
+  if (type === "archive") {
+    return buildRecordUrl("archive.html", id);
   }
 
-  return null;
+  if (
+    [
+      "rs3_poly",
+      "rs3_line",
+      "rs3_group",
+      "institution",
+      "vernacular",
+      "dataset"
+    ].includes(type)
+  ) {
+    const params = new URLSearchParams();
+    params.set("caal_id", id);
+
+    if (type !== "dataset") {
+      params.set("recordTypes", type);
+    }
+
+    return `viewer.html?${params.toString()}`;
+  }
+
+  return buildRecordUrl("viewer.html", id);
 }
 
 async function loadDirectLinkedRecord(caalId) {
@@ -925,6 +950,67 @@ async function loadDirectLinkedRecord(caalId) {
 
   return data;
 }
+
+function relatedRecordTypeIconHtml(recordType) {
+  const type = String(recordType || "").trim();
+
+  if (
+    typeof caalRecordTypeIconSvg !== "function" ||
+    typeof caalRecordTypeIconClass !== "function"
+  ) {
+    return "";
+  }
+
+  return `
+    <span
+      class="related-id-chip-icon ${caalRecordTypeIconClass(type)}"
+      aria-hidden="true"
+    >
+      ${caalRecordTypeIconSvg(type)}
+    </span>
+  `;
+}
+
+function relatedRecordTypeFromCaalId(caalId) {
+  const id = String(caalId || "").trim();
+
+  if (/^Mon_/i.test(id)) return "monument";
+  if (/^Ar_/i.test(id)) return "archive";
+
+  if (/^RSL_/i.test(id)) return "rs3_line";
+  if (/^RSG_/i.test(id)) return "rs3_group";
+  if (/^RS_/i.test(id)) return "rs3_poly";
+
+  if (/^Act_/i.test(id)) return "institution";
+  if (/^Vern_/i.test(id)) return "vernacular";
+  if (/^Dataset_/i.test(id) || /^Ds_/i.test(id)) return "dataset";
+
+  return "";
+}
+
+function relatedRecordTypeIconHtml(recordType) {
+  const type = String(recordType || "").trim();
+
+  if (
+    !type ||
+    typeof caalRecordTypeIconSvg !== "function" ||
+    typeof caalRecordTypeIconClass !== "function"
+  ) {
+    return "";
+  }
+
+  return `
+    <span
+      class="related-id-chip-icon ${caalRecordTypeIconClass(type)}"
+      aria-hidden="true"
+    >
+      ${caalRecordTypeIconSvg(type)}
+    </span>
+  `;
+}
+
+window.relatedRecordTypeFromCaalId = relatedRecordTypeFromCaalId;
+window.relatedRecordTypeIconHtml = relatedRecordTypeIconHtml;
 
 // Relation display helpers for records returned by /api/records/resolve.
 // These read the normalised record.relations array.
@@ -1239,6 +1325,17 @@ function safeValue(value) {
   return value;
 }
 
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;");
+}
+
+window.escapeHtml = escapeHtml;
+
 function displayLookup(fieldName, rawValue) {
   if (rawValue === null || rawValue === undefined || rawValue === "") {
     return t("not_recorded", "Not recorded");
@@ -1444,6 +1541,196 @@ window.renderTextarea = renderTextarea;
 window.renderNumberInput = renderNumberInput;
 window.renderReadOnlyItem = renderReadOnlyItem;
 window.renderSelectInput = renderSelectInput;
+
+// --------------------------------------------------------
+// Shared SVG icons
+// --------------------------------------------------------
+function svgEyeIcon() {
+  return `
+    <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18">
+      <path
+        d="M12 5c5 0 8.5 4.2 9.7 6.1a1.7 1.7 0 0 1 0 1.8C20.5 14.8 17 19 12 19s-8.5-4.2-9.7-6.1a1.7 1.7 0 0 1 0-1.8C3.5 9.2 7 5 12 5Zm0 2C8.1 7 5.2 10.1 4.1 12c1.1 1.9 4 5 7.9 5s6.8-3.1 7.9-5C18.8 10.1 15.9 7 12 7Zm0 2.2A2.8 2.8 0 1 1 12 14.8 2.8 2.8 0 0 1 12 9.2Zm0 2A.8.8 0 1 0 12 12.8.8.8 0 0 0 12 11.2Z"
+        fill="currentColor"
+      />
+    </svg>
+  `;
+}
+
+function svgTargetIcon() {
+  return `
+    <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18">
+      <path
+        d="M11 3a1 1 0 0 1 2 0v1.1A8 8 0 0 1 19.9 11H21a1 1 0 1 1 0 2h-1.1A8 8 0 0 1 13 19.9V21a1 1 0 1 1-2 0v-1.1A8 8 0 0 1 4.1 13H3a1 1 0 1 1 0-2h1.1A8 8 0 0 1 11 4.1V3Zm1 3a6 6 0 1 0 0 12 6 6 0 0 0 0-12Zm0 3.2A2.8 2.8 0 1 1 12 14.8 2.8 2.8 0 0 1 12 9.2Z"
+        fill="currentColor"
+      />
+    </svg>
+  `;
+}
+
+function svgCloseIcon() {
+  return `
+    <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18">
+      <path
+        d="M6.3 5.3a1 1 0 0 1 1.4 0L12 9.6l4.3-4.3a1 1 0 1 1 1.4 1.4L13.4 11l4.3 4.3a1 1 0 0 1-1.4 1.4L12 12.4l-4.3 4.3a1 1 0 0 1-1.4-1.4L10.6 11 6.3 6.7a1 1 0 0 1 0-1.4Z"
+        fill="currentColor"
+      />
+    </svg>
+  `;
+}
+
+function svgMapOptionsIcon() {
+  return `
+    <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18">
+      <path
+        d="M4 7h10a2 2 0 1 0 0-2H4a1 1 0 0 0 0 2Zm16 0h-2a1 1 0 1 0 0 2h2a1 1 0 1 0 0-2ZM4 13h2a2 2 0 1 0 0-2H4a1 1 0 1 0 0 2Zm8 0h8a1 1 0 1 0 0-2h-8a1 1 0 1 0 0 2ZM4 19h10a2 2 0 1 0 0-2H4a1 1 0 1 0 0 2Zm16 0h-2a1 1 0 1 0 0 2h2a1 1 0 1 0 0-2Z"
+        fill="currentColor"
+      />
+    </svg>
+  `;
+}
+
+function svgCopyIcon() {
+  return `
+    <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18">
+      <path
+        d="M8 7.5A2.5 2.5 0 0 1 10.5 5h7A2.5 2.5 0 0 1 20 7.5v7a2.5 2.5 0 0 1-2.5 2.5h-7A2.5 2.5 0 0 1 8 14.5v-7Zm2.5-.5a.5.5 0 0 0-.5.5v7a.5.5 0 0 0 .5.5h7a.5.5 0 0 0 .5-.5v-7a.5.5 0 0 0-.5-.5h-7ZM4 10.5A2.5 2.5 0 0 1 6.5 8H7v2h-.5a.5.5 0 0 0-.5.5v7a.5.5 0 0 0 .5.5h7a.5.5 0 0 0 .5-.5V17h2v.5A2.5 2.5 0 0 1 13.5 20h-7A2.5 2.5 0 0 1 4 17.5v-7Z"
+        fill="currentColor"
+      />
+    </svg>
+  `;
+}
+
+function caalRecordTypeIconSvg(recordType) {
+  switch (String(recordType || "").trim()) {
+    case "monument":
+      return `
+        <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18">
+          <path
+            d="M4 18.5h16"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linecap="round"
+          />
+          <path
+            d="M6.2 18.2V15.8l2.4-1.7 2.4 1.7v2.4"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linejoin="round"
+          />
+          <path
+            d="M13 18.2v-4l2.6-1.8 2.2 1.6v4.2"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linejoin="round"
+          />
+          <path
+            d="M8.6 14.1v-2.4l2.5-1.8 2.5 1.8v2.2"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linejoin="round"
+          />
+          <path
+            d="M10.5 7.8 12 5.8l1.5 2"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+        </svg>
+      `;
+
+    case "archive":
+      return `
+        <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18">
+          <rect
+            x="4"
+            y="6"
+            width="16"
+            height="4"
+            rx="1.2"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+          />
+          <path
+            d="M6 10.2h12v7.3a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 6 17.5Z"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+          />
+          <path
+            d="M10 13.2h4"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.8"
+            stroke-linecap="round"
+          />
+        </svg>
+      `;
+
+    case "institution":
+      return `
+        <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18">
+          <path d="M3.5 9 12 4l8.5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+          <path d="M5 10.5h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          <path d="M6.5 10.5v7M10 10.5v7M14 10.5v7M17.5 10.5v7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          <path d="M4 18.5h16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+        </svg>
+      `;
+
+    case "vernacular":
+      return `
+        <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18">
+          <path d="M5 10.8 12 5l7 5.8v7.2a1 1 0 0 1-1 1h-4.2v-5h-3.6v5H6a1 1 0 0 1-1-1Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+        </svg>
+      `;
+
+    case "rs3_poly":
+      return `
+        <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18">
+          <path d="M8 3.8 17.2 7v10l-9.2 4.2L3.5 15.8V7.8Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"/>
+        </svg>
+      `;
+
+    case "rs3_line":
+      return `
+        <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18">
+          <path d="M4 16c2.4-5.3 4.8-7.7 7-7.7 2 0 2.9 2.4 4.7 2.4 1.5 0 2.9-1.4 4.3-3.7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+        </svg>
+      `;
+
+    case "rs3_group":
+      return `
+        <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18">
+          <rect x="3.5" y="4.5" width="6.5" height="6.5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.8"/>
+          <rect x="14" y="4.5" width="6.5" height="6.5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.8"/>
+          <rect x="8.8" y="13" width="6.5" height="6.5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.8"/>
+        </svg>
+      `;
+
+    default:
+      return `
+        <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18">
+          <circle cx="12" cy="12" r="7" fill="none" stroke="currentColor" stroke-width="1.8"/>
+        </svg>
+      `;
+  }
+}
+
+function caalRecordTypeIconClass(recordType) {
+  return `caal-record-type-icon caal-record-type-icon-${String(recordType || "").trim()}`;
+}
+
+window.svgEyeIcon = svgEyeIcon;
+window.svgTargetIcon = svgTargetIcon;
+window.svgCloseIcon = svgCloseIcon;
+window.svgMapOptionsIcon = svgMapOptionsIcon;
+window.svgCopyIcon = svgCopyIcon;
 
 // --------------------------------------------------------
 // Shared language application

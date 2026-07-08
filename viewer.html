@@ -1,0 +1,723 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title data-i18n="viewer_page_title">CAAL Workspace - Resource Viewer</title>
+
+  <link
+    rel="stylesheet"
+    href="https://unpkg.com/maplibre-gl/dist/maplibre-gl.css"
+  />
+
+  <link rel="stylesheet" href="style.css" />
+</head>
+
+<body data-page="viewer">
+  <!-- =========================================
+       GLOBAL APP HEADER
+       ========================================= -->
+  <header class="app-header">
+    <div class="app-brand">
+      <img
+        src="assets/logo_plain.png"
+        alt="CAAL project logo"
+        class="app-brand-logo"
+      />
+      <div class="app-brand-text">
+        <h1 data-workspace-title>CAAL Workspace</h1>
+        <p
+          data-workspace-subtitle
+          data-i18n="viewer_workspace_subtitle"
+        >
+          Resource viewer
+        </p>
+      </div>
+    </div>
+
+    <nav class="main-nav" aria-label="Main navigation">
+      <a href="home.html" class="nav-link" data-i18n="nav_home">Home</a>
+      <a href="monuments.html" class="nav-link" data-i18n="nav_monuments">Monuments</a>
+      <a href="archive.html" class="nav-link" data-i18n="nav_archive">Archive</a>
+      <a href="viewer.html" class="nav-link nav-link-active" data-i18n="nav_viewer">Viewer</a>
+    </nav>
+
+    <div class="header-tools">
+      <div class="signed-in-user-pill" id="signedInUserPill" hidden>
+        <span class="signed-in-label" data-i18n="signed_in_as">Signed in as</span>
+        <strong id="signedInUserName"></strong>
+        <span id="signedInUserWorkspace" class="signed-in-workspace"></span>
+      </div>
+
+      <button
+        type="button"
+        class="action-btn js-logout-btn"
+        data-i18n="logout_button"
+      >
+        Log out
+      </button>
+
+      <div class="lang-switcher">
+        <label for="languageSelect" data-i18n="language_label">Language</label>
+        <select id="languageSelect">
+          <option value="en">English</option>
+          <option value="ru">Русский</option>
+          <option value="zh">中文</option>
+          <option value="kk">Қазақша</option>
+          <option value="ky">Кыргызча</option>
+          <option value="tg">Тоҷикӣ</option>
+          <option value="tk">Türkmençe</option>
+          <option value="uz">O'zbekcha</option>
+        </select>
+      </div>
+    </div>
+
+    <script>
+      (function () {
+        const lang =
+          localStorage.getItem("caal_ui_language_bootstrap") ||
+          localStorage.getItem("caal_ui_language") ||
+          "en";
+
+        const fallbackLang = ["kk", "ky", "tg", "tk", "uz"].includes(lang)
+          ? "ru"
+          : "en";
+
+        const shell = {
+          en: {
+            app_title: "CAAL Workspace",
+            nav_home: "Home",
+            nav_monuments: "Monuments",
+            nav_archive: "Archive",
+            nav_viewer: "Viewer",
+            logout_button: "Log out",
+            language_label: "Language",
+            viewer_workspace_subtitle: "Resource viewer"
+          },
+          ru: {
+            app_title: "Рабочее пространство CAAL",
+            nav_home: "Главная",
+            nav_monuments: "Памятники",
+            nav_archive: "Архив",
+            nav_viewer: "Просмотр",
+            logout_button: "Выйти",
+            language_label: "Язык",
+            viewer_workspace_subtitle: "Просмотр ресурсов"
+          },
+          zh: {
+            app_title: "CAAL工作区",
+            nav_home: "首页",
+            nav_monuments: "遗址",
+            nav_archive: "档案",
+            nav_viewer: "查看器",
+            logout_button: "退出登录",
+            language_label: "语言",
+            viewer_workspace_subtitle: "资源查看器"
+          }
+        };
+
+        function shellText(key, fallback) {
+          return (
+            shell[lang]?.[key] ||
+            shell[fallbackLang]?.[key] ||
+            shell.en?.[key] ||
+            fallback ||
+            key
+          );
+        }
+
+        document.documentElement.lang = lang;
+
+        document.querySelectorAll("[data-i18n]").forEach((el) => {
+          const key = el.dataset.i18n;
+          el.textContent = shellText(key, el.textContent);
+        });
+      })();
+    </script>
+  </header>
+
+  <!-- =========================================
+       RESOURCE VIEWER WORKSPACE
+       ========================================= -->
+  <main class="workspace-shell monuments-workspace viewer-workspace">
+
+    <!-- =====================================
+         LEFT PANE: BROWSE / SEARCH / RESULTS
+         ===================================== -->
+    <aside class="workspace-pane browse-pane">
+      <div class="pane-header pane-header-inline">
+        <div>
+          <h2 data-i18n="viewer_browse">Browse</h2>
+          <p data-i18n="viewer_browse_intro">
+            Search and consult resource records
+          </p>
+        </div>
+      </div>
+
+      <div class="pane-body">
+        <div id="viewerLoadingIndicator" class="loading-indicator" hidden>
+          <span class="spinner"></span>
+        </div>
+
+        <div id="viewerStatusLine" class="cache-status-line" hidden></div>
+
+        <div class="search-box search-box-stacked">
+          <label for="siteSearch" 8ndata-i1="monuments_search">Search</label>
+          <input
+            type="text"
+            id="viewerSearch"
+            placeholder="Search names, CAAL IDs, interpretations..."
+            data-i18n-placeholder="viewer_search_placeholder"
+          />
+        </div>
+
+        <div class="browse-controls">
+          <label class="browse-checkbox">
+            <input type="checkbox" id="showViewerWorkspaceRecords" checked />
+            <span data-i18n="monuments_workspace_records">My workspace records</span>
+          </label>
+
+          <label class="browse-checkbox">
+            <input type="checkbox" id="showViewerNationalRecords" checked />
+            <span data-i18n="monuments_national_records">National CAAL records</span>
+          </label>
+
+          <label class="browse-checkbox" id="viewerAllCaalToggleWrapper" hidden>
+            <input type="checkbox" id="showViewerAllCaalRecords" />
+            <span data-i18n="monuments_other_records">Other CAAL records</span>
+          </label>
+        </div>
+
+         <div class="results-panel viewer-layer-panel">
+          <div class="results-panel-header">
+            <h3 data-i18n="viewer_layers">Layers</h3>
+          </div>
+
+          <div class="viewer-layer-grid">
+            <div class="viewer-layer-column">
+              <div class="viewer-layer-subgroup-title" data-i18n="viewer_remote_sensing">
+                Remote sensing
+              </div>
+
+              <label class="browse-checkbox viewer-layer-check">
+                <input type="checkbox" id="viewerLayerRs3Poly" checked>
+                <span class="viewer-layer-icon-slot" data-viewer-layer-icon="rs3_poly"></span>
+                <span data-i18n="viewer_layer_rs3_poly_short">Polygons</span>
+              </label>
+
+              <label class="browse-checkbox viewer-layer-check">
+                <input type="checkbox" id="viewerLayerRs3Line" checked>
+                <span class="viewer-layer-icon-slot" data-viewer-layer-icon="rs3_line"></span>
+                <span data-i18n="viewer_layer_rs3_line_short">Lines</span>
+              </label>
+
+              <label class="browse-checkbox viewer-layer-check">
+                <input type="checkbox" id="viewerLayerRs3Group">
+                <span class="viewer-layer-icon-slot" data-viewer-layer-icon="rs3_group"></span>
+                <span data-i18n="viewer_layer_rs3_group_short">Groups</span>
+              </label>
+            </div>
+
+            <div class="viewer-layer-column">
+              <div class="viewer-layer-subgroup-title" data-i18n="viewer_other_resources">
+                Other resources
+              </div>
+
+              <label class="browse-checkbox viewer-layer-check">
+                <input type="checkbox" id="viewerLayerInstitution">
+                <span class="viewer-layer-icon-slot" data-viewer-layer-icon="institution"></span>
+                <span data-i18n="viewer_layer_institution">Institutions</span>
+              </label>
+
+              <label class="browse-checkbox viewer-layer-check">
+                <input type="checkbox" id="viewerLayerVernacular">
+                <span class="viewer-layer-icon-slot" data-viewer-layer-icon="vernacular"></span>
+                <span data-i18n="viewer_layer_vernacular">Vernacular</span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div class="active-filter-strip" id="viewerActiveFilterStrip" hidden>
+          <div class="active-filter-chips" id="viewerActiveFilterChips"></div>
+        </div>
+
+        <div class="filter-action-row">
+          <button
+            type="button"
+            class="action-btn filters-toggle"
+            id="toggleViewerFiltersBtn"
+            data-i18n="advanced_filters"
+          >
+            Advanced filters
+          </button>
+
+          <button
+            type="button"
+            class="action-btn clear-filters-btn"
+            id="clearViewerFiltersBtn"
+            data-i18n="clear_filters"
+          >
+            Clear filters
+          </button>
+        </div>
+
+        <div class="filter-live-results-summary">
+          <div class="filter-live-results-text">
+            <span data-i18n="current_results">Current results:</span>
+            <strong id="filterResultsCount" data-i18n="loading_records_count">Loading...</strong>
+          </div>
+
+          <button
+            type="button"
+            class="icon-action-btn results-map-icon-btn"
+            id="showViewerResultsOnMapBtn"
+            title="Show current results on map"
+            aria-label="Show current results on map"
+            data-i18n-title="show_results_on_map"
+            data-i18n-aria-label="show_results_on_map"
+          >
+            <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16">
+              <path
+                d="M12 2a1 1 0 0 1 1 1v1.1a8 8 0 0 1 6.9 6.9H21a1 1 0 1 1 0 2h-1.1a8 8 0 0 1-6.9 6.9V21a1 1 0 1 1-2 0v-1.1A8 8 0 0 1 4.1 13H3a1 1 0 1 1 0-2h1.1A8 8 0 0 1 11 4.1V3a1 1 0 0 1 1-1Zm0 4a6 6 0 1 0 0 12 6 6 0 0 0 0-12Zm0 3.2a2.8 2.8 0 1 1 0 5.6 2.8 2.8 0 0 1 0-5.6Z"
+                fill="currentColor"
+              />
+            </svg>
+          </button>
+        </div>
+
+        <div class="filters-panel" id="viewerFiltersPanel" hidden>
+          <div class="filters-grid">
+
+            <div class="filter-group">
+              <label for="viewerFilterCaalId">CAAL_ID</label>
+              <input
+                type="text"
+                id="viewerFilterCaalId"
+                class="filter-input caal-id-filter-input"
+                placeholder="Search CAAL_ID"
+                data-i18n-placeholder="search_caal_id"
+              />
+            </div>
+
+            <div class="filter-group chip-multiselect-group">
+              <label for="viewerFilterCountry" data-i18n="country">Country</label>
+              <div class="selected-filter-chips" id="viewerFilterCountryChips"></div>
+              <select
+                id="viewerFilterCountry"
+                class="form-control chip-multiselect"
+                multiple
+              ></select>
+              <p class="filter-help" data-i18n="filter_click_toggle_help">
+                Click values to select or deselect. Selected values appear above.
+              </p>
+            </div>
+
+            <div class="filter-group chip-multiselect-group">
+              <label for="viewerFilterMonumentType" data-i18n="monument_type">Monument Type</label>
+              <div class="selected-filter-chips" id="viewerFilterMonumentTypeChips"></div>
+
+              <select
+                id="viewerFilterMonumentType"
+                class="form-control chip-multiselect advanced-filter-hidden-select"
+                multiple
+              ></select>
+
+              <div id="viewerFilterMonumentTypeTree"></div>
+
+              <p class="filter-help" data-i18n="filter_click_toggle_help">
+                Click values to select or deselect. Selected values appear above.
+              </p>
+            </div>
+
+            <div class="advanced-filter-section">
+              <h4 data-i18n="viewer_remote_sensing_assessments">Remote sensing assessments</h4>
+              <p class="filter-help-text" data-i18n="viewer_rs_assessments_help">
+                Applies to RS3 polygon and line records.
+              </p>
+
+              <div class="filter-group chip-multiselect-group">
+                <label for="viewerFilterCondition" data-i18n="overall_condition">
+                  Overall condition
+                </label>
+                <div class="selected-filter-chips" id="viewerFilterConditionChips"></div>
+                <select
+                  id="viewerFilterCondition"
+                  class="form-control chip-multiselect"
+                  multiple
+                >
+                  <option value="1" data-i18n="condition_1_excellent">1 - Excellent</option>
+                  <option value="2" data-i18n="condition_2_good">2 - Good</option>
+                  <option value="3" data-i18n="condition_3_poor">3 - Poor</option>
+                  <option value="4" data-i18n="condition_4_very_poor">4 - Very poor</option>
+                  <option value="5" data-i18n="condition_5_destroyed">5 - Destroyed</option>
+                </select>
+                <p class="filter-help" data-i18n="filter_click_toggle_help">
+                  Click values to select or deselect. Selected values appear above.
+                </p>
+              </div>
+
+              <div class="filter-group chip-multiselect-group">
+                <label for="viewerFilterDeteriorationCause" data-i18n="causes_of_deterioration">
+                  Causes of deterioration
+                </label>
+                <div class="selected-filter-chips" id="viewerFilterDeteriorationCauseChips"></div>
+                <select
+                  id="viewerFilterDeteriorationCause"
+                  class="form-control chip-multiselect"
+                  multiple
+                >
+                  <option value="Urban Encroachment" data-i18n="deterioration_urban_encroachment">Urban Encroachment</option>
+                  <option value="Quarrying" data-i18n="deterioration_quarrying">Quarrying</option>
+                  <option value="Construction" data-i18n="deterioration_construction">Construction</option>
+                  <option value="Agriculture" data-i18n="deterioration_agriculture">Agriculture</option>
+                  <option value="Looting" data-i18n="deterioration_looting">Looting</option>
+                  <option value="Fire" data-i18n="deterioration_fire">Fire</option>
+                  <option value="Dumping" data-i18n="deterioration_dumping">Dumping</option>
+                  <option value="Riverine Erosion" data-i18n="deterioration_riverine_erosion">Riverine Erosion</option>
+                  <option value="Soil Erosion" data-i18n="deterioration_soil_erosion">Soil Erosion</option>
+                  <option value="Transport Infrastructure" data-i18n="deterioration_transport_infrastructure">Transport Infrastructure</option>
+                  <option value="Cemetery" data-i18n="deterioration_cemetery">Cemetery</option>
+                </select>
+                <p class="filter-help" data-i18n="filter_click_toggle_help">
+                  Click values to select or deselect. Selected values appear above.
+                </p>
+              </div>
+
+              <div class="filter-group chip-multiselect-group">
+                <label for="viewerFilterRiskType" data-i18n="type_of_risk">
+                  Type of risk
+                </label>
+                <div class="selected-filter-chips" id="viewerFilterRiskTypeChips"></div>
+                <select
+                  id="viewerFilterRiskType"
+                  class="form-control chip-multiselect"
+                  multiple
+                >
+                  <option value="Risk of urban encroachment" data-i18n="risk_urban_encroachment">Urban encroachment</option>
+                  <option value="Risk of quarrying" data-i18n="risk_quarrying">Quarrying</option>
+                  <option value="Risk of construction" data-i18n="risk_construction">Construction</option>
+                  <option value="Risk of agriculture" data-i18n="risk_agriculture">Agriculture</option>
+                  <option value="Risk of looting" data-i18n="risk_looting">Looting</option>
+                  <option value="Risk of fire" data-i18n="risk_fire">Fire</option>
+                  <option value="Risk of dumping" data-i18n="risk_dumping">Dumping</option>
+                  <option value="Risk of riverine erosion" data-i18n="risk_riverine_erosion">Riverine erosion</option>
+                  <option value="Risk of soil erosion" data-i18n="risk_soil_erosion">Soil erosion</option>
+                  <option value="Risk of transport infrastructure" data-i18n="risk_transport_infrastructure">Transport infrastructure</option>
+                  <option value="Risk of cemetery" data-i18n="risk_cemetery">Cemetery</option>
+                </select>
+                <p class="filter-help" data-i18n="filter_click_toggle_help">
+                  Click values to select or deselect. Selected values appear above.
+                </p>
+              </div>
+
+              <div class="filter-group">
+                <label for="viewerFilterRiskMin" data-i18n="minimum_risk_level">
+                  Minimum risk level
+                </label>
+                <select id="viewerFilterRiskMin" class="form-control">
+                  <option value="" data-i18n="any_level">Any level</option>
+                  <option value="2" data-i18n="risk_level_2_or_higher">2 - Low or higher</option>
+                  <option value="3" data-i18n="risk_level_3_or_higher">3 - Moderate or higher</option>
+                  <option value="4" data-i18n="risk_level_4_or_higher">4 - High or higher</option>
+                  <option value="5" data-i18n="risk_level_5_only">5 - Very high only</option>
+                </select>
+              </div>
+            </div>
+
+          </div>
+        </div>
+
+        <div class="results-panel">
+          <div class="results-panel-header">
+            <h3 data-i18n="results">Results</h3>
+          </div>
+
+          <div class="viewer-global-pagination" hidden>
+            <button
+              id="viewerPrevBtn"
+              class="action-btn"
+              data-i18n="previous"
+            >
+              Previous
+            </button>
+
+            <span id="viewerPageInfo">Page 1 of 1</span>
+
+            <button
+              id="viewerNextBtn"
+              class="action-btn"
+              data-i18n="next"
+            >
+              Next
+            </button>
+          </div>
+
+          <div id="viewerResultsList" class="results-list">
+            <div class="results-empty">
+              <p data-i18n="results_will_appear">Results will appear here.</p>
+            </div>
+          </div>
+        </div>
+      </div>
+    </aside>
+
+    <!-- =====================================
+         CENTRE PANE: MAP
+         ===================================== -->
+    <section class="workspace-pane map-pane">
+      <div class="pane-header pane-header-inline">
+        <div>
+          <h2 data-i18n="map">Map</h2>
+          <p data-i18n="viewer_map_prompt">Click a resource on the map</p>
+        </div>
+      </div>
+
+      <div class="map-pane-body">
+        <div id="map"></div>
+
+        <div class="map-options-panel" id="mapOptionsPanel" hidden>
+          <div class="map-options-header">
+            <strong data-i18n="map_options">Map options</strong>
+            <button
+              type="button"
+              class="icon-btn"
+              id="closeMapOptionsBtn"
+              aria-label="Close map options"
+              data-i18n-aria-label="close_map_options"
+            >
+              ×
+            </button>
+          </div>
+
+          <div class="map-options-section">
+            <label for="basemapSelect" data-i18n="basemap">Basemap</label>
+            <select id="basemapSelect" class="form-control">
+              <option value="maptiler-hybrid" data-i18n="basemap_satellite_with_roads">
+                Satellite with roads
+              </option>
+              <option value="maptiler-streets" data-i18n="basemap_street_map">
+                Street map
+              </option>
+              <option value="maptiler-satellite" data-i18n="basemap_satellite_only">
+                Satellite only
+              </option>
+              <option value="maptiler-topo" data-i18n="basemap_topographic_map">
+                Topographic map
+              </option>
+              <option value="osm" data-i18n="basemap_openstreetmap">
+                OpenStreetMap
+              </option>
+            </select>
+          </div>
+
+          <div class="map-options-section">
+            <div class="map-options-section-title" data-i18n="viewer_layers">
+              Display Layers
+            </div>
+
+            <label class="map-options-check viewer-map-layer-check">
+              <input type="checkbox" id="viewerMapLayerRs3Poly" value="rs3_poly" checked />
+              <span
+                class="viewer-layer-icon-slot"
+                data-viewer-layer-icon="rs3_poly"
+                aria-hidden="true"
+              ></span>
+              <span data-i18n="viewer_layer_rs3_poly">Polygons</span>
+            </label>
+
+            <label class="map-options-check viewer-map-layer-check">
+              <input type="checkbox" id="viewerMapLayerRs3Line" value="rs3_line" checked />
+              <span
+                class="viewer-layer-icon-slot"
+                data-viewer-layer-icon="rs3_line"
+                aria-hidden="true"
+              ></span>
+              <span data-i18n="viewer_layer_rs3_line">Lines</span>
+            </label>
+
+            <label class="map-options-check viewer-map-layer-check">
+              <input type="checkbox" id="viewerMapLayerRs3Group" value="rs3_group" checked />
+              <span
+                class="viewer-layer-icon-slot"
+                data-viewer-layer-icon="rs3_group"
+                aria-hidden="true"
+              ></span>
+              <span data-i18n="viewer_layer_rs3_group">Groups</span>
+            </label>
+
+            <label class="map-options-check viewer-map-layer-check">
+              <input type="checkbox" id="viewerMapLayerInstitution" value="institution" checked />
+              <span
+                class="viewer-layer-icon-slot"
+                data-viewer-layer-icon="institution"
+                aria-hidden="true"
+              ></span>
+              <span data-i18n="viewer_layer_institution">Institutions</span>
+            </label>
+
+            <label class="map-options-check viewer-map-layer-check">
+              <input type="checkbox" id="viewerMapLayerVernacular" value="vernacular" checked />
+              <span
+                class="viewer-layer-icon-slot"
+                data-viewer-layer-icon="vernacular"
+                aria-hidden="true"
+              ></span>
+              <span data-i18n="viewer_layer_vernacular">Vernacular</span>
+            </label>
+          </div>
+
+          <div class="map-options-section">
+            <div class="map-options-section-title" data-i18n="context_layers">
+              Context layers
+            </div>
+
+            <label class="browse-checkbox">
+              <input type="checkbox" id="viewerMapLayerSurveyGrid" value="survey_grid" />
+              <span data-i18n="viewer_layer_survey_grid">Survey grid</span>
+            </label>
+
+            <div id="surveyGridOptions" class="map-option-nested" hidden>
+              <label class="field-label" for="surveyGridStyleMode" data-i18n="viewer_survey_grid_style">
+                Survey grid style
+              </label>
+
+              <select id="surveyGridStyleMode" class="form-control">
+                <option value="neutral" data-i18n="viewer_survey_grid_style_neutral">Neutral overlay</option>
+                <option value="status" data-i18n="viewer_survey_grid_style_status">Colour by survey status</option>
+                <option value="checked" data-i18n="viewer_survey_grid_style_checked">Colour by checked status</option>
+              </select>
+            </div>
+
+            <label class="map-options-check">
+              <input type="checkbox" id="showCentralAsiaBordersCheckbox" />
+              <span data-i18n="administrative_boundaries">Administrative boundaries</span>
+            </label>
+
+            <div class="map-options-subsection" id="borderStyleOptions" hidden>
+              <p class="map-options-help" id="adminBoundariesHelp">
+                Click a region to filter results or view a regional summary.
+              </p>
+
+              <label for="borderStyleSelect" data-i18n="border_style">
+                Border style
+              </label>
+              <select id="borderStyleSelect" class="form-control">
+                <option value="subtle" data-i18n="subtle">Subtle</option>
+                <option value="dark" data-i18n="dark">Dark</option>
+                <option value="filled" data-i18n="filled">Filled</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="map-options-section">
+            <div class="map-options-section-title" data-i18n="labels">Labels</div>
+
+            <label class="map-options-check">
+              <input type="checkbox" id="showMapLabelsCheckbox" />
+              <span data-i18n="show_labels">Show labels</span>
+            </label>
+
+            <div class="map-options-subsection" id="mapLabelsOptions" hidden>
+              <label for="mapLabelScopeSelect" data-i18n="label_records">
+                Label records
+              </label>
+
+              <select id="mapLabelScopeSelect" class="form-control">
+                <option value="results" data-i18n="records_shown_on_map">
+                  Records shown on map
+                </option>
+                <option value="selected" data-i18n="selected_record">
+                  Selected record
+                </option>
+              </select>
+
+              <p class="map-options-help" id="mapLabelScopeHelp">
+                Labels apply to records currently drawn on the map.
+              </p>
+
+              <p class="map-label-warning" id="mapLabelWarning" hidden>
+                Too many records to label clearly. Zoom in for labels.
+              </p>
+
+              <label for="mapLabelModeSelect" data-i18n="label_content">
+                Label content
+              </label>
+
+              <select id="mapLabelModeSelect" class="form-control">
+                <option value="name" selected data-i18n="name">Name</option>
+                <option value="caal_id" data-i18n="caal_id">CAAL_ID</option>
+                <option value="name_caal_id" data-i18n="name_plus_caal_id">
+                  Name + CAAL_ID
+                </option>
+              </select>
+            </div>
+          </div>
+
+          <div class="map-options-section">
+            <div class="map-options-section-title" data-i18n="search_area">
+              Search area
+            </div>
+
+            <button
+              type="button"
+              class="action-btn map-options-secondary-btn"
+              id="filterToMapViewBtn"
+              data-i18n="filter_to_map_view"
+            >
+              Filter results to map view
+            </button>
+
+            <p class="map-options-help" data-i18n="filter_to_map_view_help">
+              Restrict the results list to records inside the current map view.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div class="map-underbar">
+        <div class="map-status-line" id="mapStatusLine" data-i18n="map_loading">
+          Map loading...
+        </div>
+        <div class="map-interpretive-note" data-i18n="viewer_map_records_match_filters">
+          Map shows resource records matching the selected filters.
+        </div>
+      </div>
+    </section>
+
+    <!-- =====================================
+         RIGHT PANE: ACTIVE RECORD
+         ===================================== -->
+    <aside class="workspace-pane detail-pane" id="viewerDetailPane">
+      <div class="pane-header">
+        <h2 data-i18n="record_details">Record Details</h2>
+
+        <div class="detail-action-bar" id="viewerActionBar">
+          <button
+            type="button"
+            class="action-btn"
+            id="viewerCloseRecordBtn"
+            hidden
+            data-i18n="close_record"
+          >
+            Close record
+          </button>
+        </div>
+      </div>
+
+      <div class="pane-body" id="viewerRecordDetails">
+        <div class="empty-state">
+          <p data-i18n="no_record_selected">No record selected yet.</p>
+        </div>
+      </div>
+    </aside>
+
+  </main>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="https://unpkg.com/maplibre-gl/dist/maplibre-gl.js"></script>
+  <script src="js/shared.js"></script>
+  <script src="js/viewer.js"></script>
+</body>
+</html>

@@ -183,6 +183,12 @@ let archiveResourceSearchAbortController = null;
 let archiveResourceSearchRecords = [];
 let archiveResourceSearchPanel = null;
 
+const ARCHIVE_RELATED_PAGE_LIMIT = 100;
+
+let archiveResultsGroupCollapsed = false;
+let archiveRelatedResultsGroupCollapsed = true;
+let archiveRelatedResultsOffset = 0;
+
 let archiveActiveLanguage = null;
 
 function archiveCurrentLanguageCode(eventOrOverride = null) {
@@ -764,6 +770,30 @@ function archiveRenderCaalIdChipInput(fieldName, label, value, fullWidth = true)
   `;
 }
 
+function archiveSetRelatedChipIcon(chip, recordType) {
+  if (!chip || !recordType) return;
+
+  let icon = chip.querySelector(".related-id-chip-icon");
+  const text = chip.querySelector(".related-id-chip-text");
+
+  if (!text) return;
+
+  if (!icon) {
+    icon = document.createElement("span");
+    icon.className = "related-id-chip-icon";
+    icon.setAttribute("aria-hidden", "true");
+    text.insertAdjacentElement("beforebegin", icon);
+  }
+
+  if (typeof caalRecordTypeIconClass === "function") {
+    icon.className = `related-id-chip-icon ${caalRecordTypeIconClass(recordType)}`;
+  }
+
+  if (typeof caalRecordTypeIconSvg === "function") {
+    icon.innerHTML = caalRecordTypeIconSvg(recordType);
+  }
+}
+
 function archiveRenderEditableCaalIdChip(id, status = "pending") {
   const safeId = String(id || "").trim();
   if (!safeId) return "";
@@ -775,6 +805,7 @@ function archiveRenderEditableCaalIdChip(id, status = "pending") {
       title="${t("checking_related_id", "Checking related ID")}"
     >
       <span class="related-id-chip-spinner" aria-hidden="true"></span>
+      ${relatedRecordTypeIconHtml(relatedRecordTypeFromCaalId(safeId))}
       <span class="related-id-chip-text">${safeId}</span>
       <button
         type="button"
@@ -841,6 +872,12 @@ function archiveSetEditableChipStatus(chip, status, metadata = {}) {
     chip.title = metadata.record_type
       ? `${t("related_id_found", "Related ID found")} (${metadata.record_type})`
       : t("related_id_found", "Related ID found");
+
+    archiveSetRelatedChipIcon(
+      chip,
+      metadata.record_type || relatedRecordTypeFromCaalId(chip.dataset.caalId)
+    );
+
     return;
   }
 
@@ -2040,33 +2077,15 @@ function archiveRenderResourceSearchSection(title, records, renderCard) {
 function archiveRenderResourceSearchResults(records) {
   const panel = archiveEnsureResourceSearchPanel();
 
-  if (!panel) return;
-
-  const groups = archiveGroupResourceSearchRecords(records);
-
-  if (!groups.nativeRelated.length && !groups.otherPreview.length) {
+  if (panel) {
     panel.hidden = true;
     panel.innerHTML = "";
-    return;
   }
 
-  panel.hidden = false;
+  archiveResourceSearchRecords = Array.isArray(records) ? records : [];
+  archiveRelatedResultsOffset = 0;
 
-  panel.innerHTML = `
-    ${archiveRenderResourceSearchSection(
-      t("related_records", "Related records"),
-      groups.nativeRelated,
-      archiveRenderNativeRelatedResourceCard
-    )}
-
-    ${archiveRenderResourceSearchSection(
-      t("other_caal_records", "Other CAAL records"),
-      groups.otherPreview,
-      archiveRenderPreviewOnlyResourceCard
-    )}
-  `;
-
-  archiveWireResourceSearchCards();
+  renderArchiveResultsList(archiveVisibleRecords || archiveAllRecords || []);
 }
 
 async function archiveOpenResourceSearchArchiveRecord(record) {
@@ -2177,54 +2196,57 @@ async function archivePreviewResourceSearchRecord(record) {
 }
 
 function archiveWireResourceSearchCards() {
-  const panel = archiveEnsureResourceSearchPanel();
+  const roots = [
+    archiveResultsList,
+    archiveResourceSearchPanel
+  ].filter(Boolean);
 
-  if (!panel) return;
+  roots.forEach((root) => {
+    root.querySelectorAll(".archive-resource-preview-btn").forEach((btn) => {
+      if (btn.dataset.resourcePreviewWired === "true") return;
 
-  panel.querySelectorAll(".archive-resource-preview-btn").forEach((btn) => {
-    if (btn.dataset.resourcePreviewWired === "true") return;
+      btn.dataset.resourcePreviewWired = "true";
 
-    btn.dataset.resourcePreviewWired = "true";
+      btn.addEventListener("click", async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
 
-    btn.addEventListener("click", async (event) => {
-      event.preventDefault();
-      event.stopPropagation();
+        const index = Number(btn.dataset.resourceSearchIndex);
+        const record = archiveResourceSearchRecords[index];
 
-      const index = Number(btn.dataset.resourceSearchIndex);
-      const record = archiveResourceSearchRecords[index];
+        if (!record) return;
 
-      if (!record) return;
-
-      await archivePreviewResourceSearchRecord(record);
-    });
-  });
-
-  panel.querySelectorAll(".archive-resource-search-card-related").forEach((card) => {
-    if (card.dataset.resourceCardWired === "true") return;
-
-    card.dataset.resourceCardWired = "true";
-
-    const openOrPreview = async () => {
-      const index = Number(card.dataset.resourceSearchIndex);
-      const record = archiveResourceSearchRecords[index];
-
-      if (!record) return;
-
-      if (archiveIsEditMode) {
         await archivePreviewResourceSearchRecord(record);
-        return;
-      }
+      });
+    });
 
-      await archiveOpenResourceSearchArchiveRecord(record);
-    };
+    root.querySelectorAll(".archive-resource-search-card-related").forEach((card) => {
+      if (card.dataset.resourceCardWired === "true") return;
 
-    card.addEventListener("click", openOrPreview);
+      card.dataset.resourceCardWired = "true";
 
-    card.addEventListener("keydown", async (event) => {
-      if (event.key !== "Enter" && event.key !== " ") return;
+      const openOrPreview = async () => {
+        const index = Number(card.dataset.resourceSearchIndex);
+        const record = archiveResourceSearchRecords[index];
 
-      event.preventDefault();
-      await openOrPreview();
+        if (!record) return;
+
+        if (archiveIsEditMode) {
+          await archivePreviewResourceSearchRecord(record);
+          return;
+        }
+
+        await archiveOpenResourceSearchArchiveRecord(record);
+      };
+
+      card.addEventListener("click", openOrPreview);
+
+      card.addEventListener("keydown", async (event) => {
+        if (event.key !== "Enter" && event.key !== " ") return;
+
+        event.preventDefault();
+        await openOrPreview();
+      });
     });
   });
 }
@@ -3018,15 +3040,20 @@ function archiveRenderResourceRelations(record) {
         <button
           type="button"
           class="${relationChipClass(rel)} archive-associated-id-chip"
-          data-associated-caal-id="${relatedId}"
-          data-relation-edge-id="${rel.edge_id || ""}"
+          data-associated-caal-id="${archiveAttributeValue(relatedId)}"
+          data-relation-edge-id="${archiveAttributeValue(rel.edge_id || "")}"
           title="${
             unresolved
               ? t("related_id_not_found", "Related ID not found in current resource tables")
               : t("open_related_record", "Open related record")
           }"
         >
-          ${relatedId}
+          ${relatedRecordTypeIconHtml(
+            rel?.related_record_type || relatedRecordTypeFromCaalId(relatedId)
+          )}
+          <span class="related-id-chip-text">
+            ${archiveAttributeValue(relatedId)}
+          </span>
         </button>
       `;
     }).join("");
@@ -3139,7 +3166,10 @@ function archiveRenderAssociatedCaalIdChips(label, value, fullWidth = true) {
               class="related-id-chip related-id-chip-invalid"
               title="${t("invalid_related_id_format", "Invalid related ID format")}"
             >
-              ${id}
+              ${relatedRecordTypeIconHtml(relatedRecordTypeFromCaalId(id))}
+              <span class="related-id-chip-text">
+                ${archiveAttributeValue(id)}
+              </span>
             </span>
           `;
         }
@@ -3148,10 +3178,13 @@ function archiveRenderAssociatedCaalIdChips(label, value, fullWidth = true) {
           <button
             type="button"
             class="related-id-chip archive-associated-id-chip"
-            data-associated-caal-id="${id}"
+            data-associated-caal-id="${archiveAttributeValue(id)}"
             title="${t("open_related_record", "Open related record")}"
           >
-            ${id}
+            ${relatedRecordTypeIconHtml(relatedRecordTypeFromCaalId(id))}
+            <span class="related-id-chip-text">
+              ${archiveAttributeValue(id)}
+            </span>
           </button>
         `;
       }).join("")
@@ -3183,7 +3216,10 @@ function archiveRenderAssociatedCaalIdChipList(value) {
           class="related-id-chip related-id-chip-invalid archive-associated-id-chip-static"
           title="${t("invalid_related_id_format", "Invalid related ID format")}"
         >
-          ${id}
+          ${relatedRecordTypeIconHtml(relatedRecordTypeFromCaalId(id))}
+          <span class="related-id-chip-text">
+            ${archiveAttributeValue(id)}
+          </span>
         </span>
       `;
     }
@@ -3195,7 +3231,10 @@ function archiveRenderAssociatedCaalIdChipList(value) {
         data-associated-caal-id="${id}"
         title="${t("open_related_record", "Open related record")}"
       >
-        ${id}
+        ${relatedRecordTypeIconHtml(relatedRecordTypeFromCaalId(id))}
+        <span class="related-id-chip-text">
+          ${archiveAttributeValue(id)}
+        </span>
       </button>
     `;
   }).join("");
@@ -3239,7 +3278,12 @@ function archiveRenderAssociatedRelationChips(record) {
             : t("open_related_record", "Open related record")
         }"
       >
-        ${relatedId}
+        ${relatedRecordTypeIconHtml(
+          rel?.related_record_type || relatedRecordTypeFromCaalId(relatedId)
+        )}
+        <span class="related-id-chip-text">
+          ${archiveAttributeValue(relatedId)}
+        </span>
       </button>
     `;
   }).join("");
@@ -3307,10 +3351,13 @@ function archiveRenderHoldingInstitutionChip(record) {
     <button
       type="button"
       class="related-id-chip institution-chip archive-holding-institution-chip"
-      data-institution-caal-id="${inst.caal_id}"
-      title="${subtitle || ""}"
+      data-institution-caal-id="${archiveAttributeValue(inst.caal_id)}"
+      title="${archiveAttributeValue(subtitle || "")}"
     >
-      ${safeArchiveValue(label)}
+      ${relatedRecordTypeIconHtml("institution")}
+      <span class="related-id-chip-text">
+        ${safeArchiveValue(label)}
+      </span>
     </button>
   `;
 }
@@ -4356,34 +4403,211 @@ async function handleArchiveResultOpen(lightRecord) {
   await openArchiveLightRecordInDetails(lightRecord);
 }
 
-function renderArchiveResultsList(records) {
-  if (!archiveResultsList) return;
+function archivePageInfoFor(total, offset, limit) {
+  const safeTotal = Math.max(0, Number(total || 0));
+  const safeLimit = Math.max(1, Number(limit || 1));
+  const safeOffset = Math.max(0, Number(offset || 0));
 
-  const start = records.length === 0 ? 0 : archiveOffset + 1;
-  const end = archiveOffset + records.length;
+  const totalPages = Math.max(1, Math.ceil(safeTotal / safeLimit));
+  const currentPage = Math.min(
+    totalPages,
+    Math.floor(safeOffset / safeLimit) + 1
+  );
 
-  const countText = archiveTotalCount
-    ? t("results_count_total", "{start}-{end} ({total} total)")
-        .replace("{start}", start)
-        .replace("{end}", end)
-        .replace("{total}", archiveTotalCount)
-    : t("zero_records", "0 records");
+  return {
+    currentPage,
+    totalPages,
+    hasPrev: safeOffset > 0,
+    hasNext: safeOffset + safeLimit < safeTotal
+  };
+}
 
-  setArchiveResultsCountText(countText);
+function archiveGroupPaginationHtml({
+  kind,
+  total,
+  offset,
+  limit
+}) {
+  const info = archivePageInfoFor(total, offset, limit);
 
-  if (records.length === 0) {
-    archiveResultsList.innerHTML = `
-      <div class="results-empty">
-        <p>${archiveLabel(t("no_matching_records", "No matching records."))}</p>
-      </div>
-    `;
+  return `
+    <div class="pagination-bar archive-result-group-pagination">
+      <button
+        type="button"
+        class="action-btn archive-group-page-btn"
+        data-archive-group-prev="${kind}"
+        ${info.hasPrev ? "" : "disabled"}
+      >
+        ${t("previous", "Previous")}
+      </button>
+
+      <span class="archive-result-group-page-info">
+        ${t("page_x_of_y", "Page {page} of {total}")
+          .replace("{page}", String(info.currentPage))
+          .replace("{total}", String(info.totalPages))}
+      </span>
+
+      <button
+        type="button"
+        class="action-btn archive-group-page-btn"
+        data-archive-group-next="${kind}"
+        ${info.hasNext ? "" : "disabled"}
+      >
+        ${t("next", "Next")}
+      </button>
+    </div>
+  `;
+}
+
+function archiveRelatedItems(record) {
+  if (Array.isArray(record?.relation_summary?.items)) {
+    return record.relation_summary.items;
+  }
+
+  if (Array.isArray(record?.relations)) {
+    return record.relations;
+  }
+
+  return [];
+}
+
+function archiveRelatedTypeCounts(record) {
+  const counts = new Map();
+
+  const summaryCounts =
+    record?.summary?.related_counts ||
+    record?.related_counts ||
+    record?.relation_summary?.counts ||
+    null;
+
+  if (summaryCounts && typeof summaryCounts === "object" && !Array.isArray(summaryCounts)) {
+    Object.entries(summaryCounts).forEach(([recordType, count]) => {
+      const number = Number(count || 0);
+      if (number > 0) {
+        counts.set(recordType, number);
+      }
+    });
+  }
+
+  archiveRelatedItems(record).forEach((item) => {
+    const type =
+      String(
+        item?.related_record_type ||
+        relatedRecordTypeFromCaalId(item?.related_caal_id) ||
+        "unknown"
+      ).trim() || "unknown";
+
+    counts.set(type, (counts.get(type) || 0) + 1);
+  });
+
+  const order = [
+    "monument",
+    "archive",
+    "rs3_poly",
+    "rs3_line",
+    "rs3_group",
+    "institution",
+    "vernacular",
+    "dataset",
+    "unknown"
+  ];
+
+  return Array.from(counts.entries())
+    .map(([recordType, count]) => ({ recordType, count }))
+    .sort((a, b) => {
+      const ai = order.indexOf(a.recordType);
+      const bi = order.indexOf(b.recordType);
+
+      if (ai === -1 && bi === -1) return a.recordType.localeCompare(b.recordType);
+      if (ai === -1) return 1;
+      if (bi === -1) return -1;
+      return ai - bi;
+    });
+}
+
+function archiveRelatedTypeSummaryHtml(record) {
+  const typeCounts = archiveRelatedTypeCounts(record);
+
+  if (!typeCounts.length) return "";
+
+  return `
+    <div class="viewer-related-type-summary archive-related-type-summary">
+      <span class="viewer-related-type-summary-label">
+        ${t("related_resources", "Related resources")}
+      </span>
+
+      ${typeCounts.map(({ recordType, count }) => `
+        <span class="viewer-related-type-chip">
+          ${relatedRecordTypeIconHtml(recordType)}
+          <span class="viewer-related-type-chip-count">
+            ${archiveFormatCount(count)}
+          </span>
+        </span>
+      `).join("")}
+    </div>
+  `;
+}
+
+function archiveFormatCount(value) {
+  const number = Number(value || 0);
+
+  if (typeof formatCount === "function") {
+    return formatCount(number);
+  }
+
+  return new Intl.NumberFormat(archiveCacheLocale()).format(number);
+}
+
+function updateArchiveGroupedResultsCountText() {
+  const groupedRelated = archiveGroupResourceSearchRecords(
+    archiveResourceSearchRecords || []
+  );
+
+  const archiveCount = Number(archiveTotalCount || 0);
+  const relatedCount = Number(groupedRelated?.nativeRelated?.length || 0);
+
+  if (relatedCount > 0) {
+    setArchiveResultsCountText(
+      `${archiveFormatCount(archiveCount)} ${t("archive_records", "archive records")} + ${archiveFormatCount(relatedCount)} ${t("related_records", "related records")}`
+    );
     return;
   }
 
-  archiveResultsList.innerHTML = records
+  if (archiveTotalCount) {
+    setArchiveResultsCountText(
+      t("results_count_total_only", "{total} total")
+        .replace("{total}", archiveFormatCount(archiveCount))
+    );
+    return;
+  }
+
+  setArchiveResultsCountText(t("zero_records", "0 records"));
+}
+
+function renderArchiveResultsList(records) {
+  if (!archiveResultsList) return;
+
+  updateArchiveGroupedResultsCountText();
+
+  const groupedRelated = archiveGroupResourceSearchRecords(
+    archiveResourceSearchRecords || []
+  );
+
+  const relatedRecords = groupedRelated.nativeRelated || [];
+  const relatedTotal = relatedRecords.length;
+
+  if (archiveRelatedResultsOffset >= relatedTotal) {
+    archiveRelatedResultsOffset = 0;
+  }
+
+  const relatedPageRecords = relatedRecords.slice(
+    archiveRelatedResultsOffset,
+    archiveRelatedResultsOffset + ARCHIVE_RELATED_PAGE_LIMIT
+  );
+
+  const archiveCardsHtml = records
     .map((record, index) => {
       const s = record.summary || {};
-
       const isRecentSave = archiveIsSavedSinceCacheRefresh(record);
 
       const caalId =
@@ -4396,6 +4620,8 @@ function renderArchiveResultsList(records) {
         s.original_title ||
         s.english_title ||
         caalId;
+
+      const relatedSummaryHtml = archiveRelatedTypeSummaryHtml(record);
 
       return `
         <div
@@ -4420,22 +4646,202 @@ function renderArchiveResultsList(records) {
 
           <div class="result-card-meta">${safeArchiveValue(caalId)}</div>
           <div class="result-card-meta">${safeArchiveValue(s.content_type)}</div>
+
+          ${
+            relatedSummaryHtml
+              ? `<div class="result-card-meta viewer-related-summary-row">
+                  ${relatedSummaryHtml}
+                </div>`
+              : ""
+          }
         </div>
       `;
     })
     .join("");
 
-    Array.from(archiveResultsList.querySelectorAll(".result-card")).forEach((card) => {
-      card.addEventListener("click", async () => {
-        const idx = Number(card.dataset.archiveResultIndex);
-        const lightRecord = records[idx];
+  const relatedCardsHtml = relatedPageRecords
+    .map((record, index) =>
+      archiveRenderNativeRelatedResourceCard(
+        record,
+        archiveRelatedResultsOffset + index
+      )
+    )
+    .join("");
 
-        await handleArchiveResultOpen(lightRecord);
-      });
-    });
+  if (!records.length && !relatedTotal) {
+    archiveResultsList.innerHTML = `
+      <div class="results-empty">
+        <p>${archiveLabel(t("no_matching_records", "No matching records."))}</p>
+      </div>
+    `;
+    renderArchivePageInfo();
+    return;
+  }
+
+  archiveResultsList.innerHTML = `
+    <section class="archive-result-group ${archiveResultsGroupCollapsed ? "is-collapsed" : ""}">
+      <button
+        type="button"
+        class="archive-result-group-header"
+        data-archive-group-toggle="archive"
+        aria-expanded="${archiveResultsGroupCollapsed ? "false" : "true"}"
+      >
+        <span class="archive-result-group-title">
+          ${t("archive_records", "Archive")}
+        </span>
+
+        <span class="archive-result-group-count">
+          (${archiveFormatCount(archiveTotalCount || records.length)})
+        </span>
+
+        <span class="archive-result-group-chevron" aria-hidden="true">
+          ${archiveResultsGroupCollapsed ? "▸" : "▾"}
+        </span>
+      </button>
+
+      ${
+        archiveResultsGroupCollapsed
+          ? ""
+          : `
+            <div class="archive-result-group-body">
+              ${archiveGroupPaginationHtml({
+                kind: "archive",
+                total: archiveTotalCount || records.length,
+                offset: archiveOffset,
+                limit: archiveLimit
+              })}
+
+              <div class="archive-result-group-list">
+                ${archiveCardsHtml}
+              </div>
+            </div>
+          `
+      }
+    </section>
+
+    ${
+      relatedTotal
+        ? `
+          <section class="archive-result-group archive-related-result-group ${archiveRelatedResultsGroupCollapsed ? "is-collapsed" : ""}">
+            <button
+              type="button"
+              class="archive-result-group-header"
+              data-archive-group-toggle="related"
+              aria-expanded="${archiveRelatedResultsGroupCollapsed ? "false" : "true"}"
+            >
+              <span class="archive-result-group-title">
+                ${t("related_records", "Related records")}
+              </span>
+
+              <span class="archive-result-group-count">
+                (${archiveFormatCount(relatedTotal)})
+              </span>
+
+              <span class="archive-result-group-chevron" aria-hidden="true">
+                ${archiveRelatedResultsGroupCollapsed ? "▸" : "▾"}
+              </span>
+            </button>
+
+            ${
+              archiveRelatedResultsGroupCollapsed
+                ? ""
+                : `
+                  <div class="archive-result-group-body">
+                    ${archiveGroupPaginationHtml({
+                      kind: "related",
+                      total: relatedTotal,
+                      offset: archiveRelatedResultsOffset,
+                      limit: ARCHIVE_RELATED_PAGE_LIMIT
+                    })}
+
+                    <div class="archive-resource-search-list archive-result-group-list">
+                      ${relatedCardsHtml}
+                    </div>
+                  </div>
+                `
+            }
+          </section>
+        `
+        : ""
+    }
+  `;
+
+  wireArchiveResultGroups();
+  wireArchiveResultCards(records);
+  archiveWireResourceSearchCards();
 
   archiveUpdateSelectedResultCard();
   renderArchivePageInfo();
+}
+
+function wireArchiveResultCards(records) {
+  Array.from(archiveResultsList.querySelectorAll(".result-card")).forEach((card) => {
+    if (card.dataset.archiveCardWired === "true") return;
+    card.dataset.archiveCardWired = "true";
+
+    card.addEventListener("click", async () => {
+      const idx = Number(card.dataset.archiveResultIndex);
+      const lightRecord = records[idx];
+
+      await handleArchiveResultOpen(lightRecord);
+    });
+  });
+}
+
+function wireArchiveResultGroups() {
+  archiveResultsList
+    ?.querySelector("[data-archive-group-toggle='archive']")
+    ?.addEventListener("click", () => {
+      archiveResultsGroupCollapsed = !archiveResultsGroupCollapsed;
+      renderArchiveResultsList(archiveVisibleRecords || archiveAllRecords || []);
+    });
+
+  archiveResultsList
+    ?.querySelector("[data-archive-group-toggle='related']")
+    ?.addEventListener("click", () => {
+      archiveRelatedResultsGroupCollapsed = !archiveRelatedResultsGroupCollapsed;
+      renderArchiveResultsList(archiveVisibleRecords || archiveAllRecords || []);
+    });
+
+  archiveResultsList
+    ?.querySelector("[data-archive-group-prev='archive']")
+    ?.addEventListener("click", () => {
+      archivePrevBtn?.click();
+    });
+
+  archiveResultsList
+    ?.querySelector("[data-archive-group-next='archive']")
+    ?.addEventListener("click", () => {
+      archiveNextBtn?.click();
+    });
+
+  archiveResultsList
+    ?.querySelector("[data-archive-group-prev='related']")
+    ?.addEventListener("click", () => {
+      archiveRelatedResultsOffset = Math.max(
+        0,
+        archiveRelatedResultsOffset - ARCHIVE_RELATED_PAGE_LIMIT
+      );
+
+      renderArchiveResultsList(archiveVisibleRecords || archiveAllRecords || []);
+    });
+
+  archiveResultsList
+    ?.querySelector("[data-archive-group-next='related']")
+    ?.addEventListener("click", () => {
+      const grouped = archiveGroupResourceSearchRecords(
+        archiveResourceSearchRecords || []
+      );
+
+      const total = grouped.nativeRelated.length;
+
+      if (archiveRelatedResultsOffset + ARCHIVE_RELATED_PAGE_LIMIT >= total) {
+        return;
+      }
+
+      archiveRelatedResultsOffset += ARCHIVE_RELATED_PAGE_LIMIT;
+      renderArchiveResultsList(archiveVisibleRecords || archiveAllRecords || []);
+    });
 }
 
 async function archiveOpenAssociatedRecord(caalId) {
