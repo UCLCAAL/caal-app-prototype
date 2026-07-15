@@ -24,12 +24,19 @@ const viewerLayerRs3Line = document.getElementById("viewerLayerRs3Line");
 const viewerLayerRs3Group = document.getElementById("viewerLayerRs3Group");
 const viewerLayerInstitution = document.getElementById("viewerLayerInstitution");
 const viewerLayerVernacular = document.getElementById("viewerLayerVernacular");
+const viewerLayerMonument = document.getElementById("viewerLayerMonument");
+const viewerLayerArchive = document.getElementById("viewerLayerArchive");
+const viewerLayerDataset = document.getElementById("viewerLayerDataset");
+const viewerLayerCartography = document.getElementById("viewerLayerCartography");
 
 const viewerMapLayerRs3Poly = document.getElementById("viewerMapLayerRs3Poly");
 const viewerMapLayerRs3Line = document.getElementById("viewerMapLayerRs3Line");
 const viewerMapLayerRs3Group = document.getElementById("viewerMapLayerRs3Group");
 const viewerMapLayerInstitution = document.getElementById("viewerMapLayerInstitution");
 const viewerMapLayerVernacular = document.getElementById("viewerMapLayerVernacular");
+const viewerMapLayerMonument = document.getElementById("viewerMapLayerMonument");
+const viewerMapLayerDataset = document.getElementById("viewerMapLayerDataset");
+const viewerMapLayerCartography = document.getElementById("viewerMapLayerCartography");
 
 const viewerCollapsedResultGroups = new Set();
 
@@ -153,7 +160,9 @@ const VIEWER_RECORD_TYPES = [
   "institution",
   "vernacular",
   "monument",
-  "archive"
+  "archive",
+  "dataset",
+  "cartography"
 ];
 
 VIEWER_RECORD_TYPES.forEach((type) => {
@@ -188,8 +197,11 @@ const VIEWER_RECORD_TYPE_LABELS = {
   vernacular: "Vernacular",
   monument: "Monuments",
   archive: "Archive",
+  dataset: "Datasets",
+  cartography: "Cartography",
   survey_grid_region: "Survey grid coverage",
-  survey_grid: "Survey grid"
+  survey_grid: "Survey grid",
+  admin_boundary: "Administrative boundaries"
 };
 
 const VIEWER_LAYER_INPUTS = {
@@ -197,7 +209,11 @@ const VIEWER_LAYER_INPUTS = {
   rs3_line: viewerLayerRs3Line,
   rs3_group: viewerLayerRs3Group,
   institution: viewerLayerInstitution,
-  vernacular: viewerLayerVernacular
+  vernacular: viewerLayerVernacular,
+  monument: viewerLayerMonument,
+  archive: viewerLayerArchive,
+  dataset: viewerLayerDataset,
+  cartography: viewerLayerCartography
 };
 
 const VIEWER_MAP_LAYER_INPUTS = {
@@ -206,6 +222,9 @@ const VIEWER_MAP_LAYER_INPUTS = {
   rs3_group: viewerMapLayerRs3Group,
   institution: viewerMapLayerInstitution,
   vernacular: viewerMapLayerVernacular,
+  monument: viewerMapLayerMonument,
+  dataset: viewerMapLayerDataset,
+  cartography: viewerMapLayerCartography,
   survey_grid: viewerMapLayerSurveyGrid
 };
 
@@ -247,7 +266,30 @@ const VIEWER_LAYER_IDS = {
     source: "viewer-admin-boundary",
     fill: "viewer-admin-boundary-fill",
     outline: "viewer-admin-boundary-outline"
-  }
+  },
+  monument: {
+  source: "viewer-monument",
+  fill: "viewer-monument-fill",
+  outline: "viewer-monument-outline",
+  line: "viewer-monument-line",
+  circle: "viewer-monument-circle"
+},
+
+dataset: {
+  source: "viewer-dataset",
+  fill: "viewer-dataset-fill",
+  outline: "viewer-dataset-outline",
+  line: "viewer-dataset-line",
+  circle: "viewer-dataset-circle"
+},
+
+cartography: {
+  source: "viewer-cartography",
+  fill: "viewer-cartography-fill",
+  outline: "viewer-cartography-outline",
+  line: "viewer-cartography-line",
+  circle: "viewer-cartography-circle"
+}
 };
 
 const VIEWER_POLYGON_GEOMETRY_FILTER = [
@@ -276,6 +318,10 @@ const VIEWER_COLOURS = {
   rs3_group: "#8B5CF6",
   institution: "#F97316",
   vernacular: "#22C55E",
+  monument: "#64748B",
+  archive: "#A16207",
+  dataset: "#0EA5E9",
+  cartography: "#14B8A6",
   selected: "#00E5FF",
   workspace: "#2E7D32",
   national: "#B7791F",
@@ -290,6 +336,16 @@ const VIEWER_LABEL_MIN_ZOOM = 7;
 const VIEWER_LABEL_MAX_FEATURES = 150;
 
 const VIEWER_CLUSTER_GROUPS = {
+  monuments: {
+    label: "Monuments",
+    source: "viewer-resource-centroids-monuments",
+    types: ["monument"],
+    clusters: "viewer-resource-clusters-monuments",
+    clusterCount: "viewer-resource-cluster-count-monuments",
+    unclustered: "viewer-resource-centroid-points-monuments",
+    colour: VIEWER_COLOURS.monument
+  },
+
   remote_sensing: {
     label: "Remote sensing",
     source: "viewer-resource-centroids-rs",
@@ -299,6 +355,7 @@ const VIEWER_CLUSTER_GROUPS = {
     unclustered: "viewer-resource-centroid-points-rs",
     colour: "#374151"
   },
+
   vernacular: {
     label: "Vernacular architecture",
     source: "viewer-resource-centroids-vernacular",
@@ -525,7 +582,92 @@ const VIEWER_SURVEY_GRID_DETAIL_GROUPS = [
   }
 ];
 
+const VIEWER_MONUMENT_DETAIL_GROUPS = [
+  {
+    title: "Basic",
+    fields: [
+      "Primary Name",
+      "Primary Name (English)",
+      "Other Names",
+      "Country",
+      "Region",
+      "Classification",
+      "CAAL_ID",
+      "Internal Reference",
+      "External Reference",
+      "Designation",
+      "World Heritage Site Name"
+    ]
+  },
+  {
+    title: "Monument",
+    custom: "monument_main"
+  },
+  {
+    title: "Administration",
+    custom: "monument_administration"
+  },
+  {
+    title: "Measurements",
+    custom: "monument_measurements"
+  },
+  {
+    title: "Location",
+    fields: [
+      "Longitude",
+      "Latitude",
+      "Altitude",
+      "Location Confidence",
+      "Location Notes",
+      "Primary Address"
+    ]
+  },
+  {
+    title: "Related Resources",
+    custom: "related_resources"
+  },
+  {
+    title: "Metadata",
+    fields: [
+      "Preferred Language",
+      "Recorder",
+      "Date of Recording",
+      "Tstamp",
+      "MasterID"
+    ]
+  }
+];
+
+const VIEWER_ARCHIVE_DETAIL_GROUPS = [
+  {
+    title: "Material Details",
+    fields: [
+      "CAAL_ID",
+      "Associated CAAL_ID",
+      "Original Reference",
+      "Content Type",
+      "Country",
+      "Level",
+      "Original Title",
+      "English Title",
+      "Description"
+    ]
+  },
+  {
+    title: "Publication Details",
+    fields: [
+      "Dates of Original Material",
+      "Author of the Original Material",
+      "Publisher of the Original Material",
+      "Editor of the Original Material",
+      "Volume and Issue Number"
+    ]
+  }
+];
+
 const VIEWER_DETAIL_GROUPS = {
+  monument: VIEWER_MONUMENT_DETAIL_GROUPS,
+  archive: VIEWER_ARCHIVE_DETAIL_GROUPS,
   rs3_poly: VIEWER_RS3_DETAIL_GROUPS,
   rs3_line: VIEWER_RS3_DETAIL_GROUPS,
   rs3_group: VIEWER_RS3_DETAIL_GROUPS,
@@ -1920,6 +2062,10 @@ let viewerMapLayers = {};
 let viewerRecordTypeCounts = {};
 
 let viewerCentroidGeojsonByGroup = {
+  monuments: {
+    type: "FeatureCollection",
+    features: []
+  },
   remote_sensing: {
     type: "FeatureCollection",
     features: []
@@ -2264,8 +2410,13 @@ function viewerLayerShortLabel(recordType) {
     rs3_group: ["viewer_layer_rs3_group_short", "Groups"],
     institution: ["viewer_layer_institution", "Institutions"],
     vernacular: ["viewer_layer_vernacular", "Vernacular"],
+    monument: ["viewer_layer_monument", "Monuments"],
+    archive: ["viewer_layer_archive", "Archive"],
+    dataset: ["viewer_layer_dataset", "Datasets"],
+    cartography: ["viewer_layer_cartography", "Cartography"],
     survey_grid_region: ["viewer_layer_survey_grid_region", "Survey grid coverage"],
-    survey_grid: ["viewer_layer_survey_grid", "Survey grid"]
+    survey_grid: ["viewer_layer_survey_grid", "Survey grid"],
+    admin_boundary: ["viewer_layer_admin_boundary", "Administrative boundaries"]
   };
 
   const [key, fallback] = shortKeys[recordType] || [
@@ -2281,7 +2432,18 @@ function viewerLayerIcon(recordType) {
     return caalRecordTypeIconSvg(recordType);
   }
 
-  return `...fallback...`;
+  return `
+    <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18">
+      <circle
+        cx="12"
+        cy="12"
+        r="7"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+      />
+    </svg>
+  `;
 }
 
 function viewerLayerIconClass(recordType) {
@@ -2493,10 +2655,14 @@ function getVisibleMapLayerTypes() {
 }
 
 function getClusterQueryRecordTypes() {
-  return getSelectedResourceTypes().filter((type) => {
+  const selectedResourceTypes = new Set(getSelectedResourceTypes());
+
+  return getVisibleMapLayerTypes().filter((type) => {
+    if (!selectedResourceTypes.has(type)) return false;
     if (VIEWER_ALWAYS_GEOMETRY_TYPES.includes(type)) return false;
 
     return (
+      type === "monument" ||
       type === "rs3_poly" ||
       type === "rs3_line" ||
       type === "rs3_group" ||
@@ -2508,9 +2674,12 @@ function getClusterQueryRecordTypes() {
 function getGeometryQueryRecordTypes() {
   const zoom = viewerMap ? viewerMap.getZoom() : 0;
 
-  const selectedMainTypes = getSelectedResourceTypes();
+  const selectedResourceTypes = new Set(getSelectedResourceTypes());
+  const visibleMapTypes = getVisibleMapLayerTypes();
 
-  const mainTypes = selectedMainTypes.filter((type) => {
+  const mainTypes = visibleMapTypes.filter((type) => {
+    if (!selectedResourceTypes.has(type)) return false;
+
     if (VIEWER_ALWAYS_GEOMETRY_TYPES.includes(type)) {
       return true;
     }
@@ -2694,15 +2863,34 @@ function resetViewerLayerSelectionsToDefault() {
     const filterInput = VIEWER_LAYER_INPUTS[type];
     const mapInput = VIEWER_MAP_LAYER_INPUTS[type];
 
-    if (filterInput) filterInput.checked = true;
-    if (mapInput) mapInput.checked = true;
+    // Results/list filters: include all resource types by default.
+    if (filterInput) {
+      filterInput.checked = true;
+    }
+
+    // Map display: default most spatial layers on, but keep heavy context
+    // layers off until the user explicitly asks for them.
+    if (mapInput) {
+      mapInput.checked = ![
+        "dataset",
+        "cartography"
+      ].includes(type);
+    }
   });
 
   if (viewerMapLayerSurveyGrid) {
     viewerMapLayerSurveyGrid.checked = false;
   }
 
+  if (showCentralAsiaBordersCheckbox) {
+    showCentralAsiaBordersCheckbox.checked = false;
+  }
+
   updateSurveyGridOptionsVisibility();
+
+  if (borderStyleOptions && showCentralAsiaBordersCheckbox) {
+    borderStyleOptions.hidden = !showCentralAsiaBordersCheckbox.checked;
+  }
 }
 
 function viewerLookupOptions(name) {
@@ -3605,8 +3793,8 @@ function showViewerMapPopup(feature, lngLat) {
 
       const recordType = String(record?.identity?.record_type || "").trim();
 
-      // Monuments and archive live on their own pages: new tab.
-      if (recordType === "monument" || recordType === "archive") {
+      // Archive is non-spatial in this Viewer phase, but keep this defensive path.
+      if (recordType === "archive") {
         const url = viewerRelatedRecordUrl({
           related_caal_id: record?.identity?.caal_id,
           related_record_type: recordType
@@ -3621,8 +3809,7 @@ function showViewerMapPopup(feature, lngLat) {
         return;
       }
 
-      // Viewer spatial types: stay in the viewer...
-      // ...unless an edit session blocks navigation (future).
+      // All mapped Viewer resources, including monuments, open in the Viewer details pane.
       if (!viewerCanNavigateAway()) return;
 
       await openViewerRecord(record, { centreOnMap: false });
@@ -3824,13 +4011,15 @@ function viewerResultGroupCount(recordType, items = []) {
 
 function viewerResultGroupTypesForCurrentFilters() {
   const groupOrder = [
+    "monument",
+    "archive",
     "rs3_poly",
     "rs3_line",
     "rs3_group",
     "institution",
     "vernacular",
-    "monument",
-    "archive",
+    "dataset",
+    "cartography",
     "survey_grid_region",
     "survey_grid"
   ];
@@ -3855,11 +4044,15 @@ function viewerResultGroupTypesForCurrentFilters() {
 
 function groupViewerRecordsByType(records = []) {
   const groupOrder = [
+    "monument",
+    "archive",
     "rs3_poly",
     "rs3_line",
     "rs3_group",
     "institution",
     "vernacular",
+    "dataset",
+    "cartography",
     "survey_grid_region",
     "survey_grid"
   ];
@@ -4645,6 +4838,18 @@ function renderViewerDetailGroup(raw, group, record) {
     return renderViewerMetadataGroup(raw, record);
   }
 
+  if (group.custom === "monument_main") {
+    return renderViewerMonumentMainGroup(raw, record);
+  }
+
+  if (group.custom === "monument_administration") {
+    return renderViewerMonumentAdministrationGroup(raw, record);
+  }
+
+  if (group.custom === "monument_measurements") {
+    return renderViewerMonumentMeasurementsGroup(raw, record);
+  }
+
   const rows = (group.fields || [])
     .map((fieldName) => renderViewerField(raw, fieldName, record))
     .filter(Boolean)
@@ -4670,21 +4875,81 @@ function renderViewerDetailGroup(raw, group, record) {
   `;
 }
 
+function renderViewerStructuredDetailsFromJson(record) {
+  const raw = record?.raw || {};
+  const sections = Array.isArray(raw.sections) ? raw.sections : [];
+
+  if (!sections.length) return "";
+
+  return sections.map((section) => {
+    const fields = Array.isArray(section.fields) ? section.fields : [];
+
+    const rows = fields
+      .map((field) => {
+        const label = field.label || field.key || "";
+        const value = field.value;
+
+        if (
+          value === null ||
+          value === undefined ||
+          String(value).trim() === ""
+        ) {
+          return "";
+        }
+
+        return `
+          <div class="detail-item ${field.full_width ? "full-width" : ""}">
+            <span class="detail-label">
+              ${escapeHtml(vLabel(label, label))}
+            </span>
+            <div class="detail-value">
+              ${viewerSafeDisplayValue(value)}
+            </div>
+          </div>
+        `;
+      })
+      .filter(Boolean)
+      .join("");
+
+    if (!rows) return "";
+
+    return `
+      <div class="group-block">
+        <div class="group-grid">
+          <div class="detail-item full-width section-header">
+            <span class="detail-section-title">
+              ${escapeHtml(vLabel(section.label || section.key || "Details", section.label || "Details"))}
+            </span>
+          </div>
+          ${rows}
+        </div>
+      </div>
+    `;
+  }).filter(Boolean).join("");
+}
+
 function renderViewerDetailGroups(record) {
   const raw = record.raw || {};
   const recordType = record.identity?.record_type || "";
+
   const groups = VIEWER_DETAIL_GROUPS[recordType] || [];
 
-  if (!groups.length) {
-    return renderViewerFallbackRawFields(record);
+  if (groups.length) {
+    const html = groups
+      .map((group) => renderViewerDetailGroup(raw, group, record))
+      .filter(Boolean)
+      .join("");
+
+    return html || renderViewerFallbackRawFields(record);
   }
 
-  const html = groups
-    .map((group) => renderViewerDetailGroup(raw, group, record))
-    .filter(Boolean)
-    .join("");
+  const structuredHtml = renderViewerStructuredDetailsFromJson(record);
 
-  return html || renderViewerFallbackRawFields(record);
+  if (structuredHtml) {
+    return structuredHtml;
+  }
+
+  return renderViewerFallbackRawFields(record);
 }
 
 function renderViewerFallbackRawFields(record) {
@@ -4933,6 +5198,134 @@ function closeViewerRecord() {
   renderViewerRecordDetails(null);
   updateSelectedViewerCard();
   clearViewerSelectedHighlight();
+}
+
+// --------------------------------------------------------
+// MONUMENT DETAILS IN VIEWER
+// Read-only renderer adapted from Monuments page layout
+// --------------------------------------------------------
+function viewerLegacyMultiValuesFromRaw(raw, fieldBase, count) {
+  const values = [];
+
+  for (let i = 1; i <= count; i += 1) {
+    const value = viewerRawValue(
+      raw,
+      `${fieldBase}${i}`,
+      `${fieldBase} ${i}`
+    );
+
+    if (value !== null && value !== undefined && String(value).trim() !== "") {
+      values.push(value);
+    }
+  }
+
+  return values;
+}
+
+function renderViewerValueList(label, values) {
+  const cleanValues = Array.isArray(values)
+    ? values.map((value) => String(value || "").trim()).filter(Boolean)
+    : [];
+
+  const html = cleanValues.length
+    ? `
+      <ul class="detail-value-list">
+        ${cleanValues.map((value) => `<li>${viewerSafeDisplayValue(value)}</li>`).join("")}
+      </ul>
+    `
+    : viewerSafeDisplayValue(null);
+
+  return `
+    <div class="detail-item full-width">
+      <span class="detail-label">${escapeHtml(label)}</span>
+      <div class="detail-value">${html}</div>
+    </div>
+  `;
+}
+
+function renderViewerMonumentMainGroup(raw, record) {
+  const monumentTypes =
+    Array.isArray(record?.summary?.monument_type_path) &&
+    record.summary.monument_type_path.length
+      ? record.summary.monument_type_path
+      : viewerLegacyMultiValuesFromRaw(raw, "Monument Type", 6);
+
+  const religions = viewerLegacyMultiValuesFromRaw(raw, "Religion", 3);
+  const culturalPeriods = viewerLegacyMultiValuesFromRaw(raw, "Cultural Period", 6);
+
+  return `
+    <div class="group-block">
+      <div class="group-grid">
+        <div class="detail-item full-width section-header">
+          <span class="detail-section-title">${escapeHtml(t("nav_monuments", "Monument"))}</span>
+        </div>
+
+        ${renderViewerDetailItem(vLabel("Monument Passport", "Monument Passport"), raw["Monument Passport"], { fullWidth: true })}
+        ${renderViewerValueList(vLabel("Monument Type", "Monument Type"), monumentTypes)}
+        ${renderViewerValueList(vLabel("Religion", "Religion"), religions)}
+        ${renderViewerDetailItem(vLabel("Descriptive Date", "Descriptive Date"), raw["Descriptive Date"], { fullWidth: true })}
+        ${renderViewerValueList(vLabel("Cultural Period", "Cultural Period"), culturalPeriods)}
+        ${renderViewerDetailItem(vLabel("Start Date", "Start Date"), raw["Start Date"])}
+        ${renderViewerDetailItem(vLabel("End Date", "End Date"), raw["End Date"])}
+        ${renderViewerDetailItem(vLabel("Primary Description", "Primary Description"), raw["Primary Description"], { fullWidth: true })}
+        ${renderViewerDetailItem(vLabel("Primary Description (English)", "Primary Description (English)"), raw["Primary Description (English)"], { fullWidth: true })}
+        ${renderViewerDetailItem(vLabel("Additional Notes", "Additional Notes"), raw["Additional Notes"], { fullWidth: true })}
+      </div>
+    </div>
+  `;
+}
+
+function renderViewerMonumentAdministrationGroup(raw) {
+  const rows = [];
+
+  for (let i = 1; i <= VIEWER_REPEATABLE_MAX; i += 1) {
+    const name = viewerRawValue(raw, `Administrative Subdivision Name${i}`);
+    const type = viewerRawValue(raw, `Administrative Subdivision Type${i}`);
+
+    if (name === null && type === null) continue;
+
+    rows.push({ name, type });
+  }
+
+  const rowsHtml = rows.length
+    ? rows.map((row, index) => `
+        <div class="measurement-row measurement-row-readonly monument-repeatable-display-row">
+          <div class="measurement-row-title">
+            ${escapeHtml(t("subdivision_number", "Subdivision {number}").replace("{number}", index + 1))}
+          </div>
+
+          <div class="measurement-row-fields">
+            <div class="measurement-field">
+              <span class="detail-label">${escapeHtml(t("name", "Name"))}</span>
+              <div class="detail-value">${viewerSafeDisplayValue(row.name)}</div>
+            </div>
+
+            <div class="measurement-field">
+              <span class="detail-label">${escapeHtml(vLabel("Type", "Type"))}</span>
+              <div class="detail-value">${viewerSafeDisplayValue(row.type)}</div>
+            </div>
+          </div>
+        </div>
+      `).join("")
+    : `<div class="section-empty">${escapeHtml(t("no_populated_fields", "No populated fields in this section."))}</div>`;
+
+  return `
+    <div class="group-block">
+      <div class="group-grid">
+        <div class="detail-item full-width section-header">
+          <span class="detail-section-title">${escapeHtml(t("administration", "Administration"))}</span>
+        </div>
+
+        <div class="detail-item full-width viewer-repeatable-display">
+          ${rowsHtml}
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function renderViewerMonumentMeasurementsGroup(raw) {
+  return renderViewerMeasurementsGroup(raw);
 }
 
 // =====================================================================
@@ -5407,7 +5800,15 @@ async function loadViewerMap() {
     return;
   }
 
-  await loadViewerCentroids();
+  const mapMode = getViewerMapMode();
+
+  if (mapMode === "clusters") {
+    await loadViewerClusters();
+  } else if (mapMode === "centroids") {
+    await loadViewerCentroids();
+  } else {
+    clearViewerClusterData();
+  }
 
   if (!geometryLayers.length) {
     viewerMapLayers = {};
@@ -5451,6 +5852,82 @@ async function loadViewerMap() {
         setViewerLoading(false);
       }
     }
+}
+
+function clearViewerClusterData() {
+  Object.keys(VIEWER_CLUSTER_GROUPS).forEach((groupKey) => {
+    viewerCentroidGeojsonByGroup[groupKey] = {
+      type: "FeatureCollection",
+      features: []
+    };
+  });
+
+  drawViewerCentroidLayers();
+}
+
+async function loadViewerClusters() {
+  if (!viewerMap || !viewerMapLoaded) return;
+
+  const selectedLayers = getClusterQueryRecordTypes();
+
+  if (!selectedLayers.length) {
+    clearViewerClusterData();
+    return;
+  }
+
+  if (viewerCentroidsAbortController) {
+    viewerCentroidsAbortController.abort();
+  }
+
+  viewerCentroidsAbortController = new AbortController();
+  const signal = viewerCentroidsAbortController.signal;
+
+  const params = buildViewerQueryParams({
+    includePaging: false,
+    includeMapBbox: true
+  });
+
+  params.set("recordTypes", selectedLayers.join(","));
+  params.set("zoom", String(viewerMap.getZoom()));
+
+  let data;
+
+  try {
+    const response = await fetch(`/api/viewer/clusters?${params.toString()}`, {
+      method: "GET",
+      credentials: "include",
+      signal
+    });
+
+    data = await response.json();
+
+    if (!response.ok || !data.ok) {
+      throw new Error(data.detail || data.error || "Failed to load viewer clusters");
+    }
+  } catch (error) {
+    if (error.name === "AbortError") return;
+    throw error;
+  } finally {
+    if (viewerCentroidsAbortController?.signal === signal) {
+      viewerCentroidsAbortController = null;
+    }
+  }
+
+  const features = Array.isArray(data.clusters?.features)
+    ? data.clusters.features
+    : [];
+
+  Object.entries(VIEWER_CLUSTER_GROUPS).forEach(([groupKey, group]) => {
+    viewerCentroidGeojsonByGroup[groupKey] = {
+      type: "FeatureCollection",
+      features: features.filter((feature) =>
+        group.types.includes(feature.properties?.record_type)
+      )
+    };
+  });
+
+  drawViewerCentroidLayers();
+  updateMapStatusLine();
 }
 
 function getViewerMapMode() {
@@ -5648,6 +6125,9 @@ function ensureViewerCentroidLayers(group) {
           "rs3_line", VIEWER_COLOURS.rs3_line,
           "rs3_group", VIEWER_COLOURS.rs3_group,
           "vernacular", VIEWER_COLOURS.vernacular,
+          "monument", VIEWER_COLOURS.monument,
+          "dataset", VIEWER_COLOURS.dataset,
+          "cartography", VIEWER_COLOURS.cartography,
           "#6B7280"
         ],
         "circle-opacity": 0.88,
@@ -5985,6 +6465,98 @@ function ensureViewerSource(recordType, geojson) {
   });
 }
 
+function ensureViewerMixedGeometryResourceLayers(recordType) {
+  const ids = VIEWER_LAYER_IDS[recordType];
+  if (!ids) return;
+
+  const colour = VIEWER_COLOURS[recordType] || "#6B7280";
+
+  if (ids.fill && !viewerMap.getLayer(ids.fill)) {
+    viewerMap.addLayer({
+      id: ids.fill,
+      type: "fill",
+      source: ids.source,
+      filter: VIEWER_POLYGON_GEOMETRY_FILTER,
+      paint: {
+        "fill-color": colour,
+        "fill-opacity": recordType === "dataset" || recordType === "cartography"
+          ? 0.14
+          : 0.2
+      }
+    });
+  }
+
+  if (ids.outline && !viewerMap.getLayer(ids.outline)) {
+    viewerMap.addLayer({
+      id: ids.outline,
+      type: "line",
+      source: ids.source,
+      filter: VIEWER_POLYGON_GEOMETRY_FILTER,
+      paint: {
+        "line-color": colour,
+        "line-width": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          4, 0.8,
+          8, 1.4,
+          12, 2
+        ],
+        "line-opacity": 0.9
+      }
+    });
+  }
+
+  if (ids.line && !viewerMap.getLayer(ids.line)) {
+    viewerMap.addLayer({
+      id: ids.line,
+      type: "line",
+      source: ids.source,
+      filter: VIEWER_LINE_GEOMETRY_FILTER,
+      paint: {
+        "line-color": colour,
+        "line-width": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          4, 1,
+          8, 1.8,
+          12, 2.6
+        ],
+        "line-opacity": 0.9
+      }
+    });
+  }
+
+  if (ids.circle && !viewerMap.getLayer(ids.circle)) {
+    viewerMap.addLayer({
+      id: ids.circle,
+      type: "circle",
+      source: ids.source,
+      filter: ["==", ["geometry-type"], "Point"],
+      paint: {
+        "circle-radius": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          4, 4,
+          8, 6,
+          12, 8
+        ],
+        "circle-color": colour,
+        "circle-opacity": 0.9,
+        "circle-stroke-color": "#ffffff",
+        "circle-stroke-width": 1.4
+      }
+    });
+  }
+
+  bindViewerLayerEvents(
+    recordType,
+    [ids.fill, ids.outline, ids.line, ids.circle].filter(Boolean)
+  );
+}
+
 function ensureViewerStyleLayers(recordType) {
   if (!viewerMap || !viewerMapLoaded) return;
 
@@ -6112,6 +6684,15 @@ function ensureViewerStyleLayers(recordType) {
     }
 
     bindViewerReferenceLayerPopups();
+    return;
+  }
+
+    if (
+    recordType === "monument" ||
+    recordType === "dataset" ||
+    recordType === "cartography"
+  ) {
+    ensureViewerMixedGeometryResourceLayers(recordType);
     return;
   }
 
@@ -6318,6 +6899,7 @@ function bringViewerLayersToFront() {
   if (!viewerMap) return;
 
   const orderedLayers = [
+    // Admin/context base overlays
     "viewer-admin-boundary-fill",
     "viewer-admin-boundary-outline",
     "viewer-admin-boundary-selected-fill",
@@ -6328,15 +6910,37 @@ function bringViewerLayersToFront() {
     "viewer-survey-grid-fill",
     "viewer-survey-grid-outline",
 
+    // Broad contextual resource geometry underneath site features
+    "viewer-cartography-fill",
+    "viewer-dataset-fill",
+    "viewer-cartography-outline",
+    "viewer-dataset-outline",
+    "viewer-cartography-line",
+    "viewer-dataset-line",
+    "viewer-cartography-circle",
+    "viewer-dataset-circle",
+
+    // Site/resource features above datasets/cartography
+    "viewer-monument-fill",
     "viewer-rs3-poly-fill",
     "viewer-rs3-group-fill",
     "viewer-vernacular-fill",
+
+    "viewer-monument-outline",
     "viewer-rs3-poly-outline",
     "viewer-rs3-group-outline",
     "viewer-vernacular-outline",
+
+    "viewer-monument-line",
     "viewer-rs3-line-line",
 
     "viewer-institution-circle",
+    "viewer-monument-circle",
+
+    // Clusters / centroid points
+    "viewer-resource-clusters-monuments",
+    "viewer-resource-cluster-count-monuments",
+    "viewer-resource-centroid-points-monuments",
 
     "viewer-resource-clusters-rs",
     "viewer-resource-cluster-count-rs",
@@ -6346,6 +6950,7 @@ function bringViewerLayersToFront() {
     "viewer-resource-cluster-count-vernacular",
     "viewer-resource-centroid-points-vernacular",
 
+    // Active overlays
     "viewer-selected-fill",
     "viewer-selected-line",
     "viewer-selected-circle",
@@ -7051,6 +7656,10 @@ function renderViewerLegend() {
   const mode = getViewerMapMode();
   const showDetailedResourceSymbols = mode !== "clusters";
 
+  const showMonumentCluster =
+  mode === "clusters" &&
+  viewerCentroidGroupHasFeatures("monuments");
+
   const showRemoteSensingCluster =
     mode === "clusters" &&
     viewerCentroidGroupHasFeatures("remote_sensing");
@@ -7058,6 +7667,16 @@ function renderViewerLegend() {
   const showVernacularCluster =
     mode === "clusters" &&
     viewerCentroidGroupHasFeatures("vernacular");
+  
+  if (showMonumentCluster) {
+    rows.push(
+      viewerLegendSymbolRow({
+        symbolClass: "viewer-legend-cluster-monuments",
+        labelKey: "viewer_monument_clusters",
+        fallback: "Monument clusters"
+      })
+    );
+  }
 
   if (showRemoteSensingCluster) {
     rows.push(
@@ -7075,6 +7694,16 @@ function renderViewerLegend() {
         symbolClass: "viewer-legend-cluster-vernacular",
         labelKey: "viewer_vernacular_clusters",
         fallback: "Vernacular clusters"
+      })
+    );
+  }
+
+  if (showDetailedResourceSymbols && viewerLegendShouldShowLayer("monument")) {
+    rows.push(
+      viewerLegendSymbolRow({
+        symbolClass: "viewer-legend-monument",
+        labelKey: "viewer_layer_monument",
+        fallback: "Monuments"
       })
     );
   }
@@ -7587,9 +8216,34 @@ function applyViewerInitialUrlState() {
 }
 
 async function initViewerPage() {
-  await waitForViewerSession();
+  const session =
+    typeof window.requireSession === "function"
+      ? await window.requireSession()
+      : await waitForViewerSession();
 
-  setViewerLoading(true, t("loading_records", "Loading records..."));
+  if (!session) return;
+
+  if (
+    typeof window.sharedSessionIsCaalWorkspace === "function" &&
+    !window.sharedSessionIsCaalWorkspace(session)
+  ) {
+    window.location.href = "home.html";
+    return;
+  }
+
+  if (typeof window.updateCaalOnlyNavigation === "function") {
+    window.updateCaalOnlyNavigation(session);
+  }
+
+  if (typeof window.renderSignedInUserPill === "function") {
+    window.renderSignedInUserPill();
+  }
+
+  if (typeof window.applyWorkspaceHeaderText === "function") {
+    window.applyWorkspaceHeaderText("viewer", session);
+  }
+
+  setViewerLoading(true, t("loading_records", "Loading records."));
   setViewerResultsCountText(t("loading", "Loading..."));
 
   if (viewerResultsList) {

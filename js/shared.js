@@ -23,6 +23,7 @@ const SHELL_TRANSLATIONS = {
     nav_home: "Home",
     nav_monuments: "Monuments",
     nav_archive: "Archive",
+    nav_viewer: "Viewer",
     logout_button: "Log out",
     language_label: "Language",
 
@@ -147,6 +148,11 @@ async function loadBackendSession() {
 
     appSession = data.session;
     window.appSession = appSession;
+
+    if (typeof updateCaalOnlyNavigation === "function") {
+      updateCaalOnlyNavigation(appSession);
+    }
+
     return appSession;
   } catch (error) {
     console.error("Failed to load backend session:", error);
@@ -186,6 +192,18 @@ function bindLogoutButtons() {
   });
 }
 
+function updateCaalOnlyNavigation(session = window.appSession) {
+  const isCaal = sharedSessionIsCaalWorkspace(session);
+
+  document
+    .querySelectorAll("[data-caal-only-nav]")
+    .forEach((el) => {
+      el.hidden = !isCaal;
+    });
+}
+
+window.updateCaalOnlyNavigation = updateCaalOnlyNavigation;
+
 window.requireSession = requireSession;
 window.loadBackendSession = loadBackendSession;
 window.logoutUser = logoutUser;
@@ -211,6 +229,14 @@ function sharedSessionWorkspaceCode(session = window.appSession) {
     ""
   ).trim();
 }
+
+function sharedSessionIsCaalWorkspace(session = window.appSession) {
+  return String(sharedSessionWorkspaceCode(session) || "")
+    .trim()
+    .toLowerCase() === "caal";
+}
+
+window.sharedSessionIsCaalWorkspace = sharedSessionIsCaalWorkspace;
 
 function sharedSessionAccessLevel(session = window.appSession) {
   return Number(
@@ -400,6 +426,10 @@ function getWorkspacePageSubtitle(page, session = window.appSession) {
   const countryName = getWorkspaceCountryName(session);
 
   if (workspaceCode === "caal") {
+    if (page === "viewer") {
+      return t("viewer_workspace_subtitle", "Resource viewer");
+    }
+
     if (page === "archive") {
       return t("shared_caal_archive_workspace", "Shared CAAL Archive workspace");
     }
@@ -454,7 +484,7 @@ function applyWorkspaceHeaderText(page = getCurrentPageName(), session = window.
   );
 
   const subtitleEls = document.querySelectorAll(
-    "#workspaceSubtitle, [data-workspace-subtitle], [data-i18n='home_app_subtitle'], [data-i18n='monuments_workspace_subtitle'], [data-i18n='archive_workspace_subtitle']"
+    "#workspaceSubtitle, [data-workspace-subtitle], [data-i18n='home_app_subtitle'], [data-i18n='monuments_workspace_subtitle'], [data-i18n='archive_workspace_subtitle'], [data-i18n='viewer_workspace_subtitle']"
   );
 
   titleEls.forEach((el) => {
@@ -914,7 +944,8 @@ function getRelatedRecordUrl(caalId, recordType, sourceScope = null) {
       "rs3_group",
       "institution",
       "vernacular",
-      "dataset"
+      "dataset",
+      "cartography"
     ].includes(type)
   ) {
     const params = new URLSearchParams();
@@ -1710,6 +1741,43 @@ function caalRecordTypeIconSvg(recordType) {
           <rect x="3.5" y="4.5" width="6.5" height="6.5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.8"/>
           <rect x="14" y="4.5" width="6.5" height="6.5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.8"/>
           <rect x="8.8" y="13" width="6.5" height="6.5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.8"/>
+        </svg>
+      `;
+    case "dataset":
+    case "cartography":
+      return `
+        <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18">
+          <rect
+            x="4"
+            y="5"
+            width="16"
+            height="14"
+            rx="1.8"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+          />
+          <path
+            d="M7 15.5 10.3 12.3 12.7 14.6 15.2 11.4 18 15.5"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.6"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+          <path
+            d="M7 8.5h4.2M7 10.7h2.7"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="1.5"
+            stroke-linecap="round"
+          />
+          <circle
+            cx="17"
+            cy="8.5"
+            r="1.1"
+            fill="currentColor"
+          />
         </svg>
       `;
 

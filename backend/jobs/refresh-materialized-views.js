@@ -23,7 +23,16 @@ const VIEWER_SOURCES_CHANGED_SQL = `
     (SELECT max("Tstamp") FROM public."CAAL_Institution"),
     (SELECT max("Tstamp") FROM kz."CAAL_Institution"),
     (SELECT max("Tstamp") FROM public."CAAL_Vernacular"),
-    (SELECT max("Tstamp") FROM kz."CAAL_Vernacular")
+    (SELECT max("Tstamp") FROM kz."CAAL_Vernacular"),
+
+    (SELECT max("Tstamp") FROM public."CAAL_Monuments"),
+    (SELECT max("Tstamp") FROM kz."CAAL_Monuments"),
+
+    (SELECT max("Tstamp") FROM public."CAAL_Archive"),
+    (SELECT max("Tstamp") FROM kz."CAAL_Archive"),
+
+    (SELECT max("Tstamp") FROM public."CAAL_Datasets"),
+    (SELECT max("Tstamp") FROM public."CAAL_Cartography")
   ) > (
     SELECT refreshed_at FROM ui.app_cache_status
     WHERE cache_key = 'resource_viewer_base_cache'
@@ -32,7 +41,10 @@ const VIEWER_SOURCES_CHANGED_SQL = `
 
 // Change-check for the monuments family (grid base reads public.CAAL_Monuments).
 const MONUMENTS_CHANGED_SQL = `
-  SELECT (SELECT max("Tstamp") FROM public."CAAL_Monuments") > (
+  SELECT GREATEST(
+    (SELECT max("Tstamp") FROM public."CAAL_Monuments"),
+    (SELECT max("Tstamp") FROM kz."CAAL_Monuments")
+  ) > (
     SELECT refreshed_at FROM ui.app_cache_status
     WHERE cache_key = 'monuments_caal_cache'
   ) AS changed
@@ -54,6 +66,10 @@ const MATERIALIZED_VIEWS = [
   { name: "ui.mv_lkp_meas_unit_match",         cacheKey: "lkp_meas_unit_match_cache" },
   { name: "ui.mv_lkp_meas_type_match",         cacheKey: "lkp_meas_type_match_cache" },
   { name: "ui.mv_lkp_designation_match",       cacheKey: "lkp_designation_match_cache" },
+  { name: "ui.mv_resource_viewer_monument_map",     cacheKey: "resource_viewer_monument_map_cache",     dependsOn: "ui.mv_resource_viewer_base" },
+  { name: "ui.mv_resource_viewer_dataset_map",      cacheKey: "resource_viewer_dataset_map_cache",      dependsOn: "ui.mv_resource_viewer_base" },
+  { name: "ui.mv_resource_viewer_cartography_map",  cacheKey: "resource_viewer_cartography_map_cache",  dependsOn: "ui.mv_resource_viewer_base" },
+  { name: "ui.mv_resource_viewer_survey_grid_region_map", cacheKey: "resource_viewer_survey_grid_region_map_cache", dependsOn: "ui.mv_resource_viewer_base" },
 
   // --------------------------------------------------------------------
   // Monuments family.
@@ -99,6 +115,7 @@ const MATERIALIZED_VIEWS = [
 const refreshedThisRun = new Set();
 const skippedThisRun = new Set();
 
+
 async function cacheAgeMs(cacheKey) {
   const { rows } = await pool.query(
     `SELECT extract(epoch FROM (now() - refreshed_at)) * 1000 AS age_ms
@@ -107,6 +124,42 @@ async function cacheAgeMs(cacheKey) {
   );
   if (!rows.length || rows[0].age_ms === null) return Infinity;
   return Number(rows[0].age_ms);
+}
+
+async function markCacheRefreshed(cacheKey, viewName) {
+  if (!cacheKey) return;
+
+  await pool.query(
+    `
+    INSERT INTO ui.app_cache_status (
+      cache_key,
+      refreshed_at,
+      refreshed_by,
+      checked_at,
+      checked_by,
+      note
+    )
+    VALUES (
+      $1,
+      now(),
+      'cron',
+      now(),
+      'cron',
+      $2
+    )
+    ON CONFLICT (cache_key)
+    DO UPDATE SET
+      refreshed_at = EXCLUDED.refreshed_at,
+      refreshed_by = EXCLUDED.refreshed_by,
+      checked_at = EXCLUDED.checked_at,
+      checked_by = EXCLUDED.checked_by,
+      note = EXCLUDED.note
+    `,
+    [
+      cacheKey,
+      `${viewName} refreshed by materialized-view cron job`
+    ]
+  );
 }
 
 async function shouldSkip(viewConfig) {
@@ -137,11 +190,83 @@ async function shouldSkip(viewConfig) {
   return false;
 }
 
+async function markCacheChecked(cacheKey, note) {
+  if (!cacheKey) return;
+
+  await pool.query(
+    `
+    INSERT INTO ui.app_cache_status (
+      cache_key,
+      checked_at,
+      checked_by,
+      note
+    )
+    VALUES (
+      $1,
+      now(),
+      'cron',
+      $2
+    )
+    ON CONFLICT (cache_key)
+    DO UPDATE SET
+      checked_at = EXCLUDED.checked_at,
+      checked_by = EXCLUDED.checked_by,
+      note = EXCLUDED.note
+    `,
+    [
+      cacheKey,
+      note || `${cacheKey} checked by materialized-view cron job`
+    ]
+  );
+}
+
+async function markCacheRefreshed(cacheKey, viewName) {
+  if (!cacheKey) return;
+
+  await pool.query(
+    `
+    INSERT INTO ui.app_cache_status (
+      cache_key,
+      refreshed_at,
+      refreshed_by,
+      checked_at,
+      checked_by,
+      note
+    )
+    VALUES (
+      $1,
+      now(),
+      'cron',
+      now(),
+      'cron',
+      $2
+    )
+    ON CONFLICT (cache_key)
+    DO UPDATE SET
+      refreshed_at = EXCLUDED.refreshed_at,
+      refreshed_by = EXCLUDED.refreshed_by,
+      checked_at = EXCLUDED.checked_at,
+      checked_by = EXCLUDED.checked_by,
+      note = EXCLUDED.note
+    `,
+    [
+      cacheKey,
+      `${viewName} refreshed by materialized-view cron job`
+    ]
+  );
+}
+
 async function refreshView(viewConfig) {
   const { name: viewName, cacheKey } = viewConfig;
 
   if (await shouldSkip(viewConfig)) {
     skippedThisRun.add(viewName);
+
+    await markCacheChecked(
+      cacheKey,
+      `${viewName} checked by materialized-view cron job; refresh skipped because cache is current`
+    );
+
     return;
   }
 
@@ -150,33 +275,7 @@ async function refreshView(viewConfig) {
   await pool.query(`REFRESH MATERIALIZED VIEW CONCURRENTLY ${viewName}`);
   await pool.query(`ANALYZE ${viewName}`);
 
-  if (cacheKey) {
-    await pool.query(
-      `
-      INSERT INTO ui.app_cache_status (
-        cache_key,
-        refreshed_at,
-        refreshed_by,
-        note
-      )
-      VALUES (
-        $1,
-        now(),
-        'cron',
-        $2
-      )
-      ON CONFLICT (cache_key)
-      DO UPDATE SET
-        refreshed_at = EXCLUDED.refreshed_at,
-        refreshed_by = EXCLUDED.refreshed_by,
-        note = EXCLUDED.note
-      `,
-      [
-        cacheKey,
-        `${viewName} refreshed by materialized-view cron job`
-      ]
-    );
-  }
+  await markCacheRefreshed(cacheKey, viewName);
 
   refreshedThisRun.add(viewName);
   console.log(`[MV refresh] Done ${viewName}`);
@@ -187,6 +286,12 @@ async function rebuildMonumentAdminBoundaryMembership() {
   // this run, membership cannot have changed either.
   if (skippedThisRun.has("ui.mv_monuments_caal")) {
     console.log("[MV refresh] Skipping ui.monument_admin_boundary_membership (monuments MV was skipped)");
+
+    await markCacheChecked(
+      "monument_admin_boundary_membership",
+      "Monument admin boundary membership checked by materialized-view cron job; rebuild skipped because monuments cache is current"
+    );
+
     return;
   }
 
@@ -251,31 +356,14 @@ async function rebuildMonumentAdminBoundaryMembership() {
     }
 
     await client.query(`ANALYZE ui.monument_admin_boundary_membership`);
-
-    await client.query(
-      `
-      INSERT INTO ui.app_cache_status (
-        cache_key,
-        refreshed_at,
-        refreshed_by,
-        note
-      )
-      VALUES (
-        'monument_admin_boundary_membership',
-        now(),
-        'cron',
-        'Monument admin boundary membership rebuilt by materialized-view cron job'
-      )
-      ON CONFLICT (cache_key)
-      DO UPDATE SET
-        refreshed_at = EXCLUDED.refreshed_at,
-        refreshed_by = EXCLUDED.refreshed_by,
-        note = EXCLUDED.note
-      `
-    );
   } finally {
     client.release();
   }
+
+  await markCacheRefreshed(
+    "monument_admin_boundary_membership",
+    "ui.monument_admin_boundary_membership"
+  );
 
   console.log("[MV refresh] Done ui.monument_admin_boundary_membership");
 }
@@ -285,6 +373,12 @@ async function rebuildResourceAdminBoundaryMembership() {
   // membership cannot have changed either.
   if (skippedThisRun.has("ui.mv_resource_viewer_base")) {
     console.log("[MV refresh] Skipping ui.resource_admin_boundary_membership (viewer base skipped)");
+
+    await markCacheChecked(
+      "resource_admin_boundary_membership",
+      "Resource admin boundary membership checked by materialized-view cron job; rebuild skipped because viewer base cache is current"
+    );
+
     return;
   }
 
@@ -318,12 +412,26 @@ async function rebuildResourceAdminBoundaryMembership() {
 
       await client.query(`
         INSERT INTO ui.resource_admin_boundary_membership (
-          record_type, source_schema, source_table, source_row_id,
-          caal_id, boundary_id, admin_level, country_iso3, matched_at
+          record_type,
+          source_schema,
+          source_table,
+          source_row_id,
+          caal_id,
+          boundary_id,
+          admin_level,
+          country_iso3,
+          matched_at
         )
         SELECT
-          record_type, source_schema, source_table, source_row_id,
-          caal_id, boundary_id, admin_level, country_iso3, matched_at
+          record_type,
+          source_schema,
+          source_table,
+          source_row_id,
+          caal_id,
+          boundary_id,
+          admin_level,
+          country_iso3,
+          matched_at
         FROM tmp_resource_admin_boundary_membership
       `);
 
@@ -337,6 +445,11 @@ async function rebuildResourceAdminBoundaryMembership() {
   } finally {
     client.release();
   }
+
+  await markCacheRefreshed(
+    "resource_admin_boundary_membership",
+    "ui.resource_admin_boundary_membership"
+  );
 
   console.log("[MV refresh] Done ui.resource_admin_boundary_membership");
 }

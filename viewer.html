@@ -39,7 +39,15 @@
       <a href="home.html" class="nav-link" data-i18n="nav_home">Home</a>
       <a href="monuments.html" class="nav-link" data-i18n="nav_monuments">Monuments</a>
       <a href="archive.html" class="nav-link" data-i18n="nav_archive">Archive</a>
-      <a href="viewer.html" class="nav-link nav-link-active" data-i18n="nav_viewer">Viewer</a>
+      <a
+        href="viewer.html"
+        class="nav-link nav-link-active"
+        data-i18n="nav_viewer"
+        data-caal-only-nav
+        hidden
+      >
+        Viewer
+      </a>
     </nav>
 
     <div class="header-tools">
@@ -193,29 +201,43 @@
             <h3 data-i18n="viewer_layers">Layers</h3>
           </div>
 
-          <div class="viewer-layer-grid">
-            <div class="viewer-layer-column">
-              <div class="viewer-layer-subgroup-title" data-i18n="viewer_remote_sensing">
-                Remote sensing
+          <div class="viewer-layer-grid viewer-layer-grid-two-column">
+            <div class="viewer-layer-stack">
+              <div class="viewer-layer-column">
+                <div class="viewer-layer-subgroup-title" data-i18n="viewer_monuments">
+                  Monuments
+                </div>
+
+                <label class="browse-checkbox viewer-layer-check">
+                  <input type="checkbox" id="viewerLayerMonument" checked>
+                  <span class="viewer-layer-icon-slot" data-viewer-layer-icon="monument"></span>
+                  <span data-i18n="viewer_layer_monument">Monuments</span>
+                </label>
               </div>
 
-              <label class="browse-checkbox viewer-layer-check">
-                <input type="checkbox" id="viewerLayerRs3Poly" checked>
-                <span class="viewer-layer-icon-slot" data-viewer-layer-icon="rs3_poly"></span>
-                <span data-i18n="viewer_layer_rs3_poly_short">Polygons</span>
-              </label>
+              <div class="viewer-layer-column">
+                <div class="viewer-layer-subgroup-title" data-i18n="viewer_remote_sensing">
+                  Remote sensing
+                </div>
 
-              <label class="browse-checkbox viewer-layer-check">
-                <input type="checkbox" id="viewerLayerRs3Line" checked>
-                <span class="viewer-layer-icon-slot" data-viewer-layer-icon="rs3_line"></span>
-                <span data-i18n="viewer_layer_rs3_line_short">Lines</span>
-              </label>
+                <label class="browse-checkbox viewer-layer-check">
+                  <input type="checkbox" id="viewerLayerRs3Poly" checked>
+                  <span class="viewer-layer-icon-slot" data-viewer-layer-icon="rs3_poly"></span>
+                  <span data-i18n="viewer_layer_rs3_poly_short">Polygons</span>
+                </label>
 
-              <label class="browse-checkbox viewer-layer-check">
-                <input type="checkbox" id="viewerLayerRs3Group">
-                <span class="viewer-layer-icon-slot" data-viewer-layer-icon="rs3_group"></span>
-                <span data-i18n="viewer_layer_rs3_group_short">Groups</span>
-              </label>
+                <label class="browse-checkbox viewer-layer-check">
+                  <input type="checkbox" id="viewerLayerRs3Line" checked>
+                  <span class="viewer-layer-icon-slot" data-viewer-layer-icon="rs3_line"></span>
+                  <span data-i18n="viewer_layer_rs3_line_short">Lines</span>
+                </label>
+
+                <label class="browse-checkbox viewer-layer-check">
+                  <input type="checkbox" id="viewerLayerRs3Group" checked>
+                  <span class="viewer-layer-icon-slot" data-viewer-layer-icon="rs3_group"></span>
+                  <span data-i18n="viewer_layer_rs3_group_short">Groups</span>
+                </label>
+              </div>
             </div>
 
             <div class="viewer-layer-column">
@@ -224,15 +246,37 @@
               </div>
 
               <label class="browse-checkbox viewer-layer-check">
-                <input type="checkbox" id="viewerLayerInstitution">
+                <input type="checkbox" id="viewerLayerInstitution" checked>
                 <span class="viewer-layer-icon-slot" data-viewer-layer-icon="institution"></span>
                 <span data-i18n="viewer_layer_institution">Institutions</span>
               </label>
 
               <label class="browse-checkbox viewer-layer-check">
-                <input type="checkbox" id="viewerLayerVernacular">
+                <input type="checkbox" id="viewerLayerVernacular" checked>
                 <span class="viewer-layer-icon-slot" data-viewer-layer-icon="vernacular"></span>
                 <span data-i18n="viewer_layer_vernacular">Vernacular</span>
+              </label>
+
+              <div class="viewer-layer-separator" aria-hidden="true"></div>
+
+              <label class="browse-checkbox viewer-layer-check">
+                <input type="checkbox" id="viewerLayerDataset" checked>
+                <span class="viewer-layer-icon-slot" data-viewer-layer-icon="dataset"></span>
+                <span data-i18n="viewer_layer_dataset">Datasets</span>
+              </label>
+
+              <label class="browse-checkbox viewer-layer-check">
+                <input type="checkbox" id="viewerLayerCartography" checked>
+                <span class="viewer-layer-icon-slot" data-viewer-layer-icon="cartography"></span>
+                <span data-i18n="viewer_layer_cartography">Cartography</span>
+              </label>
+
+              <div class="viewer-layer-separator" aria-hidden="true"></div>
+
+              <label class="browse-checkbox viewer-layer-check">
+                <input type="checkbox" id="viewerLayerArchive" checked>
+                <span class="viewer-layer-icon-slot" data-viewer-layer-icon="archive"></span>
+                <span data-i18n="viewer_layer_archive">Archive</span>
               </label>
             </div>
           </div>
@@ -517,6 +561,16 @@
             </div>
 
             <label class="map-options-check viewer-map-layer-check">
+              <input type="checkbox" id="viewerMapLayerMonument" value="monument" checked />
+              <span
+                class="viewer-layer-icon-slot"
+                data-viewer-layer-icon="monument"
+                aria-hidden="true"
+              ></span>
+              <span data-i18n="viewer_layer_monument">Monuments</span>
+            </label>
+
+            <label class="map-options-check viewer-map-layer-check">
               <input type="checkbox" id="viewerMapLayerRs3Poly" value="rs3_poly" checked />
               <span
                 class="viewer-layer-icon-slot"
@@ -564,6 +618,26 @@
                 aria-hidden="true"
               ></span>
               <span data-i18n="viewer_layer_vernacular">Vernacular</span>
+            </label>
+
+            <label class="map-options-check viewer-map-layer-check">
+              <input type="checkbox" id="viewerMapLayerDataset" value="dataset" />
+              <span
+                class="viewer-layer-icon-slot"
+                data-viewer-layer-icon="dataset"
+                aria-hidden="true"
+              ></span>
+              <span data-i18n="viewer_layer_dataset">Datasets</span>
+            </label>
+
+            <label class="map-options-check viewer-map-layer-check">
+              <input type="checkbox" id="viewerMapLayerCartography" value="cartography" />
+              <span
+                class="viewer-layer-icon-slot"
+                data-viewer-layer-icon="cartography"
+                aria-hidden="true"
+              ></span>
+              <span data-i18n="viewer_layer_cartography">Cartography</span>
             </label>
           </div>
 

@@ -29,6 +29,10 @@ const VIEWER_LAYER_MVS = {
   rs3_group: "ui.mv_resource_viewer_rs3_group_map",
   institution: "ui.mv_resource_viewer_institution_map",
   vernacular: "ui.mv_resource_viewer_vernacular_map",
+  monument: "ui.mv_resource_viewer_monument_map",
+  dataset: "ui.mv_resource_viewer_dataset_map",
+  cartography: "ui.mv_resource_viewer_cartography_map",
+
   survey_grid_region: "ui.mv_resource_viewer_survey_grid_region_map",
   survey_grid: "ui.mv_resource_viewer_survey_grid_map"
 };
@@ -39,13 +43,19 @@ const VIEWER_RAW_TABLES = {
   "public.CAAL_RS3_Group": 'public."CAAL_RS3_Group"',
   "public.CAAL_Institution": 'public."CAAL_Institution"',
   "public.CAAL_Vernacular": 'public."CAAL_Vernacular"',
+  "public.CAAL_Monuments": 'public."CAAL_Monuments"',
+  "public.CAAL_Archive": 'public."CAAL_Archive"',
+  "public.CAAL_Datasets": 'public."CAAL_Datasets"',
+  "public.CAAL_Cartography": 'public."CAAL_Cartography"',
   "public.caal_grid": "ui.v_caal_grid_survey_status",
 
   "kz.CAAL_RS3_Poly": 'kz."CAAL_RS3_Poly"',
   "kz.CAAL_RS3_Line": 'kz."CAAL_RS3_Line"',
   "kz.CAAL_RS3_Group": 'kz."CAAL_RS3_Group"',
   "kz.CAAL_Institution": 'kz."CAAL_Institution"',
-  "kz.CAAL_Vernacular": 'kz."CAAL_Vernacular"'
+  "kz.CAAL_Vernacular": 'kz."CAAL_Vernacular"',
+  "kz.CAAL_Monuments": 'kz."CAAL_Monuments"',
+  "kz.CAAL_Archive": 'kz."CAAL_Archive"'
 };
 
 const ALLOWED_RECORD_TYPES = new Set([
@@ -55,7 +65,9 @@ const ALLOWED_RECORD_TYPES = new Set([
   "institution",
   "vernacular",
   "monument",
-  "archive"
+  "archive",
+  "dataset",
+  "cartography"
 ]);
 
 const ALLOWED_VIEWER_LAYER_TYPES = new Set([
@@ -517,11 +529,15 @@ function viewerDisplayJsonSql(alias = "v", lang = "en") {
       'Monument type2', ${viewerMvLangValueSql(alias, "list_monument_type2", `${p}list_monument_type2`, lang)},
       'Monument type3', ${viewerMvLangValueSql(alias, "list_monument_type3", `${p}list_monument_type3`, lang)},
       'Monument type4', ${viewerMvLangValueSql(alias, "list_monument_type4", `${p}list_monument_type4`, lang)},
+      'Monument type5', ${viewerMvLangValueSql(alias, "list_monument_type5", `${p}list_monument_type5`, lang)},
+      'Monument type6', ${viewerMvLangValueSql(alias, "list_monument_type6", `${p}list_monument_type6`, lang)},
 
       'Monument type 1', ${viewerMvLangValueSql(alias, "list_monument_type1", `${p}list_monument_type1`, lang)},
       'Monument type 2', ${viewerMvLangValueSql(alias, "list_monument_type2", `${p}list_monument_type2`, lang)},
       'Monument type 3', ${viewerMvLangValueSql(alias, "list_monument_type3", `${p}list_monument_type3`, lang)},
-      'Monument type 4', ${viewerMvLangValueSql(alias, "list_monument_type4", `${p}list_monument_type4`, lang)}
+      'Monument type 4', ${viewerMvLangValueSql(alias, "list_monument_type4", `${p}list_monument_type4`, lang)},
+      'Monument type 5', ${viewerMvLangValueSql(alias, "list_monument_type5", `${p}list_monument_type5`, lang)},
+      'Monument type 6', ${viewerMvLangValueSql(alias, "list_monument_type6", `${p}list_monument_type6`, lang)}
     ))
   `;
 }
@@ -535,7 +551,9 @@ function viewerCanonicalJsonSql(alias = "v") {
       'Monument type1', ${p}list_monument_type1_concept_id,
       'Monument type2', ${p}list_monument_type2_concept_id,
       'Monument type3', ${p}list_monument_type3_concept_id,
-      'Monument type4', ${p}list_monument_type4_concept_id
+      'Monument type4', ${p}list_monument_type4_concept_id,
+      'Monument type5', ${p}list_monument_type5_concept_id,
+      'Monument type6', ${p}list_monument_type6_concept_id
     ))
   `;
 }
@@ -548,7 +566,9 @@ function viewerMonumentTypePathDisplaySql(alias = "v", lang = "en") {
       ${viewerMvLangValueSql(alias, "list_monument_type1", `${p}list_monument_type1`, lang)},
       ${viewerMvLangValueSql(alias, "list_monument_type2", `${p}list_monument_type2`, lang)},
       ${viewerMvLangValueSql(alias, "list_monument_type3", `${p}list_monument_type3`, lang)},
-      ${viewerMvLangValueSql(alias, "list_monument_type4", `${p}list_monument_type4`, lang)}
+      ${viewerMvLangValueSql(alias, "list_monument_type4", `${p}list_monument_type4`, lang)},
+      ${viewerMvLangValueSql(alias, "list_monument_type5", `${p}list_monument_type5`, lang)},
+      ${viewerMvLangValueSql(alias, "list_monument_type6", `${p}list_monument_type6`, lang)}
     ], NULL)::text[]
   `;
 }
@@ -561,7 +581,9 @@ function viewerMonumentTypeConceptPathSql(alias = "v") {
       ${p}list_monument_type1_concept_id,
       ${p}list_monument_type2_concept_id,
       ${p}list_monument_type3_concept_id,
-      ${p}list_monument_type4_concept_id
+      ${p}list_monument_type4_concept_id,
+      ${p}list_monument_type5_concept_id,
+      ${p}list_monument_type6_concept_id
     ], NULL)::text[]
   `;
 }
@@ -866,7 +888,9 @@ function buildViewerRecord(row) {
       items: []
     },
 
-    relations: Array.isArray(row.relations) ? row.relations : []
+    relations: Array.isArray(row.relations) ? row.relations : [],
+
+    details: row.details_json || null,
   };
 }
 
@@ -1131,7 +1155,7 @@ router.get("/records", async (req, res) => {
           v.source_table,
           v.source_row_id,
           v.caal_id,
-          v.caal_id_norm,
+          lower(btrim(v.caal_id)) AS caal_id_norm,
           v.display_label,
           COUNT(*) OVER()::integer AS total_count
         FROM ${VIEWER_BASE_MV} v
@@ -1142,13 +1166,15 @@ router.get("/records", async (req, res) => {
         FROM filtered
         ORDER BY
           CASE record_type
-            WHEN 'rs3_poly' THEN 1
-            WHEN 'rs3_line' THEN 2
-            WHEN 'rs3_group' THEN 3
-            WHEN 'institution' THEN 4
+            WHEN 'monument' THEN 1
+            WHEN 'rs3_poly' THEN 2
+            WHEN 'rs3_line' THEN 3
+            WHEN 'rs3_group' THEN 4
             WHEN 'vernacular' THEN 5
-            WHEN 'monument' THEN 6
-            WHEN 'archive' THEN 7
+            WHEN 'archive' THEN 6
+            WHEN 'institution' THEN 7
+            WHEN 'dataset' THEN 8
+            WHEN 'cartography' THEN 9
             ELSE 99
           END,
           display_label NULLS LAST,
@@ -1156,7 +1182,7 @@ router.get("/records", async (req, res) => {
         LIMIT $${limitParam}
         OFFSET $${offsetParam}
       )
-      SELECT
+            SELECT
         p.record_type,
         b.dataset_label,
         p.source_schema,
@@ -1185,6 +1211,8 @@ router.get("/records", async (req, res) => {
           'Monument type2', b.list_monument_type2,
           'Monument type3', b.list_monument_type3,
           'Monument type4', b.list_monument_type4,
+          'Monument type5', b.list_monument_type5,
+          'Monument type6', b.list_monument_type6,
           'Interpretation', b.list_interpretation,
           'Comments', b.list_comments,
           'Notes on Condition', b.list_notes_condition,
@@ -1315,7 +1343,7 @@ router.get("/records-by-type", async (req, res) => {
           v.source_table,
           v.source_row_id,
           v.caal_id,
-          v.caal_id_norm,
+          lower(btrim(v.caal_id)) AS caal_id_norm,
           v.display_label,
           COUNT(*) OVER()::integer AS total_count
         FROM ${VIEWER_BASE_MV} v
@@ -1361,6 +1389,8 @@ router.get("/records-by-type", async (req, res) => {
           'Monument type2', b.list_monument_type2,
           'Monument type3', b.list_monument_type3,
           'Monument type4', b.list_monument_type4,
+          'Monument type5', b.list_monument_type5,
+          'Monument type6', b.list_monument_type6,
           'Interpretation', b.list_interpretation,
           'Comments', b.list_comments,
           'Notes on Condition', b.list_notes_condition,
@@ -1555,6 +1585,125 @@ router.get("/map", async (req, res) => {
   }
 });
 
+function viewerClusterCellSizeForZoom(zoomValue) {
+  const zoom = Number(zoomValue);
+
+  if (!Number.isFinite(zoom)) return 1.5;
+
+  if (zoom < 4) return 2.0;
+  if (zoom < 5) return 1.2;
+  if (zoom < 6) return 0.7;
+  if (zoom < 7) return 0.35;
+  if (zoom < 8) return 0.18;
+
+  return 0;
+}
+
+router.get("/clusters", async (req, res) => {
+  const session = requireSession(req, res);
+  if (!session) return;
+
+  try {
+    const filter = buildViewerWhereSql({
+      req,
+      session,
+      baseParamIndex: 1,
+      tableAlias: "v"
+    });
+
+    if (!filter.scopes.length || !filter.recordTypes.length) {
+      return res.json({
+        ok: true,
+        mode: "clusters",
+        clusters: {
+          type: "FeatureCollection",
+          features: []
+        }
+      });
+    }
+
+    const cellSize = viewerClusterCellSizeForZoom(req.query.zoom);
+
+    if (cellSize <= 0) {
+      return res.json({
+        ok: true,
+        mode: "clusters",
+        clusters: {
+          type: "FeatureCollection",
+          features: []
+        }
+      });
+    }
+
+    const cellParam = filter.values.length + 1;
+
+    const result = await pool.query(
+      `
+      WITH filtered AS (
+        SELECT
+          v.record_type,
+          v.centroid_4326
+        FROM ${VIEWER_BASE_MV} v
+        ${filter.whereSql}
+          AND v.centroid_4326 IS NOT NULL
+      ),
+      grouped AS (
+        SELECT
+          record_type,
+          ST_SnapToGrid(centroid_4326, $${cellParam}::double precision) AS grid_geom,
+          COUNT(*)::integer AS point_count,
+          ST_X(ST_Centroid(ST_Collect(centroid_4326)))::double precision AS lng,
+          ST_Y(ST_Centroid(ST_Collect(centroid_4326)))::double precision AS lat
+        FROM filtered
+        GROUP BY
+          record_type,
+          ST_SnapToGrid(centroid_4326, $${cellParam}::double precision)
+      )
+      SELECT jsonb_build_object(
+        'type', 'FeatureCollection',
+        'features', COALESCE(
+          jsonb_agg(
+            jsonb_build_object(
+              'type', 'Feature',
+              'geometry', ST_AsGeoJSON(
+                ST_SetSRID(ST_MakePoint(lng, lat), 4326),
+                6
+              )::jsonb,
+              'properties', jsonb_build_object(
+                'record_type', record_type,
+                'point_count', point_count
+              )
+            )
+            ORDER BY point_count DESC
+          ),
+          '[]'::jsonb
+        )
+      ) AS geojson
+      FROM grouped
+      `,
+      [...filter.values, cellSize]
+    );
+
+    return res.json({
+      ok: true,
+      mode: "clusters",
+      cell_size: cellSize,
+      clusters: result.rows[0]?.geojson || {
+        type: "FeatureCollection",
+        features: []
+      }
+    });
+  } catch (error) {
+    console.error("Resource viewer clusters failed:", error);
+
+    return res.status(500).json({
+      ok: false,
+      error: "Failed to load viewer clusters",
+      detail: error.message
+    });
+  }
+});
+
 router.get("/centroids", async (req, res) => {
   const session = requireSession(req, res);
   if (!session) return;
@@ -1666,6 +1815,7 @@ router.get("/record", async (req, res) => {
           v.source_row_id,
           v.caal_id,
           v.display_label,
+          v.details_json,
           ${sourceScopeCaseSql("$1", "v")} AS source_scope,
           ${storageScopeCaseSql("v")} AS storage_scope,
           ${isEditableSql("$1", "v")} AS is_editable,
@@ -1700,8 +1850,9 @@ router.get("/record", async (req, res) => {
           v.source_row_id,
           v.caal_id,
           v.display_label,
+          v.details_json,
           ${sourceScopeCaseSql("$1", "v")} AS source_scope,
-          ${storageScopeCaseSql()} AS storage_scope,
+          ${storageScopeCaseSql("v")} AS storage_scope,
           ${isEditableSql("$1", "v")} AS is_editable,
           ${viewerDisplayJsonSql("v", lang)} AS display,
           ${viewerMonumentTypePathDisplaySql("v", lang)} AS monument_type_path,
@@ -1737,33 +1888,9 @@ router.get("/record", async (req, res) => {
       });
     }
 
-    const tableKey = `${identityRow.source_schema}.${identityRow.source_table}`;
-    const rawTableSql = VIEWER_RAW_TABLES[tableKey];
-
-    if (!rawTableSql) {
-      return res.status(400).json({
-        ok: false,
-        error: "Unsupported viewer source table",
-        detail: tableKey
-      });
-    }
-
-    const rawResult = await pool.query(
-      `
-      SELECT
-        to_jsonb(t) - 'geom' AS raw
-      FROM ${rawTableSql} t
-      WHERE t.id::text = $1
-      LIMIT 1
-      `,
-      [identityRow.source_row_id]
-    );
-
-    const raw = rawResult.rows[0]?.raw || null;
-
     const record = buildViewerRecord({
       ...identityRow,
-      raw
+      raw: identityRow.details_json || null
     });
 
     record.relations = await loadViewerRelationsForCaalId(identityRow.caal_id);
@@ -1922,15 +2049,11 @@ router.get("/boundary-summary", async (req, res) => {
       ),
 
       type_counts AS (
-        SELECT record_type, COUNT(*)::integer AS n
+        SELECT
+          record_type,
+          COUNT(DISTINCT (source_schema, source_table, source_row_id, record_type))::integer AS n
         FROM members
         GROUP BY record_type
-
-        UNION ALL
-
-        SELECT 'monument' AS record_type, COUNT(*)::integer AS n
-        FROM ui.monument_admin_boundary_membership
-        WHERE boundary_id::text = $1
       ),
 
       base_rows AS (
@@ -1951,7 +2074,7 @@ router.get("/boundary-summary", async (req, res) => {
             b.list_monument_type1,
             'Unspecified'
           ) AS monument_type,
-          COUNT(*)::integer AS n
+          COUNT(DISTINCT (b.source_schema, b.source_table, b.source_row_id, b.record_type))::integer AS n
         FROM base_rows b
         WHERE b.record_type IN ('rs3_poly', 'rs3_line', 'rs3_group')
         GROUP BY 1
