@@ -988,6 +988,42 @@ function emptyFeatureCollection() {
 // ========================================================
 // ROUTES
 // ========================================================
+// cache status bar read endpoint
+router.get("/cache-status", async (req, res) => {
+  const session = requireSession(req, res);
+  if (!session) return;
+
+  try {
+    const result = await pool.query(
+      `
+      SELECT
+        cache_key,
+        refreshed_at,
+        refreshed_by,
+        checked_at,
+        checked_by,
+        COALESCE(checked_at, refreshed_at) AS display_at,
+        note
+      FROM ui.app_cache_status
+      WHERE cache_key = 'resource_viewer_base_cache'
+      LIMIT 1
+      `
+    );
+
+    return res.json({
+      ok: true,
+      status: result.rows[0] || null
+    });
+  } catch (error) {
+    console.error("Viewer cache status fetch failed:", error);
+
+    return res.status(500).json({
+      ok: false,
+      error: "Viewer cache status fetch failed",
+      detail: error.message
+    });
+  }
+});
 
 router.get("/lookups", async (req, res) => {
   const session = requireSession(req, res);
@@ -1951,7 +1987,7 @@ router.get("/record", async (req, res) => {
     });
 
     record.relations = await loadViewerRelationsForCaalId(identityRow.caal_id);
-    
+
     return res.json({
       ok: true,
       record

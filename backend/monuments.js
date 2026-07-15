@@ -3071,9 +3071,12 @@ router.get("/monuments/cache-status", async (req, res) => {
         cache_key,
         refreshed_at,
         refreshed_by,
+        checked_at,
+        checked_by,
+        COALESCE(checked_at, refreshed_at) AS display_at,
         note
       FROM ui.app_cache_status
-      WHERE cache_key = 'monuments_caal_list_cache'
+      WHERE cache_key = 'monuments_caal_cache'
       LIMIT 1
       `
     );
@@ -4417,10 +4420,14 @@ router.post("/monuments/admin/refresh-caal-cache", async (req, res) => {
           cache_key,
           refreshed_at,
           refreshed_by,
+          checked_at,
+          checked_by,
           note
         )
         VALUES (
           $1,
+          now(),
+          $2,
           now(),
           $2,
           $3
@@ -4429,6 +4436,8 @@ router.post("/monuments/admin/refresh-caal-cache", async (req, res) => {
         DO UPDATE SET
           refreshed_at = EXCLUDED.refreshed_at,
           refreshed_by = EXCLUDED.refreshed_by,
+          checked_at = EXCLUDED.checked_at,
+          checked_by = EXCLUDED.checked_by,
           note = EXCLUDED.note
         `,
         [cacheKey, refreshedBy, note]

@@ -1833,7 +1833,13 @@ async function loadMonumentCacheStatus() {
 
     const data = await response.json();
 
-    if (!response.ok || !data.ok || !data.status?.refreshed_at) {
+    const displayAt =
+      data.status?.display_at ||
+      data.status?.checked_at ||
+      data.status?.refreshed_at ||
+      null;
+
+    if (!response.ok || !data.ok || !displayAt) {
       monumentCacheStatusLine.hidden = true;
       return;
     }
@@ -1841,7 +1847,7 @@ async function loadMonumentCacheStatus() {
     monumentCacheStatusLine.classList.remove("cache-status-unavailable");
 
     monumentCacheStatusLine.textContent =
-      `${t("caal_browse_data_last_updated", "CAAL browse data last checked")}: ${monumentFormatCacheTimestamp(data.status.refreshed_at)}`;
+      `${t("caal_browse_data_last_updated", "CAAL browse data last checked")}: ${monumentFormatCacheTimestamp(displayAt)}`;
 
     monumentCacheStatusLine.hidden = false;
   } catch (error) {

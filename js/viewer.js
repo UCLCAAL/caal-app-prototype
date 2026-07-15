@@ -79,6 +79,7 @@ const viewerCloseRecordBtn = document.getElementById("viewerCloseRecordBtn");
 
 const viewerLoadingIndicator = document.getElementById("viewerLoadingIndicator");
 const viewerStatusLine = document.getElementById("viewerStatusLine");
+const viewerCacheStatusLine = document.getElementById("viewerCacheStatusLine");
 
 const mapElement = document.getElementById("map");
 const mapStatusLine = document.getElementById("mapStatusLine");
@@ -8527,6 +8528,86 @@ function wireViewerEvents() {
   }
 }
 
+function viewerCacheLocale() {
+  const lang =
+    (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
+    window.appSession?.profile?.preferred_language ||
+    "en";
+
+  const localeByLang = {
+    en: "en-GB",
+    ru: "ru-RU",
+    zh: "zh-CN",
+    kk: "kk-KZ",
+    ky: "ky-KG",
+    tg: "tg-TJ",
+    tk: "tk-TM",
+    uz: "uz-UZ"
+  };
+
+  return localeByLang[lang] || "en-GB";
+}
+
+function viewerFormatCacheTimestamp(value) {
+  if (!value) return "";
+
+  const date = new Date(value);
+
+  if (Number.isNaN(date.getTime())) {
+    return "";
+  }
+
+  return new Intl.DateTimeFormat(viewerCacheLocale(), {
+    year: "numeric",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).format(date);
+}
+
+async function loadViewerCacheStatus() {
+  if (!viewerCacheStatusLine) return;
+
+  try {
+    const response = await fetch("/api/viewer/cache-status", {
+      method: "GET",
+      credentials: "include"
+    });
+
+    const data = await response.json();
+
+    const displayAt =
+      data.status?.display_at ||
+      data.status?.checked_at ||
+      data.status?.refreshed_at ||
+      null;
+
+    if (!response.ok || !data.ok || !displayAt) {
+      viewerCacheStatusLine.hidden = true;
+      return;
+    }
+
+    viewerCacheStatusLine.classList.remove("cache-status-unavailable");
+
+    viewerCacheStatusLine.textContent =
+      `${t("caal_viewer_data_last_checked", "CAAL viewer data last checked")}: ${viewerFormatCacheTimestamp(displayAt)}`;
+
+    viewerCacheStatusLine.hidden = false;
+  } catch (error) {
+    console.warn("Viewer cache status unavailable:", error);
+
+    viewerCacheStatusLine.textContent =
+      t(
+        "caal_viewer_data_update_time_unavailable",
+        "CAAL viewer data update time unavailable"
+      );
+
+    viewerCacheStatusLine.classList.add("cache-status-unavailable");
+    viewerCacheStatusLine.hidden = false;
+  }
+}
+
 // --------------------------------------------------------
 // INIT
 // --------------------------------------------------------
@@ -8628,6 +8709,7 @@ async function initViewerPage() {
   try {
     await loadViewerLabels();
     await loadViewerLookups();
+    await loadViewerCacheStatus();
 
     configureScopeControlsForSession({ setDefault: true });
     resetViewerLayerSelectionsToDefault();
@@ -8694,6 +8776,7 @@ document.addEventListener("app:languageChanged", async () => {
 
     await loadViewerLookups();
     populateViewerFilterLookups();
+    await loadViewerCacheStatus();
 
     const previouslyOpenTypes = VIEWER_RECORD_TYPES.filter(
       (type) => !viewerCollapsedResultGroups.has(type)
