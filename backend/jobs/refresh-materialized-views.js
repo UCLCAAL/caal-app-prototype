@@ -8,7 +8,8 @@ const REFRESH_LOCK_ID = 823401;
 // force a refresh when the last one is older than this. Covers changes the
 // Tstamp check cannot see (row DELETEs, thesaurus/lookup edits that alter
 // resolved labels without touching source-row timestamps).
-const MAX_SKIP_AGE_MS = 6 * 60 * 60 * 1000; // 6 hours
+const MAX_SKIP_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
+const FORCE_REFRESH_HOUR_UTC = 2; // overnight UTC
 
 // Change-check for the resource viewer family: any source row edited since
 // the last recorded refresh of the base cache?
@@ -94,7 +95,7 @@ const MATERIALIZED_VIEWS = [
   // map MVs are skipped automatically when the base is skipped.
   // --------------------------------------------------------------------
   {
-    name: "ui.mv_resource_viewer_base",
+  name: "ui.mv_resource_viewer_base",
     cacheKey: "resource_viewer_base_cache",
     changeCheck: VIEWER_SOURCES_CHANGED_SQL
   },
@@ -103,11 +104,11 @@ const MATERIALIZED_VIEWS = [
   { name: "ui.mv_resource_viewer_rs3_group_map",    cacheKey: "resource_viewer_rs3_group_map_cache",    dependsOn: "ui.mv_resource_viewer_base" },
   { name: "ui.mv_resource_viewer_institution_map",  cacheKey: "resource_viewer_institution_map_cache",  dependsOn: "ui.mv_resource_viewer_base" },
   { name: "ui.mv_resource_viewer_vernacular_map",   cacheKey: "resource_viewer_vernacular_map_cache",   dependsOn: "ui.mv_resource_viewer_base" },
-  { name: "ui.mv_resource_viewer_survey_grid_map",  cacheKey: "resource_viewer_survey_grid_map_cache",  dependsOn: "ui.mv_resource_viewer_base" },
   { name: "ui.mv_resource_viewer_monument_map",     cacheKey: "resource_viewer_monument_map_cache",     dependsOn: "ui.mv_resource_viewer_base" },
   { name: "ui.mv_resource_viewer_dataset_map",      cacheKey: "resource_viewer_dataset_map_cache",      dependsOn: "ui.mv_resource_viewer_base" },
   { name: "ui.mv_resource_viewer_cartography_map",  cacheKey: "resource_viewer_cartography_map_cache",  dependsOn: "ui.mv_resource_viewer_base" },
-  { name: "ui.mv_resource_viewer_survey_grid_region_map", cacheKey: "resource_viewer_survey_grid_region_map_cache", dependsOn: "ui.mv_resource_viewer_base" }
+  { name: "ui.mv_resource_viewer_survey_grid_region_map", cacheKey: "resource_viewer_survey_grid_region_map_cache", dependsOn: "ui.mv_resource_viewer_base" },
+  { name: "ui.mv_resource_viewer_survey_grid_map",  cacheKey: "resource_viewer_survey_grid_map_cache",  dependsOn: "ui.mv_resource_viewer_base" }
 
 ];
 
@@ -115,7 +116,6 @@ const MATERIALIZED_VIEWS = [
 // dependents and the boundary rebuild can skip in sympathy.
 const refreshedThisRun = new Set();
 const skippedThisRun = new Set();
-
 
 async function cacheAgeMs(cacheKey) {
   const { rows } = await pool.query(
@@ -127,40 +127,8 @@ async function cacheAgeMs(cacheKey) {
   return Number(rows[0].age_ms);
 }
 
-async function markCacheRefreshed(cacheKey, viewName) {
-  if (!cacheKey) return;
-
-  await pool.query(
-    `
-    INSERT INTO ui.app_cache_status (
-      cache_key,
-      refreshed_at,
-      refreshed_by,
-      checked_at,
-      checked_by,
-      note
-    )
-    VALUES (
-      $1,
-      now(),
-      'cron',
-      now(),
-      'cron',
-      $2
-    )
-    ON CONFLICT (cache_key)
-    DO UPDATE SET
-      refreshed_at = EXCLUDED.refreshed_at,
-      refreshed_by = EXCLUDED.refreshed_by,
-      checked_at = EXCLUDED.checked_at,
-      checked_by = EXCLUDED.checked_by,
-      note = EXCLUDED.note
-    `,
-    [
-      cacheKey,
-      `${viewName} refreshed by materialized-view cron job`
-    ]
-  );
+function isOvernightForceRefreshWindow(now = new Date()) {
+  return now.getUTCHours() === FORCE_REFRESH_HOUR_UTC;
 }
 
 async function shouldSkip(viewConfig) {
@@ -176,10 +144,15 @@ async function shouldSkip(viewConfig) {
 
   if (!changeCheck) return false;
 
-  // Staleness bound: never skip past MAX_SKIP_AGE_MS, so deletes and
-  // thesaurus edits (invisible to Tstamp checks) are picked up within 6h.
+  // Staleness bound: only force heavy refreshes in the overnight window.
+  // This still catches deletes / lookup edits, but avoids surprise heavy
+  // refreshes during daytime hourly runs.
   const ageMs = await cacheAgeMs(cacheKey);
-  if (ageMs > MAX_SKIP_AGE_MS) return false;
+
+  if (ageMs > MAX_SKIP_AGE_MS && isOvernightForceRefreshWindow()) {
+    console.log(`[MV refresh] Forcing ${name}; cache age exceeds overnight threshold`);
+    return false;
+  }
 
   const { rows } = await pool.query(changeCheck);
   const changed = rows.length > 0 && rows[0].changed === true;
