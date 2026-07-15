@@ -540,16 +540,28 @@ body {
   border-radius: 3px;
 }
 
-.viewer-legend-cluster-monuments {
-  background: rgba(100, 116, 139, 0.82);
-  border: 2px solid rgba(255, 255, 255, 0.95);
-  box-shadow: 0 0 0 1px rgba(100, 116, 139, 0.55);
+.viewer-legend-cluster-monument,
+.viewer-legend-cluster-rs,
+.viewer-legend-cluster-vernacular {
+  width: 20px;
+  height: 20px;
+  border-radius: 999px;
+  display: inline-block;
+  border: 3px solid rgba(255, 255, 255, 0.95);
+  box-shadow: 0 0 0 1px rgba(31, 41, 55, 0.35);
+  flex: 0 0 20px;
 }
 
-.viewer-legend-monument {
-  background: #64748B;
-  border: 2px solid rgba(255, 255, 255, 0.95);
-  box-shadow: 0 0 0 1px rgba(100, 116, 139, 0.55);
+.viewer-legend-cluster-monument {
+  background: rgba(100, 116, 139, 0.78);
+}
+
+.viewer-legend-cluster-rs {
+  background: rgba(55, 65, 81, 0.78);
+}
+
+.viewer-legend-cluster-vernacular {
+  background: rgba(34, 197, 94, 0.78);
 }
 
 .viewer-legend-grid {

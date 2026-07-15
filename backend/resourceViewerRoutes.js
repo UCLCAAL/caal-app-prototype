@@ -841,6 +841,55 @@ function mapSimplifyToleranceForZoom(zoomValue) {
 // RECORD BUILDERS
 // ========================================================
 
+async function loadViewerRawSourceRow(identityRow) {
+  const sourceSchema = String(identityRow?.source_schema || "").trim();
+  const sourceTable = String(identityRow?.source_table || "").trim();
+  const sourceRowId = String(identityRow?.source_row_id || "").trim();
+
+  if (!sourceSchema || !sourceTable || !sourceRowId) {
+    return null;
+  }
+
+  const rawTableKey = `${sourceSchema}.${sourceTable}`;
+  const safeTableSql = VIEWER_RAW_TABLES[rawTableKey];
+
+  if (!safeTableSql) {
+    return null;
+  }
+
+  const result = await pool.query(
+    `
+    SELECT
+      jsonb_strip_nulls(
+        to_jsonb(t)
+          - 'geom'
+          - 'geometry'
+          - 'geom_4326'
+          - 'centroid_4326'
+      ) AS raw
+    FROM ${safeTableSql} t
+    WHERE t.id::text = $1
+    LIMIT 1
+    `,
+    [sourceRowId]
+  );
+
+  return result.rows[0]?.raw || null;
+}
+
+function viewerStructuredDetailSections(detailsJson) {
+  if (
+    detailsJson &&
+    typeof detailsJson === "object" &&
+    !Array.isArray(detailsJson) &&
+    Array.isArray(detailsJson.sections)
+  ) {
+    return detailsJson.sections;
+  }
+
+  return [];
+}
+
 function buildViewerRecord(row) {
   return {
     identity: {
@@ -879,9 +928,10 @@ function buildViewerRecord(row) {
 
     geometry: row.geometry || null,
 
-    raw: row.raw || null,
+    raw: row.raw || {},
     display: row.display || {},
     canonical: row.canonical || {},
+    detail_sections: Array.isArray(row.detail_sections) ? row.detail_sections : [],
 
     relation_summary: row.relation_summary || {
       count: 0,
@@ -1588,13 +1638,13 @@ router.get("/map", async (req, res) => {
 function viewerClusterCellSizeForZoom(zoomValue) {
   const zoom = Number(zoomValue);
 
-  if (!Number.isFinite(zoom)) return 1.5;
+  if (!Number.isFinite(zoom)) return 2.5;
 
-  if (zoom < 4) return 2.0;
-  if (zoom < 5) return 1.2;
-  if (zoom < 6) return 0.7;
-  if (zoom < 7) return 0.35;
-  if (zoom < 8) return 0.18;
+  if (zoom < 4) return 4.0;
+  if (zoom < 5) return 2.5;
+  if (zoom < 6) return 1.4;
+  if (zoom < 7) return 0.7;
+  if (zoom < 8) return 0.35;
 
   return 0;
 }
@@ -1888,13 +1938,20 @@ router.get("/record", async (req, res) => {
       });
     }
 
+    const rawSourceRow = await loadViewerRawSourceRow(identityRow);
+
     const record = buildViewerRecord({
       ...identityRow,
-      raw: identityRow.details_json || null
+
+      // Full detail pane uses original table fields.
+      raw: rawSourceRow || {},
+
+      // Optional structured sections stay separate.
+      detail_sections: viewerStructuredDetailSections(identityRow.details_json)
     });
 
     record.relations = await loadViewerRelationsForCaalId(identityRow.caal_id);
-
+    
     return res.json({
       ok: true,
       record

@@ -961,6 +961,361 @@ function getRelatedRecordUrl(caalId, recordType, sourceScope = null) {
   return buildRecordUrl("viewer.html", id);
 }
 
+function waitForMapExportFrame(mapInstance) {
+  return new Promise((resolve) => {
+    if (!mapInstance) {
+      resolve();
+      return;
+    }
+
+    let resolved = false;
+
+    function finish() {
+      if (resolved) return;
+      resolved = true;
+      resolve();
+    }
+
+    try {
+      mapInstance.triggerRepaint();
+
+      mapInstance.once("render", () => {
+        requestAnimationFrame(() => {
+          requestAnimationFrame(finish);
+        });
+      });
+
+      setTimeout(finish, 900);
+    } catch (error) {
+      console.warn("Map export wait failed:", error);
+      finish();
+    }
+  });
+}
+
+async function downloadCurrentMapImage(options = {}) {
+  const {
+    mapInstance = window.map || window.viewerMap || null,
+    filenamePrefix = "caal-map",
+    labelScope = "none",
+    labelMode = "name",
+
+    hideLabelsForExport =
+      typeof temporarilyHideLiveMapLabelsForExport === "function"
+        ? temporarilyHideLiveMapLabelsForExport
+        : null,
+
+    restoreLabelsAfterExport =
+      typeof restoreLiveMapLabelsAfterExport === "function"
+        ? restoreLiveMapLabelsAfterExport
+        : null,
+
+    waitForIdle =
+      typeof waitForMapIdle === "function"
+        ? waitForMapIdle
+        : null,
+
+    drawLabels =
+      typeof drawExportMapLabels === "function"
+        ? drawExportMapLabels
+        : null,
+
+    getLegendItems =
+      typeof getCurrentMapLegendItems === "function"
+        ? getCurrentMapLegendItems
+        : null,
+
+    calculateScaleBar =
+      typeof calculateMapScaleBar === "function"
+        ? calculateMapScaleBar
+        : null
+  } = options;
+
+  if (!mapInstance) {
+    console.warn("No map instance available for download.");
+    return;
+  }
+
+  const previousLiveLabelVisibility = hideLabelsForExport
+    ? hideLabelsForExport()
+    : null;
+
+  await waitForMapExportFrame(mapInstance);
+
+  try {
+    const mapCanvas = mapInstance.getCanvas();
+
+    const exportCanvas = document.createElement("canvas");
+    exportCanvas.width = mapCanvas.width;
+    exportCanvas.height = mapCanvas.height;
+
+    const ctx = exportCanvas.getContext("2d");
+
+    ctx.clearRect(0, 0, exportCanvas.width, exportCanvas.height);
+    ctx.drawImage(
+      mapCanvas,
+      0,
+      0,
+      mapCanvas.width,
+      mapCanvas.height,
+      0,
+      0,
+      exportCanvas.width,
+      exportCanvas.height
+    );
+
+    const width = exportCanvas.width;
+    const height = exportCanvas.height;
+
+    const uiScale = Math.max(1, width / 1400);
+
+    function scaled(px) {
+      return Math.round(px * uiScale);
+    }
+
+    // Draw only the export labels.
+    if (drawLabels) {
+      drawLabels(ctx, exportCanvas, labelScope, labelMode, mapInstance);
+    }
+
+    // Shared styles
+    ctx.font = "23px Arial, sans-serif";
+    ctx.textBaseline = "middle";
+
+   // --- CAAL watermark / accreditation ---
+    const watermarkText = "CAAL - Central Asian Archaeological Landscapes";
+
+    ctx.save();
+    ctx.globalAlpha = 0.96;
+    ctx.fillStyle = "rgba(255, 255, 255, 0.93)";
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.16)";
+    ctx.lineWidth = 1;
+
+    ctx.font = `bold ${scaled(18)}px Arial, sans-serif`;
+    ctx.textBaseline = "middle";
+
+    const watermarkPaddingX = scaled(16);
+    const watermarkPaddingY = scaled(12);
+    const watermarkTextWidth = ctx.measureText(watermarkText).width;
+
+    const watermarkW = Math.ceil(watermarkTextWidth + watermarkPaddingX * 2);
+    const watermarkH = scaled(44);
+    const watermarkX = width - watermarkW - scaled(16);
+    const watermarkY = height - watermarkH - scaled(16);
+
+    ctx.beginPath();
+    ctx.roundRect(watermarkX, watermarkY, watermarkW, watermarkH, scaled(10));
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = "#263238";
+    ctx.fillText(
+      watermarkText,
+      watermarkX + watermarkPaddingX,
+      watermarkY + watermarkH / 2
+    );
+
+    ctx.restore();
+
+    // --- Legend / map key ---
+    const legendItems = getLegendItems ? getLegendItems() : [];
+
+    if (legendItems.length) {
+      ctx.save();
+
+      const legendTitleSize = scaled(20);
+      const legendTextSize = scaled(17);
+      const rowH = scaled(30);
+      const legendPadding = scaled(16);
+      const symbolRadius = scaled(8);
+      const symbolGap = scaled(16);
+
+      ctx.font = `bold ${legendTitleSize}px Arial, sans-serif`;
+      const titleText = t("map_key", "Map key");
+
+      ctx.font = `${legendTextSize}px Arial, sans-serif`;
+      const maxLabelWidth = Math.max(
+        ...legendItems.map((item) => ctx.measureText(item.label).width)
+      );
+
+      const legendW = Math.ceil(
+        legendPadding * 2 +
+        symbolRadius * 2 +
+        symbolGap +
+        maxLabelWidth
+      );
+
+      const legendH = Math.ceil(
+        legendPadding * 2 +
+        scaled(22) +
+        legendItems.length * rowH
+      );
+
+      const legendX = width - legendW - scaled(16);
+      const legendY = watermarkY - legendH - scaled(12);
+
+      ctx.fillStyle = "rgba(255, 255, 255, 0.93)";
+      ctx.strokeStyle = "rgba(0, 0, 0, 0.16)";
+      ctx.lineWidth = 1;
+
+      ctx.beginPath();
+      ctx.roundRect(legendX, legendY, legendW, legendH, scaled(10));
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = "#263238";
+      ctx.font = `bold ${legendTitleSize}px Arial, sans-serif`;
+      ctx.textBaseline = "middle";
+      ctx.fillText(titleText, legendX + legendPadding, legendY + legendPadding + scaled(6));
+
+      legendItems.forEach((item, index) => {
+        const y = legendY + legendPadding + scaled(28) + index * rowH;
+        const symbolX = legendX + legendPadding + symbolRadius;
+        const textX = symbolX + symbolRadius + symbolGap;
+
+        if (item.type === "selected") {
+          ctx.beginPath();
+          ctx.arc(symbolX, y, symbolRadius + scaled(3), 0, Math.PI * 2);
+          ctx.fillStyle = "rgba(255, 255, 255, 0.25)";
+          ctx.fill();
+          ctx.strokeStyle = item.color;
+          ctx.lineWidth = scaled(3);
+          ctx.stroke();
+
+          ctx.beginPath();
+          ctx.arc(symbolX, y, symbolRadius - scaled(2), 0, Math.PI * 2);
+          ctx.fillStyle = item.color;
+          ctx.fill();
+          ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
+          ctx.lineWidth = scaled(2);
+          ctx.stroke();
+        } else {
+          ctx.beginPath();
+          ctx.arc(symbolX, y, symbolRadius, 0, Math.PI * 2);
+          ctx.fillStyle = item.color;
+          ctx.fill();
+          ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
+          ctx.lineWidth = scaled(2);
+          ctx.stroke();
+        }
+
+        ctx.fillStyle = "#263238";
+        ctx.font = `${legendTextSize}px Arial, sans-serif`;
+        ctx.fillText(item.label, textX, y);
+      });
+
+      ctx.restore();
+    }
+
+    // --- Scale bar ---
+    const scale = calculateScaleBar
+    ? calculateScaleBar(mapInstance)
+    : null;
+
+    if (scale) {
+      ctx.save();
+
+      const scaleTextSize = scaled(17);
+      const scalePaddingX = scaled(14);
+      const scalePaddingY = scaled(10);
+      const barH = scaled(9);
+
+      ctx.font = `${scaleTextSize}px Arial, sans-serif`;
+      ctx.textBaseline = "middle";
+
+      const labelWidth = ctx.measureText(scale.label).width;
+      const pillW = Math.ceil(scale.widthPx + labelWidth + scalePaddingX * 3);
+      const pillH = scaled(42);
+
+      const scaleX = scaled(24);
+      const scaleY = height - scaled(38);
+
+      ctx.fillStyle = "rgba(255, 255, 255, 0.93)";
+      ctx.strokeStyle = "rgba(0, 0, 0, 0.18)";
+      ctx.lineWidth = 1;
+
+      ctx.beginPath();
+      ctx.roundRect(scaleX - scalePaddingX, scaleY - pillH / 2, pillW, pillH, scaled(10));
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.strokeStyle = "#263238";
+      ctx.lineWidth = scaled(3);
+
+      ctx.beginPath();
+      ctx.moveTo(scaleX, scaleY);
+      ctx.lineTo(scaleX + scale.widthPx, scaleY);
+      ctx.stroke();
+
+      ctx.lineWidth = scaled(2);
+      ctx.beginPath();
+      ctx.moveTo(scaleX, scaleY - barH);
+      ctx.lineTo(scaleX, scaleY + barH);
+      ctx.moveTo(scaleX + scale.widthPx, scaleY - barH);
+      ctx.lineTo(scaleX + scale.widthPx, scaleY + barH);
+      ctx.stroke();
+
+      ctx.fillStyle = "#263238";
+      ctx.font = `${scaleTextSize}px Arial, sans-serif`;
+      ctx.fillText(scale.label, scaleX + scale.widthPx + scalePaddingX, scaleY);
+
+      ctx.restore();
+    }
+
+    // --- Download ---
+    const filename = `${filenamePrefix}-${new Date().toISOString().slice(0, 10)}.png`;
+
+    const link = document.createElement("a");
+    link.href = exportCanvas.toDataURL("image/png");
+    link.download = filename;
+    link.click();
+
+   } finally {
+    if (restoreLabelsAfterExport) {
+      restoreLabelsAfterExport(previousLiveLabelVisibility);
+    }
+  }
+}
+
+// scale distance helper
+function calculateMapScaleBar(mapInstance = window.map || window.viewerMap || null) {
+  if (!mapInstance) return null;
+
+  const canvas = mapInstance.getCanvas();
+  const center = mapInstance.getCenter();
+  const y = canvas.height - 80;
+
+  const leftLngLat = mapInstance.unproject([80, y]);
+  const rightLngLat = mapInstance.unproject([280, y]);
+
+  const metres = leftLngLat.distanceTo(rightLngLat);
+
+  const niceDistances = [
+    100, 200, 500,
+    1000, 2000, 5000,
+    10000, 20000, 50000,
+    100000, 200000, 500000,
+    1000000
+  ];
+
+  const target = niceDistances.find((d) => d >= metres / 2) || niceDistances[niceDistances.length - 1];
+
+  const metresPerPixel = metres / 200;
+  const widthPx = target / metresPerPixel;
+
+  const label = target >= 1000
+    ? `${target / 1000} km`
+    : `${target} m`;
+
+    return {
+    widthPx: Math.max(90, Math.min(widthPx, 320)),
+    label
+  };
+}
+
+window.calculateMapScaleBar = calculateMapScaleBar;
+
+
 async function loadDirectLinkedRecord(caalId) {
   if (!caalId) return null;
 

@@ -85,6 +85,8 @@ const mapStatusLine = document.getElementById("mapStatusLine");
 
 let mapOptionsBtn = document.getElementById("mapOptionsBtn");
 let resetMapBtn = document.getElementById("resetMapBtn");
+let downloadMapBtn = document.getElementById("downloadMapBtn");
+
 const closeMapOptionsBtn = document.getElementById("closeMapOptionsBtn");
 const mapOptionsPanel = document.getElementById("mapOptionsPanel");
 
@@ -375,6 +377,7 @@ const VIEWER_SURVEY_GRID_REGION_MAX_ZOOM = 5;
 const VIEWER_RS3_DETAIL_GROUPS = [
   {
     title: "Basics",
+    custom: "rs_basics",
     fields: [
       "CAAL_ID",
       "Country",
@@ -384,6 +387,7 @@ const VIEWER_RS3_DETAIL_GROUPS = [
   },
   {
     title: "Type of Anomaly",
+    custom: "rs_type_of_anomaly",
     fields: [
       "Digitised Dataset"
     ],
@@ -416,6 +420,7 @@ const VIEWER_RS3_DETAIL_GROUPS = [
   },
   {
     title: "Interpretation",
+    custom: "rs_interpretation",
     subgroups: [
       {
         title: "Monument types",
@@ -445,6 +450,7 @@ const VIEWER_RS3_DETAIL_GROUPS = [
   },
   {
     title: "Measurements",
+    custom: "rs_measurements",
     subgroups: [
       {
         title: "Measurement 1",
@@ -482,6 +488,7 @@ const VIEWER_RS3_DETAIL_GROUPS = [
   },
   {
     title: "Condition Assessment",
+    custom: "rs_condition",
     subgroups: [
       {
         title: "Overall condition",
@@ -517,6 +524,7 @@ const VIEWER_RS3_DETAIL_GROUPS = [
   },
   {
     title: "Risk Assessment",
+    custom: "rs_risk",
     subgroups: [
       {
         title: "Types of risk",
@@ -4806,48 +4814,33 @@ function renderViewerSubgroup(raw, subgroup, record = null) {
 }
 
 function renderViewerDetailGroup(raw, group, record) {
-  if (group.title === "Basics") {
-    return renderViewerBasicsGroup(raw, record);
-  }
+  switch (group.custom) {
+    case "rs_basics":
+      return renderViewerBasicsGroup(raw, record);
 
-  if (group.title === "Type of Anomaly") {
-    return renderViewerTypeOfAnomalyGroup(raw);
-  }
+    case "rs_type_of_anomaly":
+      return renderViewerTypeOfAnomalyGroup(raw);
 
-  if (group.title === "Measurements") {
-    return renderViewerMeasurementsGroup(raw);
-  }
+    case "rs_measurements":
+      return renderViewerMeasurementsGroup(raw);
 
-  if (group.title === "Interpretation") {
-    return renderViewerInterpretationGroup(raw, record);
-  }
+    case "rs_interpretation":
+      return renderViewerInterpretationGroup(raw, record);
 
-  if (group.title === "Condition Assessment") {
-    return renderViewerConditionAssessmentGroup(raw);
-  }
+    case "rs_condition":
+      return renderViewerConditionAssessmentGroup(raw);
 
-  if (group.title === "Risk Assessment") {
-    return renderViewerRiskAssessmentGroup(raw);
-  }
+    case "rs_risk":
+      return renderViewerRiskAssessmentGroup(raw);
 
-  if (group.custom === "related_resources") {
-    return renderViewerRelatedResourcesGroup(record);
-  }
+    case "related_resources":
+      return renderViewerRelatedResourcesGroup(record);
 
-  if (group.custom === "metadata") {
-    return renderViewerMetadataGroup(raw, record);
-  }
+    case "metadata":
+      return renderViewerMetadataGroup(raw, record);
 
-  if (group.custom === "monument_main") {
-    return renderViewerMonumentMainGroup(raw, record);
-  }
-
-  if (group.custom === "monument_administration") {
-    return renderViewerMonumentAdministrationGroup(raw, record);
-  }
-
-  if (group.custom === "monument_measurements") {
-    return renderViewerMonumentMeasurementsGroup(raw, record);
+    default:
+      break;
   }
 
   const rows = (group.fields || [])
@@ -4876,8 +4869,9 @@ function renderViewerDetailGroup(raw, group, record) {
 }
 
 function renderViewerStructuredDetailsFromJson(record) {
-  const raw = record?.raw || {};
-  const sections = Array.isArray(raw.sections) ? raw.sections : [];
+  const sections = Array.isArray(record?.detail_sections)
+    ? record.detail_sections
+    : [];
 
   if (!sections.length) return "";
 
@@ -5642,9 +5636,16 @@ function initViewerMap() {
     style: getBasemapStyle(basemapSelect?.value || "maptiler-hybrid"),
     center: defaultMapView.center,
     zoom: defaultMapView.zoom,
+
     preserveDrawingBuffer: true,
+    canvasContextAttributes: {
+      preserveDrawingBuffer: true
+    },
+
     locale: getMapLibreLocale()
   });
+
+  window.viewerMap = viewerMap;
 
   viewerMap.addControl(new maplibregl.NavigationControl(), "top-right");
 
@@ -5656,6 +5657,7 @@ function initViewerMap() {
   );
 
   addMapResetControl();
+  addMapDownloadControl();
   addMapOptionsControl();
   addViewerLegendControl();
 
@@ -5959,22 +5961,12 @@ async function loadViewerCentroids() {
       };
     });
 
-    if (viewerCentroidsAbortController) {
-      viewerCentroidsAbortController.abort();
-      viewerCentroidsAbortController = null;
-    }
-
     drawViewerCentroidLayers();
     updateMapStatusLine();
     return;
   }
 
-  if (viewerCentroidsAbortController) {
-    viewerCentroidsAbortController.abort();
-  }
-
-  viewerCentroidsAbortController = new AbortController();
-  const signal = viewerCentroidsAbortController.signal;
+  const mode = getViewerMapMode();
 
   const params = buildViewerQueryParams({
     includePaging: false,
@@ -5984,19 +5976,22 @@ async function loadViewerCentroids() {
   params.set("recordTypes", selectedLayers.join(","));
   params.set("zoom", String(viewerMap.getZoom()));
 
+  const endpoint = mode === "clusters"
+    ? "/api/viewer/clusters"
+    : "/api/viewer/centroids";
+
   let data;
 
   try {
-    const response = await fetch(`/api/viewer/centroids?${params.toString()}`, {
+    const response = await fetch(`${endpoint}?${params.toString()}`, {
       method: "GET",
-      credentials: "include",
-      signal
+      credentials: "include"
     });
 
     data = await response.json();
 
     if (!response.ok || !data.ok) {
-      throw new Error(data.detail || data.error || "Failed to load viewer centroids");
+      throw new Error(data.detail || data.error || "Failed to load viewer map overview");
     }
   } catch (error) {
     if (error.name === "AbortError") {
@@ -6004,15 +5999,16 @@ async function loadViewerCentroids() {
     }
 
     throw error;
-  } finally {
-    if (viewerCentroidsAbortController?.signal === signal) {
-      viewerCentroidsAbortController = null;
-    }
   }
 
-  const allFeatures = Array.isArray(data.centroids?.features)
-    ? data.centroids.features
-    : [];
+  const allFeatures =
+    mode === "clusters"
+      ? Array.isArray(data.clusters?.features)
+        ? data.clusters.features
+        : []
+      : Array.isArray(data.centroids?.features)
+        ? data.centroids.features
+        : [];
 
   Object.entries(VIEWER_CLUSTER_GROUPS).forEach(([groupKey, group]) => {
     viewerCentroidGeojsonByGroup[groupKey] = {
@@ -6042,6 +6038,7 @@ function drawViewerCentroidLayers() {
 
   bindViewerCentroidEvents();
   updateViewerMapModeVisibility();
+  bringViewerLayersToFront();
 }
 
 function ensureViewerCentroidSource(group, geojson) {
@@ -6055,9 +6052,7 @@ function ensureViewerCentroidSource(group, geojson) {
   viewerMap.addSource(group.source, {
     type: "geojson",
     data: geojson,
-    cluster: true,
-    clusterMaxZoom: VIEWER_CLUSTER_MAX_ZOOM,
-    clusterRadius: 45
+    cluster: false
   });
 }
 
@@ -6067,16 +6062,21 @@ function ensureViewerCentroidLayers(group) {
       id: group.clusters,
       type: "circle",
       source: group.source,
-      filter: ["has", "point_count"],
+      filter: [
+        "all",
+        ["has", "point_count"],
+        [">", ["get", "point_count"], 1]
+      ],
       paint: {
         "circle-radius": [
           "step",
           ["get", "point_count"],
-          14,
-          20, 18,
-          100, 23,
-          500, 29,
-          1500, 36
+          12,
+          20, 15,
+          100, 19,
+          500, 24,
+          1500, 30,
+          5000, 36
         ],
         "circle-color": group.colour,
         "circle-opacity": 0.78,
@@ -6091,9 +6091,22 @@ function ensureViewerCentroidLayers(group) {
       id: group.clusterCount,
       type: "symbol",
       source: group.source,
-      filter: ["has", "point_count"],
+      filter: [
+        "all",
+        ["has", "point_count"],
+        [">", ["get", "point_count"], 1]
+      ],
       layout: {
-        "text-field": ["get", "point_count_abbreviated"],
+        "text-field": [
+          "case",
+          [">=", ["get", "point_count"], 1000],
+          [
+            "concat",
+            ["to-string", ["/", ["round", ["/", ["get", "point_count"], 100]], 10]],
+            "k"
+          ],
+          ["to-string", ["get", "point_count"]]
+        ],
         "text-size": 12,
         "text-font": ["Open Sans Semibold", "Arial Unicode MS Bold"]
       },
@@ -6108,7 +6121,11 @@ function ensureViewerCentroidLayers(group) {
       id: group.unclustered,
       type: "circle",
       source: group.source,
-      filter: ["!", ["has", "point_count"]],
+      filter: [
+        "any",
+        ["!", ["has", "point_count"]],
+        ["<=", ["get", "point_count"], 1]
+      ],
       paint: {
         "circle-radius": [
           "interpolate",
@@ -6174,13 +6191,18 @@ function bindViewerCentroidEvents() {
         const clusterId = feature.properties?.cluster_id;
         const coords = feature.geometry?.coordinates;
 
-        if (clusterId === undefined || clusterId === null || !Array.isArray(coords)) {
+        if (!Array.isArray(coords)) {
           return;
         }
 
         const source = viewerMap.getSource(group.source);
 
-        if (!source || typeof source.getClusterExpansionZoom !== "function") {
+        if (
+          clusterId === undefined ||
+          clusterId === null ||
+          !source ||
+          typeof source.getClusterExpansionZoom !== "function"
+        ) {
           suppressViewerMapReload();
 
           viewerMap.easeTo({
@@ -6776,17 +6798,17 @@ function ensureViewerStyleLayers(recordType) {
         source: ids.source,
         paint: {
           "circle-radius": [
-            "interpolate",
-            ["linear"],
-            ["zoom"],
-            4, 4,
-            8, 6,
-            12, 8
-          ],
-          "circle-color": VIEWER_COLOURS.institution,
-          "circle-opacity": 0.9,
-          "circle-stroke-color": "#ffffff",
-          "circle-stroke-width": 1.5
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          4, 6,
+          8, 8,
+          12, 10
+        ],
+        "circle-color": VIEWER_COLOURS.institution,
+        "circle-opacity": 0.96,
+        "circle-stroke-color": "#ffffff",
+        "circle-stroke-width": 2.4
         }
       });
     }
@@ -6920,7 +6942,7 @@ function bringViewerLayersToFront() {
     "viewer-cartography-circle",
     "viewer-dataset-circle",
 
-    // Site/resource features above datasets/cartography
+    // Site/resource features
     "viewer-monument-fill",
     "viewer-rs3-poly-fill",
     "viewer-rs3-group-fill",
@@ -6933,11 +6955,9 @@ function bringViewerLayersToFront() {
 
     "viewer-monument-line",
     "viewer-rs3-line-line",
-
-    "viewer-institution-circle",
     "viewer-monument-circle",
 
-    // Clusters / centroid points
+    // Cluster overview
     "viewer-resource-clusters-monuments",
     "viewer-resource-cluster-count-monuments",
     "viewer-resource-centroid-points-monuments",
@@ -6949,6 +6969,9 @@ function bringViewerLayersToFront() {
     "viewer-resource-clusters-vernacular",
     "viewer-resource-cluster-count-vernacular",
     "viewer-resource-centroid-points-vernacular",
+
+    // Non-cluster point resources should sit above cluster overview
+    "viewer-institution-circle",
 
     // Active overlays
     "viewer-selected-fill",
@@ -6964,12 +6987,43 @@ function bringViewerLayersToFront() {
   });
 }
 
+function viewerFeatureRepresentedCount(feature) {
+  const props = feature?.properties || {};
+
+  const candidates = [
+    props.point_count,
+    props.count,
+    props.record_count
+  ];
+
+  for (const value of candidates) {
+    const n = Number(value);
+    if (Number.isFinite(n) && n > 0) return n;
+  }
+
+  return 1;
+}
+
+function getViewerOverviewRepresentedCount() {
+  return Object.values(viewerCentroidGeojsonByGroup)
+    .reduce((total, geojson) => {
+      const features = Array.isArray(geojson?.features)
+        ? geojson.features
+        : [];
+
+      return total + features.reduce(
+        (sum, feature) => sum + viewerFeatureRepresentedCount(feature),
+        0
+      );
+    }, 0);
+}
+
 function updateMapStatusLine() {
   if (!mapStatusLine) return;
 
   const mode = getViewerMapMode();
 
-  const centroidCount = Object.values(viewerCentroidGeojsonByGroup)
+  const centroidFeatureCount = Object.values(viewerCentroidGeojsonByGroup)
     .reduce((total, geojson) => {
       const features = Array.isArray(geojson?.features)
         ? geojson.features
@@ -6977,6 +7031,8 @@ function updateMapStatusLine() {
 
       return total + features.length;
     }, 0);
+
+  const centroidCount = getViewerOverviewRepresentedCount() || centroidFeatureCount;
 
   const geometryCount = VIEWER_ALL_MAP_TYPES.reduce((total, recordType) => {
     const features = viewerMapLayers?.[recordType]?.features;
@@ -7379,6 +7435,280 @@ function addMapResetControl() {
   viewerMap.addControl(new MapResetControl(), "top-right");
 }
 
+async function waitForViewerMapExportRender() {
+  if (!viewerMap) return;
+
+  await new Promise((resolve) => {
+    let resolved = false;
+
+    function finish() {
+      if (resolved) return;
+      resolved = true;
+
+      requestAnimationFrame(() => {
+        requestAnimationFrame(resolve);
+      });
+    }
+
+    viewerMap.once("render", finish);
+    viewerMap.triggerRepaint();
+
+    setTimeout(finish, 700);
+  });
+}
+
+function downloadViewerMapImage() {
+  if (!viewerMap) {
+    console.warn("Viewer map unavailable for export.");
+    return;
+  }
+
+  const mapCanvas = viewerMap.getCanvas();
+
+  const exportCanvas = document.createElement("canvas");
+  exportCanvas.width = mapCanvas.width;
+  exportCanvas.height = mapCanvas.height;
+
+  const ctx = exportCanvas.getContext("2d");
+
+  // Copy the currently preserved MapLibre frame immediately.
+  ctx.drawImage(mapCanvas, 0, 0);
+
+  const width = exportCanvas.width;
+  const height = exportCanvas.height;
+  const uiScale = Math.max(1, width / 1400);
+
+  function scaled(px) {
+    return Math.round(px * uiScale);
+  }
+
+  // Legend
+  const legendItems =
+    typeof getCurrentViewerMapLegendItems === "function"
+      ? getCurrentViewerMapLegendItems()
+      : [];
+
+  if (legendItems.length) {
+    ctx.save();
+
+    const legendTitleSize = scaled(20);
+    const legendTextSize = scaled(17);
+    const rowH = scaled(30);
+    const legendPadding = scaled(16);
+    const symbolRadius = scaled(8);
+    const symbolGap = scaled(16);
+
+    const titleText = t("map_key", "Map key");
+
+    ctx.font = `${legendTextSize}px Arial, sans-serif`;
+    const maxLabelWidth = Math.max(
+      ...legendItems.map((item) => ctx.measureText(item.label).width)
+    );
+
+    const legendW = Math.ceil(
+      legendPadding * 2 +
+      symbolRadius * 2 +
+      symbolGap +
+      maxLabelWidth
+    );
+
+    const legendH = Math.ceil(
+      legendPadding * 2 +
+      scaled(22) +
+      legendItems.length * rowH
+    );
+
+    const legendX = width - legendW - scaled(16);
+    const legendY = height - legendH - scaled(78);
+
+    ctx.fillStyle = "rgba(255, 255, 255, 0.93)";
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.16)";
+    ctx.lineWidth = 1;
+
+    ctx.beginPath();
+    ctx.roundRect(legendX, legendY, legendW, legendH, scaled(10));
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.fillStyle = "#263238";
+    ctx.font = `bold ${legendTitleSize}px Arial, sans-serif`;
+    ctx.textBaseline = "middle";
+    ctx.fillText(
+      titleText,
+      legendX + legendPadding,
+      legendY + legendPadding + scaled(6)
+    );
+
+    legendItems.forEach((item, index) => {
+      const y = legendY + legendPadding + scaled(28) + index * rowH;
+      const symbolX = legendX + legendPadding + symbolRadius;
+      const textX = symbolX + symbolRadius + symbolGap;
+
+      ctx.beginPath();
+      ctx.arc(symbolX, y, symbolRadius, 0, Math.PI * 2);
+      ctx.fillStyle = item.color;
+      ctx.fill();
+      ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
+      ctx.lineWidth = scaled(2);
+      ctx.stroke();
+
+      ctx.fillStyle = "#263238";
+      ctx.font = `${legendTextSize}px Arial, sans-serif`;
+      ctx.fillText(item.label, textX, y);
+    });
+
+    ctx.restore();
+  }
+
+  // Scale bar
+  const scale =
+    typeof calculateMapScaleBar === "function"
+      ? calculateMapScaleBar(viewerMap)
+      : null;
+
+  if (scale) {
+    ctx.save();
+
+    const scaleTextSize = scaled(17);
+    const scalePaddingX = scaled(14);
+    const barH = scaled(9);
+
+    ctx.font = `${scaleTextSize}px Arial, sans-serif`;
+    ctx.textBaseline = "middle";
+
+    const scaleX = scaled(24);
+    const scaleY = height - scaled(38);
+
+    ctx.fillStyle = "rgba(255, 255, 255, 0.93)";
+    ctx.strokeStyle = "rgba(0, 0, 0, 0.18)";
+    ctx.lineWidth = 1;
+
+    const labelWidth = ctx.measureText(scale.label).width;
+    const pillW = Math.ceil(scale.widthPx + labelWidth + scalePaddingX * 3);
+    const pillH = scaled(42);
+
+    ctx.beginPath();
+    ctx.roundRect(scaleX - scalePaddingX, scaleY - pillH / 2, pillW, pillH, scaled(10));
+    ctx.fill();
+    ctx.stroke();
+
+    ctx.strokeStyle = "#263238";
+    ctx.lineWidth = scaled(3);
+
+    ctx.beginPath();
+    ctx.moveTo(scaleX, scaleY);
+    ctx.lineTo(scaleX + scale.widthPx, scaleY);
+    ctx.stroke();
+
+    ctx.lineWidth = scaled(2);
+    ctx.beginPath();
+    ctx.moveTo(scaleX, scaleY - barH);
+    ctx.lineTo(scaleX, scaleY + barH);
+    ctx.moveTo(scaleX + scale.widthPx, scaleY - barH);
+    ctx.lineTo(scaleX + scale.widthPx, scaleY + barH);
+    ctx.stroke();
+
+    ctx.fillStyle = "#263238";
+    ctx.fillText(scale.label, scaleX + scale.widthPx + scalePaddingX, scaleY);
+
+    ctx.restore();
+  }
+
+  // Watermark
+  ctx.save();
+
+  const watermarkText = "CAAL - Central Asian Archaeological Landscapes";
+  ctx.font = `bold ${scaled(18)}px Arial, sans-serif`;
+  ctx.textBaseline = "middle";
+
+  const watermarkPaddingX = scaled(16);
+  const watermarkTextWidth = ctx.measureText(watermarkText).width;
+  const watermarkW = Math.ceil(watermarkTextWidth + watermarkPaddingX * 2);
+  const watermarkH = scaled(44);
+  const watermarkX = width - watermarkW - scaled(16);
+  const watermarkY = height - watermarkH - scaled(16);
+
+  ctx.fillStyle = "rgba(255, 255, 255, 0.93)";
+  ctx.strokeStyle = "rgba(0, 0, 0, 0.16)";
+  ctx.lineWidth = 1;
+
+  ctx.beginPath();
+  ctx.roundRect(watermarkX, watermarkY, watermarkW, watermarkH, scaled(10));
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = "#263238";
+  ctx.fillText(
+    watermarkText,
+    watermarkX + watermarkPaddingX,
+    watermarkY + watermarkH / 2
+  );
+
+  ctx.restore();
+
+  const link = document.createElement("a");
+  link.href = exportCanvas.toDataURL("image/png");
+  link.download = `caal-viewer-map-${new Date().toISOString().slice(0, 10)}.png`;
+  link.click();
+}
+
+function addMapDownloadControl() {
+  if (!viewerMap) return;
+
+  class MapDownloadControl {
+    onAdd(mapInstance) {
+      this._map = mapInstance;
+
+      const container = document.createElement("div");
+      container.className = "maplibregl-ctrl map-custom-control map-download-map-control";
+
+      const button = createMapIconButton({
+        id: "downloadMapBtn",
+        title: t("download_map", "Download map"),
+        className: "map-download-map-toggle",
+        html: `
+          <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18">
+            <path
+              d="M12 4a1 1 0 0 1 1 1v8.1l2.8-2.8a1 1 0 0 1 1.4 1.4l-4.5 4.5a1 1 0 0 1-1.4 0l-4.5-4.5a1 1 0 1 1 1.4-1.4L11 13.1V5a1 1 0 0 1 1-1Z"
+              fill="currentColor"
+            />
+            <path
+              d="M5 18a1 1 0 0 1 1-1h1.5a1 1 0 1 1 0 2H6v1h12v-1h-1.5a1 1 0 1 1 0-2H18a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-2Z"
+              fill="currentColor"
+            />
+          </svg>
+        `,
+        onClick: () => {
+          console.log("Viewer download button clicked");
+          console.log(
+            "preserveDrawingBuffer:",
+            window.viewerMap?.painter?.context?.gl?.getContextAttributes?.().preserveDrawingBuffer
+          );
+
+          downloadViewerMapImage();
+        }
+      });
+
+      container.appendChild(button);
+      downloadMapBtn = button;
+
+      this._container = container;
+      return container;
+    }
+
+    onRemove() {
+      if (this._container?.parentNode) {
+        this._container.parentNode.removeChild(this._container);
+      }
+
+      downloadMapBtn = null;
+      this._map = undefined;
+    }
+  }
+
+  viewerMap.addControl(new MapDownloadControl(), "top-right");
+}
+
 function toggleMapOptionsPanel() {
   if (!mapOptionsPanel) return;
 
@@ -7649,6 +7979,47 @@ function viewerLegendSymbolRow({
   `;
 }
 
+function getCurrentViewerMapLegendItems() {
+  const items = [];
+  const mode = getViewerMapMode();
+
+  if (mode === "clusters") {
+    if (viewerCentroidGroupHasFeatures("monuments")) {
+      items.push({
+        label: t("viewer_monument_clusters", "Monument clusters"),
+        color: VIEWER_COLOURS.monument,
+        type: "circle"
+      });
+    }
+
+    if (viewerCentroidGroupHasFeatures("remote_sensing")) {
+      items.push({
+        label: t("viewer_remote_sensing_clusters", "Remote sensing clusters"),
+        color: "#374151",
+        type: "circle"
+      });
+    }
+
+    if (viewerCentroidGroupHasFeatures("vernacular")) {
+      items.push({
+        label: t("viewer_vernacular_clusters", "Vernacular clusters"),
+        color: VIEWER_COLOURS.vernacular,
+        type: "circle"
+      });
+    }
+  }
+
+  if (viewerMapLayers?.institution?.features?.length) {
+    items.push({
+      label: t("viewer_layer_institution", "Institutions"),
+      color: VIEWER_COLOURS.institution,
+      type: "circle"
+    });
+  }
+
+  return items;
+}
+
 function renderViewerLegend() {
   if (!viewerLegendEl) return;
 
@@ -7657,8 +8028,8 @@ function renderViewerLegend() {
   const showDetailedResourceSymbols = mode !== "clusters";
 
   const showMonumentCluster =
-  mode === "clusters" &&
-  viewerCentroidGroupHasFeatures("monuments");
+    mode === "clusters" &&
+    viewerCentroidGroupHasFeatures("monuments");
 
   const showRemoteSensingCluster =
     mode === "clusters" &&
@@ -7667,11 +8038,11 @@ function renderViewerLegend() {
   const showVernacularCluster =
     mode === "clusters" &&
     viewerCentroidGroupHasFeatures("vernacular");
-  
+
   if (showMonumentCluster) {
     rows.push(
       viewerLegendSymbolRow({
-        symbolClass: "viewer-legend-cluster-monuments",
+        symbolClass: "viewer-legend-cluster-monument",
         labelKey: "viewer_monument_clusters",
         fallback: "Monument clusters"
       })
