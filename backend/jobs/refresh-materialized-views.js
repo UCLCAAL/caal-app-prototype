@@ -95,7 +95,7 @@ const MATERIALIZED_VIEWS = [
   // map MVs are skipped automatically when the base is skipped.
   // --------------------------------------------------------------------
   {
-  name: "ui.mv_resource_viewer_base",
+    name: "ui.mv_resource_viewer_base",
     cacheKey: "resource_viewer_base_cache",
     changeCheck: VIEWER_SOURCES_CHANGED_SQL
   },
@@ -116,6 +116,7 @@ const MATERIALIZED_VIEWS = [
 // dependents and the boundary rebuild can skip in sympathy.
 const refreshedThisRun = new Set();
 const skippedThisRun = new Set();
+const failedThisRun = new Set();
 
 async function cacheAgeMs(cacheKey) {
   const { rows } = await pool.query(
@@ -134,11 +135,18 @@ function isOvernightForceRefreshWindow(now = new Date()) {
 async function shouldSkip(viewConfig) {
   const { name, cacheKey, changeCheck, dependsOn } = viewConfig;
 
+  // Skip if the view this one derives from failed this run.
+  if (dependsOn && failedThisRun.has(dependsOn)) {
+    console.log(`[MV refresh] Skipping ${name} (${dependsOn} failed this run)`);
+    return true;
+  }
+
   // Skip if the view this one derives from was skipped this run.
   if (dependsOn && skippedThisRun.has(dependsOn)) {
     console.log(`[MV refresh] Skipping ${name} (${dependsOn} was skipped)`);
     return true;
   }
+
   // If the dependency was refreshed, this one must refresh too.
   if (dependsOn && refreshedThisRun.has(dependsOn)) return false;
 
@@ -343,14 +351,17 @@ async function rebuildMonumentAdminBoundaryMembership() {
 }
 
 async function rebuildResourceAdminBoundaryMembership() {
-  // Derives from mv_resource_viewer_base; if the base was skipped this run,
-  // membership cannot have changed either.
-  if (skippedThisRun.has("ui.mv_resource_viewer_base")) {
-    console.log("[MV refresh] Skipping ui.resource_admin_boundary_membership (viewer base skipped)");
+  // Derives from mv_resource_viewer_base; if the base was skipped or failed
+  // this run, membership cannot be safely rebuilt.
+  if (
+    skippedThisRun.has("ui.mv_resource_viewer_base") ||
+    failedThisRun.has("ui.mv_resource_viewer_base")
+  ) {
+    console.log("[MV refresh] Skipping ui.resource_admin_boundary_membership (viewer base skipped or failed)");
 
     await markCacheChecked(
       "resource_admin_boundary_membership",
-      "Resource admin boundary membership checked by materialized-view cron job; rebuild skipped because viewer base cache is current"
+      "Resource admin boundary membership checked by materialized-view cron job; rebuild skipped because viewer base cache was skipped or failed"
     );
 
     return;
@@ -457,6 +468,8 @@ async function main() {
         await refreshView(viewConfig);
       } catch (error) {
         failed = true;
+        failedThisRun.add(viewConfig.name);
+
         console.error(`[MV refresh] Failed for ${viewConfig.name}:`);
         console.error(error);
       }
