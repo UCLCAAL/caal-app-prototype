@@ -66,10 +66,6 @@ const MATERIALIZED_VIEWS = [
   { name: "ui.mv_lkp_meas_unit_match",         cacheKey: "lkp_meas_unit_match_cache" },
   { name: "ui.mv_lkp_meas_type_match",         cacheKey: "lkp_meas_type_match_cache" },
   { name: "ui.mv_lkp_designation_match",       cacheKey: "lkp_designation_match_cache" },
-  { name: "ui.mv_resource_viewer_monument_map",     cacheKey: "resource_viewer_monument_map_cache",     dependsOn: "ui.mv_resource_viewer_base" },
-  { name: "ui.mv_resource_viewer_dataset_map",      cacheKey: "resource_viewer_dataset_map_cache",      dependsOn: "ui.mv_resource_viewer_base" },
-  { name: "ui.mv_resource_viewer_cartography_map",  cacheKey: "resource_viewer_cartography_map_cache",  dependsOn: "ui.mv_resource_viewer_base" },
-  { name: "ui.mv_resource_viewer_survey_grid_region_map", cacheKey: "resource_viewer_survey_grid_region_map_cache", dependsOn: "ui.mv_resource_viewer_base" },
 
   // --------------------------------------------------------------------
   // Monuments family.
@@ -107,7 +103,12 @@ const MATERIALIZED_VIEWS = [
   { name: "ui.mv_resource_viewer_rs3_group_map",    cacheKey: "resource_viewer_rs3_group_map_cache",    dependsOn: "ui.mv_resource_viewer_base" },
   { name: "ui.mv_resource_viewer_institution_map",  cacheKey: "resource_viewer_institution_map_cache",  dependsOn: "ui.mv_resource_viewer_base" },
   { name: "ui.mv_resource_viewer_vernacular_map",   cacheKey: "resource_viewer_vernacular_map_cache",   dependsOn: "ui.mv_resource_viewer_base" },
-  { name: "ui.mv_resource_viewer_survey_grid_map",  cacheKey: "resource_viewer_survey_grid_map_cache",  dependsOn: "ui.mv_resource_viewer_base" }
+  { name: "ui.mv_resource_viewer_survey_grid_map",  cacheKey: "resource_viewer_survey_grid_map_cache",  dependsOn: "ui.mv_resource_viewer_base" },
+  { name: "ui.mv_resource_viewer_monument_map",     cacheKey: "resource_viewer_monument_map_cache",     dependsOn: "ui.mv_resource_viewer_base" },
+  { name: "ui.mv_resource_viewer_dataset_map",      cacheKey: "resource_viewer_dataset_map_cache",      dependsOn: "ui.mv_resource_viewer_base" },
+  { name: "ui.mv_resource_viewer_cartography_map",  cacheKey: "resource_viewer_cartography_map_cache",  dependsOn: "ui.mv_resource_viewer_base" },
+  { name: "ui.mv_resource_viewer_survey_grid_region_map", cacheKey: "resource_viewer_survey_grid_region_map_cache", dependsOn: "ui.mv_resource_viewer_base" }
+
 ];
 
 // Tracks which views were actually refreshed this run (vs skipped), so
