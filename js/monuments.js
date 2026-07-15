@@ -1915,7 +1915,7 @@ async function loadMonumentCacheStatus() {
     monumentCacheStatusLine.classList.remove("cache-status-unavailable");
 
     monumentCacheStatusLine.textContent =
-      `${t("caal_browse_data_last_updated", "CAAL browse data last updated")}: ${monumentFormatCacheTimestamp(data.status.refreshed_at)}`;
+      `${t("caal_browse_data_last_updated", "CAAL browse data last checked")}: ${monumentFormatCacheTimestamp(data.status.refreshed_at)}`;
 
     monumentCacheStatusLine.hidden = false;
   } catch (error) {

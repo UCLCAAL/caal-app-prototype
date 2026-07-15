@@ -1204,7 +1204,8 @@ function buildMonumentFilterWhere(req, lang = "en") {
   let index = 1;
 
   const safeLang = safeMonumentLang(lang);
-  const text = normalizeSearchText(req.query.text).toLowerCase();
+  const rawText = String(req.query.text || "").trim();
+  const text = normalizeSearchText(rawText).toLowerCase();
   const caalId = String(req.query.caalId || "").trim();
 
   const monumentTypes = parseCsvParam(req.query.monumentTypes);
@@ -1221,9 +1222,16 @@ function buildMonumentFilterWhere(req, lang = "en") {
   }
 
   if (text) {
-    clauses.push(`search_blob_${safeLang} ILIKE $${index}`);
+    clauses.push(`
+      (
+        search_blob_${safeLang} ILIKE $${index}
+        OR "CAAL_ID" ILIKE $${index + 1}
+      )
+    `);
+
     values.push(`%${text}%`);
-    index += 1;
+    values.push(`%${rawText}%`);
+    index += 2;
   }
 
   if (classifications.length) {
@@ -1724,7 +1732,8 @@ function buildWorkspaceMonumentFilterWhere(req, alias = "m") {
 
   const p = alias ? `${alias}.` : "";
 
-  const text = normalizeSearchText(req.query.text).toLowerCase();
+  const rawText = String(req.query.text || "").trim();
+  const text = normalizeSearchText(rawText).toLowerCase();
   const caalId = String(req.query.caalId || "").trim();
 
   const monumentTypes = parseCsvParam(req.query.monumentTypes);
@@ -1742,47 +1751,52 @@ function buildWorkspaceMonumentFilterWhere(req, alias = "m") {
 
   if (text) {
     clauses.push(`
-      lower(concat_ws(' ',
-        ${p}"CAAL_ID",
-        ${p}"Primary Name",
-        ${p}"Primary Name (English)",
-        ${p}"Other Names",
-        ${p}"Country",
-        ${p}"Region",
-        ${p}"Classification",
-        ${p}"Designation",
-        ${p}"Monument Type1",
-        ${p}"Monument Type2",
-        ${p}"Monument Type3",
-        ${p}"Monument Type4",
-        ${p}"Monument Type5",
-        ${p}"Monument Type6",
-        ${p}"Religion1",
-        ${p}"Religion2",
-        ${p}"Religion3",
-        ${p}"Cultural Period1",
-        ${p}"Cultural Period2",
-        ${p}"Cultural Period3",
-        ${p}"Cultural Period4",
-        ${p}"Cultural Period5",
-        ${p}"Cultural Period6",
-        ${p}"Internal Reference",
-        ${p}"External Reference",
-        ${p}"Monument Passport",
-        ${p}"Descriptive Date",
-        ${p}"Primary Description",
-        ${p}"Primary Description (English)",
-        ${p}"Additional Notes",
-        ${p}"Primary Address",
-        ${p}"Administrative Subdivision Name1",
-        ${p}"Administrative Subdivision Name2",
-        ${p}"Administrative Subdivision Name3",
-        ${p}"Administrative Subdivision Name4",
-        ${p}"World Heritage Site Name"
-      )) ILIKE $${index}
+      (
+        lower(concat_ws(' ',
+          ${p}"CAAL_ID",
+          ${p}"Primary Name",
+          ${p}"Primary Name (English)",
+          ${p}"Other Names",
+          ${p}"Country",
+          ${p}"Region",
+          ${p}"Classification",
+          ${p}"Designation",
+          ${p}"Monument Type1",
+          ${p}"Monument Type2",
+          ${p}"Monument Type3",
+          ${p}"Monument Type4",
+          ${p}"Monument Type5",
+          ${p}"Monument Type6",
+          ${p}"Religion1",
+          ${p}"Religion2",
+          ${p}"Religion3",
+          ${p}"Cultural Period1",
+          ${p}"Cultural Period2",
+          ${p}"Cultural Period3",
+          ${p}"Cultural Period4",
+          ${p}"Cultural Period5",
+          ${p}"Cultural Period6",
+          ${p}"Internal Reference",
+          ${p}"External Reference",
+          ${p}"Monument Passport",
+          ${p}"Descriptive Date",
+          ${p}"Primary Description",
+          ${p}"Primary Description (English)",
+          ${p}"Additional Notes",
+          ${p}"Primary Address",
+          ${p}"Administrative Subdivision Name1",
+          ${p}"Administrative Subdivision Name2",
+          ${p}"Administrative Subdivision Name3",
+          ${p}"Administrative Subdivision Name4",
+          ${p}"World Heritage Site Name"
+        )) ILIKE $${index}
+        OR ${p}"CAAL_ID" ILIKE $${index + 1}
+      )
     `);
+
     values.push(`%${text}%`);
-    index += 1;
+    values.push(`%${rawText}%`);
+    index += 2;
   }
 
   if (classifications.length) {
