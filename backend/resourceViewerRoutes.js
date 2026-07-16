@@ -288,6 +288,66 @@ function parseBboxParam(bboxParam) {
   };
 }
 
+function parseSpatialPolygonParam(value) {
+  if (!value) return null;
+
+  let geometry;
+
+  try {
+    geometry = JSON.parse(String(value));
+  } catch {
+    return null;
+  }
+
+  if (
+    !geometry ||
+    geometry.type !== "Polygon" ||
+    !Array.isArray(geometry.coordinates) ||
+    !geometry.coordinates.length
+  ) {
+    return null;
+  }
+
+  let vertexCount = 0;
+
+  for (const ring of geometry.coordinates) {
+    if (!Array.isArray(ring) || ring.length < 4) {
+      return null;
+    }
+
+    for (const coordinate of ring) {
+      if (
+        !Array.isArray(coordinate) ||
+        coordinate.length < 2
+      ) {
+        return null;
+      }
+
+      const lng = Number(coordinate[0]);
+      const lat = Number(coordinate[1]);
+
+      if (
+        !Number.isFinite(lng) ||
+        !Number.isFinite(lat) ||
+        lng < -180 ||
+        lng > 180 ||
+        lat < -90 ||
+        lat > 90
+      ) {
+        return null;
+      }
+
+      vertexCount += 1;
+
+      if (vertexCount > 200) {
+        return null;
+      }
+    }
+  }
+
+  return geometry;
+}
+
 const ALLOWED_VIEWER_LANGS = new Set([
   "en", "ru", "zh", "kk", "ky", "tg", "tk", "uz"
 ]);
@@ -776,16 +836,69 @@ function buildViewerWhereSql({
     index += 1;
   }
 
-  const bbox = parseBboxParam(req.query.bbox);
+  const spatialPolygon = parseSpatialPolygonParam(
+    req.query.spatialPolygon
+  );
+
+  if (req.query.spatialPolygon && !spatialPolygon) {
+    clauses.push("false");
+  } else if (spatialPolygon) {
+    clauses.push(`
+      (
+        ST_IsValid(
+          ST_SetSRID(
+            ST_GeomFromGeoJSON($${index}),
+            4326
+          )
+        )
+        AND NOT ST_IsEmpty(
+          ST_SetSRID(
+            ST_GeomFromGeoJSON($${index}),
+            4326
+          )
+        )
+        AND ${p}geom_4326 && ST_SetSRID(
+          ST_GeomFromGeoJSON($${index}),
+          4326
+        )
+        AND ST_Intersects(
+          ${p}geom_4326,
+          ST_SetSRID(
+            ST_GeomFromGeoJSON($${index}),
+            4326
+          )
+        )
+      )
+    `);
+
+    values.push(JSON.stringify(spatialPolygon));
+    index += 1;
+  }
+
+  const bbox = spatialPolygon
+    ? null
+    : parseBboxParam(req.query.bbox);
 
   if (bbox) {
     clauses.push(`
-      ${p}geom_4326 && ST_MakeEnvelope(
-        $${index},
-        $${index + 1},
-        $${index + 2},
-        $${index + 3},
-        4326
+      (
+        ${p}geom_4326 && ST_MakeEnvelope(
+          $${index},
+          $${index + 1},
+          $${index + 2},
+          $${index + 3},
+          4326
+        )
+        AND ST_Intersects(
+          ${p}geom_4326,
+          ST_MakeEnvelope(
+            $${index},
+            $${index + 1},
+            $${index + 2},
+            $${index + 3},
+            4326
+          )
+        )
       )
     `);
 

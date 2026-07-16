@@ -105,10 +105,33 @@ const mapLabelScopeHelp = document.getElementById("mapLabelScopeHelp");
 const mapLabelWarning = document.getElementById("mapLabelWarning");
 
 const filterToMapViewBtn = document.getElementById("filterToMapViewBtn");
+const filterToMapViewBtnLabel = document.getElementById(
+  "filterToMapViewBtnLabel"
+);
 
 const viewerMapLayerSurveyGrid = document.getElementById("viewerMapLayerSurveyGrid");
 const surveyGridOptions = document.getElementById("surveyGridOptions");
 const surveyGridStyleMode = document.getElementById("surveyGridStyleMode");
+
+const drawViewerSpatialPolygonBtn = document.getElementById(
+  "drawViewerSpatialPolygonBtn"
+);
+
+const drawViewerSpatialPolygonBtnLabel = document.getElementById(
+  "drawViewerSpatialPolygonBtnLabel"
+);
+
+const viewerSpatialDrawMessage = document.getElementById(
+  "viewerSpatialDrawMessage"
+);
+
+const viewerSpatialDrawMessageText = document.getElementById(
+  "viewerSpatialDrawMessageText"
+);
+
+const cancelViewerSpatialDrawBtn = document.getElementById(
+  "cancelViewerSpatialDrawBtn"
+);
 
 
 // --------------------------------------------------------
@@ -2094,6 +2117,7 @@ let viewerPageLimit = 100;
 let viewerPageOffset = 0;
 
 let viewerIsLoading = false;
+let viewerLoadingOperationCount = 0;
 let viewerSearchDebounceTimer = null;
 let viewerMapMoveDebounceTimer = null;
 
@@ -2102,6 +2126,12 @@ let viewerMapLoaded = false;
 let viewerLayerEventsBound = new Set();
 
 let activeMapViewFilterBbox = null;
+let activeViewerSpatialPolygon = null;
+
+let viewerSpatialDraw = null;
+let viewerSpatialDrawFeatureId = null;
+let viewerSpatialDrawIsActive = false;
+let viewerSpatialDrawCoordinates = [];
 
 let viewerPopup = null;
 
@@ -2182,13 +2212,39 @@ function viewerUserCanViewAllCaal(session = window.appSession) {
 }
 
 function setViewerLoading(isLoading, message = "") {
-  viewerIsLoading = isLoading;
+  if (isLoading) {
+    viewerLoadingOperationCount += 1;
+  } else {
+    viewerLoadingOperationCount = Math.max(
+      0,
+      viewerLoadingOperationCount - 1
+    );
+  }
 
-  if (viewerLoadingIndicator) {
-    viewerLoadingIndicator.hidden = !isLoading;
-    viewerLoadingIndicator.innerHTML = isLoading
-      ? `<span class="spinner"></span><span>${escapeHtml(message || t("loading", "Loading..."))}</span>`
-      : "";
+  viewerIsLoading = viewerLoadingOperationCount > 0;
+
+  if (!viewerLoadingIndicator) return;
+
+  viewerLoadingIndicator.hidden = !viewerIsLoading;
+
+  if (viewerIsLoading) {
+    const existingMessage =
+      viewerLoadingIndicator.querySelector(".viewer-loading-message")
+        ?.textContent || "";
+
+    const displayMessage =
+      message ||
+      existingMessage ||
+      t("loading", "Loading...");
+
+    viewerLoadingIndicator.innerHTML = `
+      <span class="spinner"></span>
+      <span class="viewer-loading-message">
+        ${escapeHtml(displayMessage)}
+      </span>
+    `;
+  } else {
+    viewerLoadingIndicator.innerHTML = "";
   }
 }
 
@@ -2796,7 +2852,12 @@ function buildViewerQueryParams({
     params.set("riskMin", viewerFilterRiskMin.value);
   }
 
-  if (activeMapViewFilterBbox) {
+  if (activeViewerSpatialPolygon) {
+    params.set(
+      "spatialPolygon",
+      JSON.stringify(activeViewerSpatialPolygon)
+    );
+  } else if (activeMapViewFilterBbox) {
     params.set("bbox", activeMapViewFilterBbox);
   } else if (includeMapBbox) {
     const bbox = getCurrentMapViewBbox();
@@ -3615,8 +3676,17 @@ function renderViewerActiveFilterChips() {
   if (activeMapViewFilterBbox) {
     chips.push({
       kind: "map_view",
-      label: t("map_view", "Map view"),
-      title: t("map_view_filter", "Map-view filter"),
+      label: t("viewer_spatial_map_extent", "Map extent"),
+      title: t("viewer_spatial_search", "Spatial search"),
+      className: "active-filter-chip-map"
+    });
+  }
+
+  if (activeViewerSpatialPolygon) {
+    chips.push({
+      kind: "spatial_polygon",
+      label: t("viewer_spatial_drawn_area", "Drawn area"),
+      title: t("viewer_spatial_search", "Spatial search"),
       className: "active-filter-chip-map"
     });
   }
@@ -3683,6 +3753,12 @@ async function removeViewerActiveFilterChip(chip) {
     updateFilterToMapViewButton();
   }
 
+  if (chip.kind === "spatial_polygon") {
+    await clearViewerSpatialPolygonFilter({
+      reload: false
+    });
+  }
+
   viewerPageOffset = 0;
   await reloadViewer({ includeMap: true });
 }
@@ -3690,9 +3766,36 @@ async function removeViewerActiveFilterChip(chip) {
 function updateFilterToMapViewButton() {
   if (!filterToMapViewBtn) return;
 
-  filterToMapViewBtn.textContent = activeMapViewFilterBbox
-    ? t("update_map_view_filter", "Update map-view filter")
-    : t("filter_to_map_view", "Filter results to map view");
+  const isActive = Boolean(activeMapViewFilterBbox);
+
+  const label = isActive
+    ? t("viewer_update_map_extent", "Update extent")
+    : t("viewer_spatial_map_extent", "Map extent");
+
+  const title = isActive
+    ? t(
+        "viewer_update_map_extent_help",
+        "Update the spatial filter to the current visible map extent"
+      )
+    : t(
+        "viewer_spatial_map_extent_help",
+        "Search using the current visible map extent"
+      );
+
+  if (filterToMapViewBtnLabel) {
+    filterToMapViewBtnLabel.textContent = label;
+  } else {
+    filterToMapViewBtn.textContent = label;
+  }
+
+  filterToMapViewBtn.title = title;
+  filterToMapViewBtn.setAttribute("aria-label", title);
+  filterToMapViewBtn.setAttribute(
+    "aria-pressed",
+    isActive ? "true" : "false"
+  );
+
+  filterToMapViewBtn.classList.toggle("is-active", isActive);
 }
 
 // map popup
@@ -5538,6 +5641,7 @@ function updateViewerRelatedMapButtonState() {
 // --------------------------------------------------------
 // MAP
 // --------------------------------------------------------
+
 function getBasemapStyle(name) {
   if (name === "osm") {
     return {
@@ -5675,20 +5779,30 @@ function initViewerMap() {
   viewerMap.on("load", async () => {
     viewerMapLoaded = true;
 
-    setViewerLoading(true, t("loading_records", "Loading records..."));
+    initialiseViewerSpatialDraw();
 
     try {
-      await loadViewerRecords();
-      await loadViewerMap();
+      await reloadViewer({
+        includeMap: true
+      });
+
+      await reloadOpenViewerResultGroups();
+
+      if (viewerSelectedRecord?.geometry) {
+        drawViewerSelectedHighlight(viewerSelectedRecord);
+      }
+
       updateMapStatusLine();
       renderViewerLegend();
     } catch (error) {
       console.error("Viewer initial load failed:", error);
-      setViewerStatus(error.message || "Viewer initial load failed", {
-        isError: true
-      });
-    } finally {
-      setViewerLoading(false);
+
+      setViewerStatus(
+        error.message || "Viewer initial load failed",
+        {
+          isError: true
+        }
+      );
     }
   });
 
@@ -5744,6 +5858,7 @@ function initViewerMap() {
 
       viewerMap.once("style.load", async () => {
       viewerMapLoaded = true;
+      initialiseViewerSpatialDraw();
       viewerLayerEventsBound = new Set();
       viewerCentroidEventsBound = false;
       viewerReferencePopupLayersBound.clear();
@@ -5766,6 +5881,7 @@ function initViewerMap() {
   }
 }
 
+
 async function loadViewerMap() {
   if (!viewerMap || !viewerMapLoaded) return;
 
@@ -5779,7 +5895,8 @@ async function loadViewerMap() {
 
   const shouldShowMapLoading =
     hasReferenceLayers ||
-    geometryLayers.length > 0;
+    geometryLayers.length > 0 ||
+    clusterLayers.length > 0;
 
   if (shouldShowMapLoading) {
     setViewerLoading(true, t("loading_map_layers", "Loading map layers..."));
@@ -5815,10 +5932,16 @@ async function loadViewerMap() {
 
   if (!geometryLayers.length) {
     viewerMapLayers = {};
+
     drawViewerMapLayers({});
     updateViewerMapModeVisibility();
     updateMapStatusLine();
     renderViewerLegend();
+
+    /*
+      Cluster and centroid loaders have already completed before this point.
+      There is no full-geometry source processing to wait for.
+    */
     return;
   }
 
@@ -5843,6 +5966,7 @@ async function loadViewerMap() {
     }
 
     viewerMapLayers = data.layers || {};
+
     drawViewerMapLayers(viewerMapLayers);
     renderViewerMapLabels();
     updateViewerMapModeVisibility();
@@ -5964,6 +6088,7 @@ async function loadViewerCentroids() {
 
     drawViewerCentroidLayers();
     updateMapStatusLine();
+
     return;
   }
 
@@ -6239,6 +6364,7 @@ function bindViewerCentroidEvents() {
     });
 
     viewerMap.on("click", group.unclustered, (event) => {
+      if (viewerSpatialDrawIsActive) return;
       const feature = event.features?.[0];
       if (!feature?.properties) return;
 
@@ -7018,6 +7144,509 @@ function getViewerOverviewRepresentedCount() {
       );
     }, 0);
 }
+
+// --------------------------------------------------------
+// SPATIAL POLYGON DRAWING
+// --------------------------------------------------------
+async function applyCompletedViewerSpatialPolygon(
+  featureId,
+  geometry
+) {
+  const polygon = normaliseViewerSpatialPolygon(geometry);
+
+  if (!polygon) {
+    cancelViewerSpatialPolygonDrawing({
+      clearCompletedPolygon: true
+    });
+
+    setViewerStatus(
+      t(
+        "viewer_spatial_polygon_invalid",
+        "The drawn area was not valid. Draw a simpler polygon."
+      ),
+      { isError: true }
+    );
+
+    return false;
+  }
+
+  viewerSpatialDrawFeatureId = featureId;
+  activeViewerSpatialPolygon = polygon;
+
+  // Polygon and rectangular extent filters are mutually exclusive.
+  activeMapViewFilterBbox = null;
+
+  viewerSpatialDrawIsActive = false;
+  viewerSpatialDrawCoordinates = [];
+
+  if (viewerSpatialDraw) {
+    viewerSpatialDraw.setMode("viewer-spatial-render");
+  }
+
+  if (viewerMap) {
+    viewerMap.getCanvas().style.cursor = "";
+  }
+
+  updateViewerSpatialPolygonButton();
+  updateFilterToMapViewButton();
+  setViewerSpatialDrawMessage(false);
+  renderViewerActiveFilterChips();
+
+  viewerPageOffset = 0;
+
+  await reloadViewer({
+    includeMap: true
+  });
+
+  return true;
+}
+
+function initialiseViewerSpatialDraw() {
+  if (!viewerMap || viewerSpatialDraw) return;
+
+  const terraDrawLib = window.terraDraw;
+
+  const mapLibreAdapterLib =
+    window.terraDrawMaplibreGlAdapter ||
+    window.terraDrawMapLibreGLAdapter;
+
+  if (!terraDrawLib || !mapLibreAdapterLib) {
+    console.error("Terra Draw did not load.", {
+      terraDraw: typeof window.terraDraw,
+      adapterCurrent:
+        typeof window.terraDrawMaplibreGlAdapter,
+      adapterLegacy:
+        typeof window.terraDrawMapLibreGLAdapter
+    });
+
+    if (drawViewerSpatialPolygonBtn) {
+      drawViewerSpatialPolygonBtn.disabled = true;
+      drawViewerSpatialPolygonBtn.title =
+        "Polygon drawing is unavailable";
+    }
+
+    return;
+  }
+
+  const {
+    TerraDraw,
+    TerraDrawPolygonMode,
+    TerraDrawRenderMode
+  } = terraDrawLib;
+
+  const {
+    TerraDrawMapLibreGLAdapter
+  } = mapLibreAdapterLib;
+
+  viewerSpatialDraw = new TerraDraw({
+    adapter: new TerraDrawMapLibreGLAdapter({
+    map: viewerMap,
+    coordinatePrecision: 6,
+    ignoreMismatchedPointerEvents: true
+  }),
+
+    modes: [
+      new TerraDrawPolygonMode({
+        pointerEvents: {
+          // We will handle right-click ourselves.
+          rightClick: false,
+          contextMenu: false
+        },
+
+        styles: {
+          fillColor: "#FFEA00",
+          fillOpacity: 0.32,
+
+          // Dark outline keeps yellow visible on light and satellite maps.
+          outlineColor: "#111827",
+          outlineOpacity: 0.95,
+          outlineWidth: 3,
+
+          closingPointColor: "#FFEA00",
+          closingPointWidth: 7,
+          closingPointOutlineColor: "#111827",
+          closingPointOutlineWidth: 2
+        }
+      }),
+
+      new TerraDrawRenderMode({
+        modeName: "viewer-spatial-render",
+
+        styles: {
+          polygonFillColor: "#FFEA00",
+          polygonFillOpacity: 0.26,
+          polygonOutlineColor: "#111827",
+          polygonOutlineWidth: 3
+        }
+      })
+    ]
+  });
+
+  viewerSpatialDraw.start();
+  viewerSpatialDraw.setMode("viewer-spatial-render");
+
+  viewerSpatialDraw.on("finish", async (featureId, context) => {
+    if (
+      !viewerSpatialDrawIsActive ||
+      context?.action !== "draw" ||
+      context?.mode !== "polygon"
+    ) {
+      return;
+    }
+
+    const snapshot = viewerSpatialDraw.getSnapshot();
+
+    const feature = snapshot.find(
+      (item) => String(item.id) === String(featureId)
+    );
+
+    if (!feature || feature.geometry?.type !== "Polygon") {
+      cancelViewerSpatialPolygonDrawing({
+        clearCompletedPolygon: true
+      });
+
+      return;
+    }
+
+    await applyCompletedViewerSpatialPolygon(
+      featureId,
+      feature.geometry
+    );
+  });
+
+  viewerMap.on("click", (event) => {
+    if (!viewerSpatialDrawIsActive) return;
+
+    const coordinate = [
+      Number(event.lngLat.lng.toFixed(6)),
+      Number(event.lngLat.lat.toFixed(6))
+    ];
+
+    const previous =
+      viewerSpatialDrawCoordinates[
+        viewerSpatialDrawCoordinates.length - 1
+      ];
+
+    // Avoid accidentally recording an identical consecutive coordinate.
+    if (
+      previous &&
+      previous[0] === coordinate[0] &&
+      previous[1] === coordinate[1]
+    ) {
+      return;
+    }
+
+    viewerSpatialDrawCoordinates.push(coordinate);
+  });
+
+  viewerMap.on("contextmenu", (event) => {
+    if (!viewerSpatialDrawIsActive) return;
+
+    // Prevent the browser context menu while drawing only.
+    event.preventDefault?.();
+    event.originalEvent?.preventDefault?.();
+
+    void finishViewerSpatialPolygonWithRightClick();
+  });
+}
+
+async function finishViewerSpatialPolygonWithRightClick() {
+  if (
+    !viewerSpatialDrawIsActive ||
+    !viewerSpatialDraw
+  ) {
+    return;
+  }
+
+  if (viewerSpatialDrawCoordinates.length < 3) {
+    setViewerStatus(
+      t(
+        "viewer_spatial_polygon_needs_three_points",
+        "Add at least three points before finishing the area."
+      ),
+      { isError: true }
+    );
+
+    return;
+  }
+
+  const firstCoordinate = viewerSpatialDrawCoordinates[0];
+
+  const ring = [
+    ...viewerSpatialDrawCoordinates.map((coordinate) => [
+      coordinate[0],
+      coordinate[1]
+    ]),
+    [
+      firstCoordinate[0],
+      firstCoordinate[1]
+    ]
+  ];
+
+  const geometry = normaliseViewerSpatialPolygon({
+    type: "Polygon",
+    coordinates: [ring]
+  });
+
+  if (!geometry) {
+    setViewerStatus(
+      t(
+        "viewer_spatial_polygon_invalid",
+        "The drawn area was not valid. Draw a simpler polygon."
+      ),
+      { isError: true }
+    );
+
+    return;
+  }
+
+  /*
+    Set false first so changing modes cannot accidentally cause the normal
+    finish listener to process the unfinished Terra Draw feature.
+  */
+  viewerSpatialDrawIsActive = false;
+
+  // Switching modes removes the unfinished preview geometry.
+  viewerSpatialDraw.setMode("viewer-spatial-render");
+
+  const featureId =
+    window.crypto?.randomUUID?.() ||
+    `viewer-spatial-${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2)}`;
+
+  const addResults = viewerSpatialDraw.addFeatures([
+    {
+      id: featureId,
+      type: "Feature",
+
+      properties: {
+        mode: "viewer-spatial-render"
+      },
+
+      geometry
+    }
+  ]);
+
+  const addResult = addResults?.[0];
+
+  if (!addResult?.valid) {
+    viewerSpatialDrawCoordinates = [];
+
+    cancelViewerSpatialPolygonDrawing({
+      clearCompletedPolygon: true
+    });
+
+    setViewerStatus(
+      addResult?.reason ||
+        t(
+          "viewer_spatial_polygon_invalid",
+          "The drawn area was not valid. Draw a simpler polygon."
+        ),
+      { isError: true }
+    );
+
+    return;
+  }
+
+  await applyCompletedViewerSpatialPolygon(
+    featureId,
+    geometry
+  );
+}
+
+function normaliseViewerSpatialPolygon(geometry) {
+  if (geometry?.type !== "Polygon") return null;
+
+  const rings = geometry.coordinates;
+
+  if (!Array.isArray(rings) || !rings.length) {
+    return null;
+  }
+
+  let totalVertices = 0;
+
+  const normalisedRings = [];
+
+  for (const ring of rings) {
+    if (!Array.isArray(ring) || ring.length < 4) {
+      return null;
+    }
+
+    const normalisedRing = [];
+
+    for (const coordinate of ring) {
+      if (
+        !Array.isArray(coordinate) ||
+        coordinate.length < 2
+      ) {
+        return null;
+      }
+
+      const lng = Number(coordinate[0]);
+      const lat = Number(coordinate[1]);
+
+      if (
+        !Number.isFinite(lng) ||
+        !Number.isFinite(lat) ||
+        lng < -180 ||
+        lng > 180 ||
+        lat < -90 ||
+        lat > 90
+      ) {
+        return null;
+      }
+
+      normalisedRing.push([
+        Number(lng.toFixed(6)),
+        Number(lat.toFixed(6))
+      ]);
+
+      totalVertices += 1;
+
+      if (totalVertices > 200) {
+        return null;
+      }
+    }
+
+    const first = normalisedRing[0];
+    const last = normalisedRing[normalisedRing.length - 1];
+
+    if (
+      first[0] !== last[0] ||
+      first[1] !== last[1]
+    ) {
+      normalisedRing.push([...first]);
+      totalVertices += 1;
+    }
+
+    normalisedRings.push(normalisedRing);
+  }
+
+  return {
+    type: "Polygon",
+    coordinates: normalisedRings
+  };
+}
+
+function removeViewerSpatialDrawFeature() {
+  if (!viewerSpatialDraw || viewerSpatialDrawFeatureId === null) {
+    viewerSpatialDrawFeatureId = null;
+    return;
+  }
+
+  try {
+    viewerSpatialDraw.removeFeatures([
+      viewerSpatialDrawFeatureId
+    ]);
+  } catch (error) {
+    console.warn("Could not remove viewer spatial polygon:", error);
+  }
+
+  viewerSpatialDrawFeatureId = null;
+}
+
+function setViewerSpatialDrawMessage(visible) {
+  if (!viewerSpatialDrawMessage) return;
+
+  viewerSpatialDrawMessage.hidden = !visible;
+
+  if (viewerSpatialDrawMessageText && visible) {
+    viewerSpatialDrawMessageText.textContent = t(
+      "viewer_spatial_draw_instruction",
+      "Click to add points. Click the first point or right-click anywhere on the map to finish."
+    );
+  }
+}
+
+function updateViewerSpatialPolygonButton() {
+  if (!drawViewerSpatialPolygonBtn) return;
+
+  const isApplied = Boolean(activeViewerSpatialPolygon);
+
+  if (drawViewerSpatialPolygonBtnLabel) {
+    drawViewerSpatialPolygonBtnLabel.textContent = viewerSpatialDrawIsActive
+      ? t("viewer_spatial_drawing", "Drawing...")
+      : isApplied
+        ? t("viewer_spatial_redraw_area", "Redraw area")
+        : t("viewer_spatial_draw_area", "Draw area");
+  }
+
+  drawViewerSpatialPolygonBtn.setAttribute(
+    "aria-pressed",
+    isApplied || viewerSpatialDrawIsActive ? "true" : "false"
+  );
+
+  drawViewerSpatialPolygonBtn.classList.toggle(
+    "is-active",
+    isApplied || viewerSpatialDrawIsActive
+  );
+}
+
+function startViewerSpatialPolygonDrawing() {
+  if (!viewerMap || !viewerSpatialDraw) return;
+
+  removeViewerSpatialDrawFeature();
+
+  activeViewerSpatialPolygon = null;
+  activeMapViewFilterBbox = null;
+  viewerSpatialDrawCoordinates = [];
+
+  viewerSpatialDrawIsActive = true;
+  viewerSpatialDraw.setMode("polygon");
+
+  if (viewerPopup) {
+    viewerPopup.remove();
+    viewerPopup = null;
+  }
+
+  viewerMap.getCanvas().style.cursor = "crosshair";
+
+  updateViewerSpatialPolygonButton();
+  updateFilterToMapViewButton();
+  setViewerSpatialDrawMessage(true);
+  renderViewerActiveFilterChips();
+}
+
+function cancelViewerSpatialPolygonDrawing({
+  clearCompletedPolygon = false
+} = {}) {
+  viewerSpatialDrawIsActive = false;
+  viewerSpatialDrawCoordinates = [];
+
+  if (viewerSpatialDraw) {
+    viewerSpatialDraw.setMode("viewer-spatial-render");
+  }
+
+  if (clearCompletedPolygon) {
+    removeViewerSpatialDrawFeature();
+    activeViewerSpatialPolygon = null;
+  }
+
+  if (viewerMap) {
+    viewerMap.getCanvas().style.cursor = "";
+  }
+
+  updateViewerSpatialPolygonButton();
+  setViewerSpatialDrawMessage(false);
+  renderViewerActiveFilterChips();
+}
+
+async function clearViewerSpatialPolygonFilter({
+  reload = true
+} = {}) {
+  cancelViewerSpatialPolygonDrawing({
+    clearCompletedPolygon: true
+  });
+
+  viewerPageOffset = 0;
+
+  if (reload) {
+    await reloadViewer({ includeMap: true });
+  }
+}
+// imposes a 200-vertex frontend limit and six-decimal coordinate precision
+// ----------------
 
 function updateMapStatusLine() {
   if (!mapStatusLine) return;
@@ -8339,9 +8968,15 @@ async function clearViewerFilters() {
   resetViewerLayerSelectionsToDefault();
 
   activeMapViewFilterBbox = null;
+  activeViewerSpatialPolygon = null;
+
+  cancelViewerSpatialPolygonDrawing({
+    clearCompletedPolygon: true
+  });
   viewerPageOffset = 0;
 
   updateFilterToMapViewButton();
+  updateViewerSpatialPolygonButton();
   renderViewerActiveFilterChips();
 
   await reloadViewer({ includeMap: true });
@@ -8351,10 +8986,18 @@ async function applyMapViewFilterFromCurrentMap() {
   const bbox = getCurrentMapViewBbox();
   if (!bbox) return;
 
+  cancelViewerSpatialPolygonDrawing({
+    clearCompletedPolygon: true
+  });
+
+  activeViewerSpatialPolygon = null;
   activeMapViewFilterBbox = bbox;
   viewerPageOffset = 0;
 
+  updateViewerSpatialPolygonButton();
   updateFilterToMapViewButton();
+  renderViewerActiveFilterChips();
+
   await reloadViewer({ includeMap: true });
 }
 
@@ -8526,6 +9169,31 @@ function wireViewerEvents() {
   if (filterToMapViewBtn) {
     filterToMapViewBtn.addEventListener("click", applyMapViewFilterFromCurrentMap);
   }
+  // map draw polygon
+  if (drawViewerSpatialPolygonBtn) {
+    drawViewerSpatialPolygonBtn.addEventListener("click", () => {
+      startViewerSpatialPolygonDrawing();
+    });
+  }
+
+  if (cancelViewerSpatialDrawBtn) {
+    cancelViewerSpatialDrawBtn.addEventListener("click", () => {
+      cancelViewerSpatialPolygonDrawing({
+        clearCompletedPolygon: true
+      });
+    });
+  }
+
+  document.addEventListener("keydown", (event) => {
+    if (
+      event.key === "Escape" &&
+      viewerSpatialDrawIsActive
+    ) {
+      cancelViewerSpatialPolygonDrawing({
+        clearCompletedPolygon: true
+      });
+    }
+  });
 }
 
 function viewerCacheLocale() {
@@ -8733,19 +9401,25 @@ async function initViewerPage() {
           : ""
       );
 
-    await loadViewerRecords();
-
     initialUrlState.recordTypes.forEach((type) => {
       viewerCollapsedResultGroups.delete(type);
     });
 
-    await reloadOpenViewerResultGroups();
-    await loadViewerMap();
-
+    /*
+      Record counts and map data are loaded once by the MapLibre load handler.
+      Do not load them here as well.
+    */
     if (initialCaalId) {
       viewerSelectedRecord = await fetchViewerRecordByCaalId(initialCaalId);
       renderViewerRecordDetails(viewerSelectedRecord);
-      drawViewerSelectedHighlight(viewerSelectedRecord);
+
+      /*
+        The map may not have completed loading yet. The selected geometry will
+        be restored after the initial map load below.
+      */
+      if (viewerMapLoaded) {
+        drawViewerSelectedHighlight(viewerSelectedRecord);
+      }
     }
 
     updateMapOptionsState();
@@ -8755,9 +9429,14 @@ async function initViewerPage() {
 
   } catch (error) {
     console.error("Viewer init failed:", error);
-    setViewerStatus(error.message || "Viewer init failed", {
-      isError: true
-    });
+
+    setViewerStatus(
+      error.message || "Viewer init failed",
+      {
+        isError: true
+      }
+    );
+  } finally {
     setViewerLoading(false);
   }
 }

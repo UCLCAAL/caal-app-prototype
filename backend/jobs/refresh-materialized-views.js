@@ -11,6 +11,7 @@ const REFRESH_LOCK_ID = 823401;
 const MAX_SKIP_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
 const FORCE_REFRESH_HOUR_UTC = 2; // overnight UTC
 
+
 // Change-check for the resource viewer family: any source row edited since
 // the last recorded refresh of the base cache?
 const VIEWER_SOURCES_CHANGED_SQL = `
