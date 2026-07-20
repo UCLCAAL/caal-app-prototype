@@ -1467,24 +1467,71 @@ function viewerRelatedResultKey(item) {
   ].join("|").toLowerCase();
 }
 
+function viewerNormalisedCaalId(value) {
+  return String(value || "")
+    .trim()
+    .toLowerCase();
+}
+
+function viewerCurrentLoadedResultIds() {
+  return new Set(
+    viewerAllLoadedRecords()
+      .map((record) =>
+        viewerNormalisedCaalId(
+          record?.identity?.caal_id ||
+          record?.caal_id
+        )
+      )
+      .filter(Boolean)
+  );
+}
+
 function viewerRelatedRecordsFromLoadedResults() {
   const byKey = new Map();
+  const loadedResultIds = viewerCurrentLoadedResultIds();
 
   viewerAllLoadedRecords().forEach((sourceRecord) => {
-    const sourceCaalId = sourceRecord?.identity?.caal_id || "";
-    const sourceTitle = viewerRecordTitle(sourceRecord) || sourceCaalId;
+    const sourceCaalId =
+      sourceRecord?.identity?.caal_id || "";
+
+    const sourceTitle =
+      viewerRecordTitle(sourceRecord) ||
+      sourceCaalId;
 
     viewerRelatedItems(sourceRecord).forEach((item) => {
-      const relatedId = String(item?.related_caal_id || "").trim();
+      const relatedId =
+        String(item?.related_caal_id || "").trim();
+
       if (!relatedId) return;
 
       const key = viewerRelatedResultKey(item);
+      const relatedIdNorm =
+        viewerNormalisedCaalId(relatedId);
+
+      const directionalRelationType =
+        typeof window.getDirectionalRelationType === "function"
+          ? window.getDirectionalRelationType(item)
+          : (
+              item?.relation_type ||
+              item?.relation_type_norm ||
+              ""
+            );
 
       if (!byKey.has(key)) {
         byKey.set(key, {
           ...item,
-          source_caal_id: sourceCaalId,
-          source_display_label: sourceTitle
+
+          relation_display_type:
+            directionalRelationType,
+
+          source_caal_id:
+            sourceCaalId,
+
+          source_display_label:
+            sourceTitle,
+
+          in_current_loaded_results:
+            loadedResultIds.has(relatedIdNorm)
         });
       }
     });
@@ -1539,10 +1586,20 @@ function viewerRelatedCompactCardHtml(item) {
     t("related_resource", "Related resource");
 
   const relationType = String(
-    item?.relation_type ||
-    item?.relation_type_norm ||
-    ""
+    item?.relation_display_type ||
+    (
+      typeof window.getDirectionalRelationType === "function"
+        ? window.getDirectionalRelationType(item)
+        : (
+            item?.relation_type ||
+            item?.relation_type_norm ||
+            ""
+          )
+    )
   ).trim();
+
+  const isLoadedInResults =
+    item?.in_current_loaded_results === true;
 
   const sourceText = item?.source_caal_id
       ? `${t("related_to", "Related to")} ${item.source_caal_id}${
@@ -1567,6 +1624,35 @@ function viewerRelatedCompactCardHtml(item) {
           `
           : ""
       }
+
+      <div class="viewer-related-result-presence">
+        <span
+          class="
+            viewer-related-result-presence-badge
+            ${
+              isLoadedInResults
+                ? "is-loaded"
+                : "is-outside"
+            }
+          "
+        >
+          ${
+            isLoadedInResults
+              ? escapeHtml(
+                  t(
+                    "loaded_in_results",
+                    "Loaded in results"
+                  )
+                )
+              : escapeHtml(
+                  t(
+                    "outside_loaded_results",
+                    "Outside loaded results"
+                  )
+                )
+          }
+        </span>
+      </div>
 
       ${
         relationType
@@ -1729,15 +1815,24 @@ function viewerRelationGroupsByType(record) {
 
   return relations.reduce((groups, rel) => {
     const relationType =
-      rel?.relation_type ||
-      rel?.relation_type_norm ||
+      typeof window.getDirectionalRelationType === "function"
+        ? window.getDirectionalRelationType(rel)
+        : (
+            rel?.relation_type ||
+            rel?.relation_type_norm ||
+            t("related_resources", "Related resources")
+          );
+
+    const key =
+      String(relationType || "").trim() ||
       t("related_resources", "Related resources");
 
-    if (!groups[relationType]) {
-      groups[relationType] = [];
+    if (!groups[key]) {
+      groups[key] = [];
     }
 
-    groups[relationType].push(rel);
+    groups[key].push(rel);
+
     return groups;
   }, {});
 }
@@ -3874,12 +3969,44 @@ function renderViewerMapPopupHtml(feature) {
   `;
 }
 
+function viewerMapPropertyArray(value) {
+  if (Array.isArray(value)) {
+    return value;
+  }
+
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return Array.isArray(parsed) ? parsed : [];
+    } catch {
+      return value
+        .split(",")
+        .map((item) => item.trim())
+        .filter(Boolean);
+    }
+  }
+
+  return [];
+}
+
+
 function showViewerMapPopup(feature, lngLat) {
   if (!viewerMap || !feature?.properties) return;
 
   if (viewerPopup) {
     viewerPopup.remove();
+    viewerPopup = null;
   }
+
+  const props = feature.properties;
+
+  const relationTypes = viewerMapPropertyArray(
+    props.relation_types
+  );
+
+  const relationDirections = viewerMapPropertyArray(
+    props.relation_directions
+  );
 
   const record = viewerPopupRecordFromFeature(feature);
 
@@ -4004,19 +4131,40 @@ async function loadViewerRecords() {
     includeMapBbox: false
   });
 
-  const response = await fetch(`/api/viewer/records?${params.toString()}`, {
-    method: "GET",
-    credentials: "include"
-  });
+  const response = await fetch(
+    `/api/viewer/records?${params.toString()}`,
+    {
+      method: "GET",
+      credentials: "include"
+    }
+  );
 
   const data = await response.json();
 
   if (!response.ok || !data.ok) {
-    throw new Error(data.detail || data.error || "Failed to load viewer records");
+    throw new Error(
+      data.detail ||
+      data.error ||
+      "Failed to load viewer records"
+    );
   }
+
+  /*
+    The query has changed successfully, so stale map-fit data from the
+    previous query must not be reused by the Current results target button.
+  */
+  viewerMapLayers = {};
+
+  Object.keys(VIEWER_CLUSTER_GROUPS).forEach((groupKey) => {
+    viewerCentroidGeojsonByGroup[groupKey] = {
+      type: "FeatureCollection",
+      features: []
+    };
+  });
 
   viewerListRecords = [];
   viewerTotalCount = Number(data.total || 0);
+
   viewerRecordTypeCounts = data.record_type_counts || {};
 
   viewerRecordsByType = {};
@@ -4586,48 +4734,85 @@ function updateShowResultsOnMapButton() {
 }
 
 async function showCurrentViewerResultsOnMap() {
-  if (!viewerMap) return;
+  if (!viewerMap || !viewerMapLoaded) return;
 
-  let coordinates = getViewerCurrentMapFitCoordinates();
+  const loadedRecords = getLoadedViewerGroupRecords();
 
-  if (!coordinates.length && Number(viewerTotalCount || 0) > 0) {
-    try {
-      await loadViewerMap();
-      coordinates = getViewerCurrentMapFitCoordinates();
-    } catch (error) {
-      console.error("Viewer map reload before fitting failed:", error);
+  /*
+    A single filtered result should use its authoritative full geometry,
+    exactly like the target button on an individual result card.
+  */
+  if (Number(viewerTotalCount || 0) === 1) {
+    let lightRecord = loadedRecords[0] || null;
+
+    /*
+      The result group may still be collapsed and therefore not loaded.
+      Load the one non-empty result group before giving up.
+    */
+    if (!lightRecord) {
+      const onlyRecordType =
+        viewerResultGroupTypesForCurrentFilters()[0] || null;
+
+      if (onlyRecordType) {
+        const records = await loadViewerRecordsForType(
+          onlyRecordType,
+          {
+            offset: 0
+          }
+        );
+
+        lightRecord = records?.[0] || null;
+      }
     }
-  }
 
-  if (!coordinates.length) return;
-
-  const bounds = coordinates.reduce(
-    (box, coord) => box.extend(coord),
-    new maplibregl.LngLatBounds(coordinates[0], coordinates[0])
-  );
-
-  suppressViewerMapReload();
-  await new Promise((resolve) => {
-    let resolved = false;
-
-    function finish() {
-      if (resolved) return;
-      resolved = true;
-      resolve();
+    if (!lightRecord?.source) {
+      return;
     }
 
-    viewerMap.once("moveend", finish);
+    const fullRecord = await fetchViewerFullRecord(lightRecord);
 
-    viewerMap.fitBounds(bounds, {
-      padding: 70,
-      maxZoom: 10,
+    if (!fullRecord?.geometry) {
+      return;
+    }
+
+    fitViewerMapToGeometry(fullRecord.geometry, {
+      padding: 90,
+      maxZoom: 16,
+      pointZoom: 14,
       duration: 700
     });
 
-    setTimeout(finish, 900);
-  });
+    drawViewerSelectedHighlight(fullRecord);
+    return;
+  }
 
+  /*
+    For multiple results, reload the filtered map data first so the extent
+    cannot be calculated from stale map or centroid caches.
+  */
   await loadViewerMap();
+
+  const coordinates = getViewerCurrentMapFitCoordinates();
+
+  if (!coordinates.length) {
+    return;
+  }
+
+  const bounds = coordinates.reduce(
+    (box, coordinate) => box.extend(coordinate),
+    new maplibregl.LngLatBounds(
+      coordinates[0],
+      coordinates[0]
+    )
+  );
+
+  suppressViewerMapReload();
+
+  viewerMap.fitBounds(bounds, {
+    padding: 70,
+    maxZoom: 14,
+    duration: 700
+  });
 }
 
 function fitViewerMapToGeometry(geometry, options = {}) {
@@ -4882,17 +5067,88 @@ function viewerMeasurementValue(raw, kind, index) {
   return viewerRawValue(raw, ...candidates);
 }
 
+function viewerGuideDisplayHtml(value) {
+  const text = String(value || "").trim();
+
+  if (!text) return "";
+
+  /*
+    Add line breaks before known deterioration headings.
+    Longest labels are listed first to avoid partial matches.
+  */
+  const deteriorationLabels = [
+    "Transport Infrastructure",
+    "Urban Encroachment",
+    "Riverine Erosion",
+    "Soil Erosion",
+    "Construction",
+    "Agriculture",
+    "Quarrying",
+    "Looting",
+    "Cemetery",
+    "Dumping",
+    "Fire"
+  ];
+
+  const escapedLabels = deteriorationLabels
+    .map((label) =>
+      label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+    )
+    .join("|");
+
+  let formatted = escapeHtml(text);
+
+  /*
+    Preserve any line breaks already present in the database.
+  */
+  formatted = formatted.replace(/\r?\n+/g, "<br>");
+
+  /*
+    Deterioration guide:
+    "Urban Encroachment - ... Construction - ..."
+  */
+  formatted = formatted.replace(
+    new RegExp(
+      `\\s+(?=(${escapedLabels})\\s*[-–—:]\\s*)`,
+      "gi"
+    ),
+    "<br>"
+  );
+
+  /*
+    Condition and risk guides:
+    "1 - Excellent 2 - Good ..."
+    Also supports 0–5 and colon separators.
+  */
+  formatted = formatted.replace(
+    /\s+(?=[0-5]\s*[-–—:]\s*)/g,
+    "<br>"
+  );
+
+  return formatted;
+}
+
 function viewerSectionHelp(label, text) {
   if (!text) return "";
 
   return `
-    <details class="viewer-help-details">
-      <summary>${escapeHtml(label)}</summary>
-      <p>${escapeHtml(String(text))}</p>
-    </details>
+    <span
+      class="viewer-help-tooltip"
+      tabindex="0"
+    >
+      <span class="viewer-help-tooltip-trigger">
+        ${escapeHtml(label)}
+      </span>
+
+      <span
+        class="viewer-help-details-content"
+        role="tooltip"
+      >
+        ${viewerGuideDisplayHtml(text)}
+      </span>
+    </span>
   `;
 }
-
 
 function renderViewerSubgroup(raw, subgroup, record = null) {
   const descriptions = (subgroup.descriptions || [])
@@ -5479,15 +5735,80 @@ function clearViewerRelatedOverlay() {
   updateViewerRelatedMapButtonState();
 }
 
+function bringViewerRelatedOverlayToFront() {
+  if (!viewerMap || !viewerRelatedOverlayActive) {
+    return;
+  }
+
+  [
+    "viewer-relationship-lines-layer",
+    "viewer-related-fill-layer",
+    "viewer-related-outline-layer",
+    "viewer-related-line-layer",
+    "viewer-related-point-layer"
+  ].forEach((layerId) => {
+    if (!viewerMap.getLayer(layerId)) {
+      return;
+    }
+
+    try {
+      viewerMap.moveLayer(layerId);
+    } catch (error) {
+      console.warn(
+        `Could not move related layer ${layerId}:`,
+        error
+      );
+    }
+  });
+}
+
 async function showViewerRelatedOnMap(caalId) {
-  if (!viewerMap || !caalId) return;
+  if (!viewerMap || !viewerMapLoaded || !caalId) {
+    return;
+  }
+
+  const lang =
+    (
+      typeof window.getCurrentLanguage === "function" &&
+      window.getCurrentLanguage()
+    ) ||
+    activeLang ||
+    "en";
+
+  const params = new URLSearchParams({
+    caal_id: String(caalId).trim(),
+    lang
+  });
 
   const response = await fetch(
-    `/api/viewer/related-map?caal_id=${encodeURIComponent(caalId)}`,
-    { method: "GET", credentials: "include" }
+    `/api/viewer/related-map?${params.toString()}`,
+    {
+      method: "GET",
+      credentials: "include"
+    }
   );
 
+  
   const data = await response.json();
+
+  const relatedFeatures =
+    Array.isArray(data?.related?.features)
+      ? data.related.features
+      : [];
+
+  if (!relatedFeatures.length) {
+    setViewerStatus(
+      t(
+        "no_mapped_related_resources",
+        "No related resources with mapped geometry were found."
+      ),
+      {
+        isError: false
+      }
+    );
+
+    return;
+  }
 
   if (!response.ok || !data.ok) {
     throw new Error(data.detail || data.error || "Related map failed");
@@ -5568,6 +5889,8 @@ async function showViewerRelatedOnMap(caalId) {
   });
 
   viewerRelatedOverlayActive = true;
+  bringViewerRelatedOverlayToFront();
+  
   renderViewerLegend();
   updateViewerRelatedMapButtonState();
 
@@ -5586,12 +5909,22 @@ async function showViewerRelatedOnMap(caalId) {
     walk(geometry.coordinates);
   };
 
-  extend(data.selected.representative_point);
-  (data.related.features || []).forEach((f) => extend(f.geometry));
+  extend(
+    data?.selected?.geometry ||
+    data?.selected?.representative_point
+  );
+
+  (data?.related?.features || []).forEach((feature) => {
+    extend(feature.geometry);
+  });
 
   if (!bounds.isEmpty()) {
-    suppressViewerMapReload();
-    viewerMap.fitBounds(bounds, { padding: 60, maxZoom: 14 });
+    suppressViewerMapReload(6000);
+    viewerMap.fitBounds(bounds, {
+      padding: 60,
+      maxZoom: 14,
+      duration: 900
+    });
   }
 
   bindViewerRelatedOverlayPopups();
@@ -5816,6 +6149,8 @@ function initViewerMap() {
 
       if (Date.now() < viewerSuppressMapReloadUntil) return;
 
+      if (viewerRelatedOverlayActive) return;
+
       if (viewerIsLoading) return;
 
       /*
@@ -5839,6 +6174,11 @@ function initViewerMap() {
     renderViewerMapLabels();
 
     if (Date.now() < viewerSuppressMapReloadUntil) return;
+
+    if (viewerRelatedOverlayActive) {
+      bringViewerRelatedOverlayToFront();
+      return;
+    }
 
     if (viewerIsLoading) return;
 
@@ -7112,6 +7452,7 @@ function bringViewerLayersToFront() {
       viewerMap.moveLayer(layerId);
     }
   });
+  bringViewerRelatedOverlayToFront();
 }
 
 function viewerFeatureRepresentedCount(feature) {

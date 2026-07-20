@@ -2333,119 +2333,358 @@ router.get("/boundary-summary", async (req, res) => {
 });
 
 router.get("/related-map", async (req, res) => {
-  const currentSession = req.session?.appSession || null;
+  const session = requireSession(req, res);
+  if (!session) return;
 
-  if (!currentSession) {
-    return res.status(401).json({ ok: false, error: "No active session" });
-  }
-
-  const caalId = String(req.query.caal_id || "").trim();
+  const caalId = String(
+    req.query.caal_id ||
+    req.query.caalId ||
+    ""
+  ).trim();
 
   if (!caalId) {
-    return res.status(400).json({ ok: false, error: "caal_id is required" });
+    return res.status(400).json({
+      ok: false,
+      error: "caal_id is required"
+    });
+  }
+
+  const workspaceCode =
+    getSessionWorkspaceCode(session) || "caal";
+
+  const allowedScopes = allowedScopesForSession(session);
+
+  if (!allowedScopes.length) {
+    return res.status(403).json({
+      ok: false,
+      error: "No permitted viewer scopes"
+    });
   }
 
   try {
     const result = await pool.query(
       `
-      WITH sel AS (
+      WITH selected_candidates AS (
+        SELECT
+          v.*,
+          ${sourceScopeCaseSql("$2", "v")} AS source_scope
+        FROM ${VIEWER_BASE_MV} v
+        WHERE lower(btrim(v.caal_id)) =
+              lower(btrim($1::text))
+          AND v.geom_4326 IS NOT NULL
+          AND ${sourceScopeCaseSql("$2", "v")} =
+              ANY($3::text[])
+      ),
+
+      selected_record AS (
         SELECT *
-        FROM ui.v_related_map_features
-        WHERE caal_id_norm = lower(btrim($1::text))
+        FROM selected_candidates
+        ORDER BY
+          CASE record_type
+            WHEN 'monument' THEN 1
+            WHEN 'archive' THEN 2
+            WHEN 'rs3_poly' THEN 3
+            WHEN 'rs3_group' THEN 4
+            WHEN 'rs3_line' THEN 5
+            WHEN 'institution' THEN 6
+            WHEN 'vernacular' THEN 7
+            WHEN 'dataset' THEN 8
+            WHEN 'cartography' THEN 9
+            ELSE 99
+          END,
+          source_schema,
+          source_table,
+          source_row_id
         LIMIT 1
       ),
 
-      -- One row per distinct related record, relation types aggregated
-      edges AS (
+      relation_edges AS (
         SELECT
-          lower(btrim(r.related_caal_id)) AS related_caal_id_norm,
-          array_agg(DISTINCT r.relation_type)      AS relation_types,
-          array_agg(DISTINCT r.relation_direction) AS relation_directions
+          r.edge_id,
+          lower(btrim(r.related_caal_id))
+            AS related_caal_id_norm,
+
+          r.relation_type,
+          r.relation_type_norm,
+          r.relation_direction
         FROM ui.mv_resource_related_search r
-        WHERE lower(btrim(r.returned_caal_id)) = lower(btrim($1::text))
+        WHERE lower(btrim(r.returned_caal_id)) =
+              lower(btrim($1::text))
           AND r.related_caal_id IS NOT NULL
-          AND lower(btrim(r.related_caal_id)) <> lower(btrim($1::text))
-        GROUP BY lower(btrim(r.related_caal_id))
+          AND btrim(r.related_caal_id) <> ''
+          AND lower(btrim(r.related_caal_id)) <>
+              lower(btrim($1::text))
       ),
 
-      rel AS (
-        SELECT DISTINCT ON (f.caal_id_norm)
-          e.relation_types,
-          e.relation_directions,
-          f.*
-        FROM edges e
-        JOIN ui.v_related_map_features f
-          ON f.caal_id_norm = e.related_caal_id_norm
+      related_candidates AS (
+        SELECT
+          e.edge_id,
+          e.relation_type,
+          e.relation_type_norm,
+          e.relation_direction,
+
+          v.*,
+          ${sourceScopeCaseSql("$2", "v")} AS source_scope
+        FROM relation_edges e
+        JOIN ${VIEWER_BASE_MV} v
+          ON lower(btrim(v.caal_id)) =
+             e.related_caal_id_norm
+        WHERE v.geom_4326 IS NOT NULL
+          AND ${sourceScopeCaseSql("$2", "v")} =
+              ANY($3::text[])
+      ),
+
+      /*
+        One mapped representation per related CAAL_ID.
+
+        This prevents the same relationship appearing several times where
+        the identity MV contains more than one source representation.
+      */
+      related_records AS (
+        SELECT DISTINCT ON (
+          lower(btrim(caal_id))
+        )
+          *
+        FROM related_candidates
         ORDER BY
-          f.caal_id_norm,
-          CASE f.record_type
-            WHEN 'monument'  THEN 1
-            WHEN 'rs3_poly'  THEN 2
-            WHEN 'rs3_group' THEN 3
-            WHEN 'rs3_line'  THEN 4
-            ELSE 5
+          lower(btrim(caal_id)),
+
+          CASE record_type
+            WHEN 'monument' THEN 1
+            WHEN 'archive' THEN 2
+            WHEN 'rs3_poly' THEN 3
+            WHEN 'rs3_group' THEN 4
+            WHEN 'rs3_line' THEN 5
+            WHEN 'institution' THEN 6
+            WHEN 'vernacular' THEN 7
+            WHEN 'dataset' THEN 8
+            WHEN 'cartography' THEN 9
+            ELSE 99
           END,
-          f.source_schema,
-          f.source_row_id
+
+          source_schema,
+          source_table,
+          source_row_id
+      ),
+
+      related_aggregated AS (
+        SELECT
+          lower(btrim(caal_id)) AS caal_id_norm,
+
+          min(caal_id) AS caal_id,
+          min(record_type) AS record_type,
+          min(dataset_label) AS dataset_label,
+          min(display_label) AS display_label,
+          min(source_schema) AS source_schema,
+          min(source_table) AS source_table,
+          min(source_row_id::text) AS source_row_id,
+          min(source_scope) AS source_scope,
+
+          (array_agg(geom_4326))[1] AS geom_4326,
+
+          array_agg(
+            DISTINCT relation_type
+          ) FILTER (
+            WHERE relation_type IS NOT NULL
+          ) AS relation_types,
+
+          array_agg(
+            DISTINCT relation_type_norm
+          ) FILTER (
+            WHERE relation_type_norm IS NOT NULL
+          ) AS relation_type_norms,
+
+          array_agg(
+            DISTINCT relation_direction
+          ) FILTER (
+            WHERE relation_direction IS NOT NULL
+          ) AS relation_directions,
+
+          array_agg(
+            DISTINCT edge_id
+          ) FILTER (
+            WHERE edge_id IS NOT NULL
+          ) AS edge_ids
+        FROM related_records
+        GROUP BY lower(btrim(caal_id))
       )
 
       SELECT
-        (SELECT jsonb_build_object(
+        (
+          SELECT jsonb_build_object(
             'caal_id', s.caal_id,
             'record_type', s.record_type,
+            'dataset_label', s.dataset_label,
             'display_label', s.display_label,
             'source_schema', s.source_schema,
             'source_table', s.source_table,
             'source_row_id', s.source_row_id,
-            'geometry', ST_AsGeoJSON(s.geom, 6)::jsonb,
-            'representative_point', ST_AsGeoJSON(s.rep_point, 6)::jsonb
-          ) FROM sel s
+            'source_scope', s.source_scope,
+
+            'geometry',
+              ST_AsGeoJSON(s.geom_4326, 6)::jsonb,
+
+            'representative_point',
+              ST_AsGeoJSON(
+                ST_PointOnSurface(s.geom_4326),
+                6
+              )::jsonb
+          )
+          FROM selected_record s
         ) AS selected,
 
         jsonb_build_object(
-          'type', 'FeatureCollection',
-          'features', COALESCE(
-            (SELECT jsonb_agg(
-               jsonb_build_object(
-                 'type', 'Feature',
-                 'geometry', ST_AsGeoJSON(rel.geom, 6)::jsonb,
-                 'properties', jsonb_build_object(
-                   'caal_id', rel.caal_id,
-                   'record_type', rel.record_type,
-                   'display_label', rel.display_label,
-                   'relation_types', to_jsonb(rel.relation_types),
-                   'relation_directions', to_jsonb(rel.relation_directions),
-                   'source_schema', rel.source_schema,
-                   'source_table', rel.source_table,
-                   'source_row_id', rel.source_row_id
-                 )
-               )
-             ) FROM rel),
+          'type',
+          'FeatureCollection',
+
+          'features',
+          COALESCE(
+            (
+              SELECT jsonb_agg(
+                jsonb_build_object(
+                  'type',
+                  'Feature',
+
+                  'geometry',
+                  ST_AsGeoJSON(
+                    r.geom_4326,
+                    6
+                  )::jsonb,
+
+                  'properties',
+                  jsonb_build_object(
+                    'caal_id',
+                    r.caal_id,
+
+                    'record_type',
+                    r.record_type,
+
+                    'dataset_label',
+                    r.dataset_label,
+
+                    'display_label',
+                    r.display_label,
+
+                    'source_schema',
+                    r.source_schema,
+
+                    'source_table',
+                    r.source_table,
+
+                    'source_row_id',
+                    r.source_row_id,
+
+                    'source_scope',
+                    r.source_scope,
+
+                    'relation_types',
+                    to_jsonb(
+                      COALESCE(
+                        r.relation_types,
+                        ARRAY[]::text[]
+                      )
+                    ),
+
+                    'relation_type_norms',
+                    to_jsonb(
+                      COALESCE(
+                        r.relation_type_norms,
+                        ARRAY[]::text[]
+                      )
+                    ),
+
+                    'relation_directions',
+                    to_jsonb(
+                      COALESCE(
+                        r.relation_directions,
+                        ARRAY[]::text[]
+                      )
+                    ),
+
+                    'edge_ids',
+                    to_jsonb(
+                      COALESCE(
+                        r.edge_ids,
+                        ARRAY[]::bigint[]
+                      )
+                    )
+                  )
+                )
+                ORDER BY
+                  r.record_type,
+                  r.display_label NULLS LAST,
+                  r.caal_id
+              )
+              FROM related_aggregated r
+            ),
             '[]'::jsonb
           )
         ) AS related,
 
         jsonb_build_object(
-          'type', 'FeatureCollection',
-          'features', COALESCE(
-            (SELECT jsonb_agg(
-               jsonb_build_object(
-                 'type', 'Feature',
-                 'geometry', ST_AsGeoJSON(
-                   ST_MakeLine(s.rep_point, rel.rep_point), 6)::jsonb,
-                 'properties', jsonb_build_object(
-                   'related_caal_id', rel.caal_id,
-                   'related_record_type', rel.record_type,
-                   'relation_types', to_jsonb(rel.relation_types)
-                 )
-               )
-             ) FROM rel, sel s
-             WHERE rel.rep_point IS NOT NULL AND s.rep_point IS NOT NULL),
+          'type',
+          'FeatureCollection',
+
+          'features',
+          COALESCE(
+            (
+              SELECT jsonb_agg(
+                jsonb_build_object(
+                  'type',
+                  'Feature',
+
+                  'geometry',
+                  ST_AsGeoJSON(
+                    ST_MakeLine(
+                      ST_PointOnSurface(s.geom_4326),
+                      ST_PointOnSurface(r.geom_4326)
+                    ),
+                    6
+                  )::jsonb,
+
+                  'properties',
+                  jsonb_build_object(
+                    'related_caal_id',
+                    r.caal_id,
+
+                    'related_record_type',
+                    r.record_type,
+
+                    'relation_types',
+                    to_jsonb(
+                      COALESCE(
+                        r.relation_types,
+                        ARRAY[]::text[]
+                      )
+                    ),
+
+                    'relation_directions',
+                    to_jsonb(
+                      COALESCE(
+                        r.relation_directions,
+                        ARRAY[]::text[]
+                      )
+                    )
+                  )
+                )
+              )
+              FROM related_aggregated r
+              CROSS JOIN selected_record s
+            ),
             '[]'::jsonb
           )
-        ) AS relationship_lines
+        ) AS relationship_lines,
+
+        (
+          SELECT count(*)::integer
+          FROM related_aggregated
+        ) AS mapped_related_count
       `,
-      [caalId]
+      [
+        caalId,
+        workspaceCode,
+        allowedScopes
+      ]
     );
 
     const row = result.rows[0] || {};
@@ -2460,12 +2699,23 @@ router.get("/related-map", async (req, res) => {
     return res.json({
       ok: true,
       selected: row.selected,
-      related: row.related,
-      relationship_lines: row.relationship_lines
+
+      related: row.related || {
+        type: "FeatureCollection",
+        features: []
+      },
+
+      relationship_lines:
+        row.relationship_lines || {
+          type: "FeatureCollection",
+          features: []
+        },
+
+      mapped_related_count:
+        Number(row.mapped_related_count || 0)
     });
   } catch (error) {
-    console.error("Related map failed:");
-    console.error(error);
+    console.error("Related map failed:", error);
 
     return res.status(500).json({
       ok: false,

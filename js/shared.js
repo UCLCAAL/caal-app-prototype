@@ -1435,15 +1435,6 @@ function getRelatedIdsFromRecord(record, options = {}) {
   );
 }
 
-function groupRecordRelationsByType(record) {
-  return getRecordRelations(record).reduce((groups, rel) => {
-    const type = rel.relation_type || "Related resource";
-    if (!groups[type]) groups[type] = [];
-    groups[type].push(rel);
-    return groups;
-  }, {});
-}
-
 function relationChipClass(rel) {
   const missing = rel?.related_id_exists === false;
   return missing
@@ -1455,6 +1446,79 @@ window.getRecordRelations = getRecordRelations;
 window.getRelatedIdsFromRecord = getRelatedIdsFromRecord;
 window.groupRecordRelationsByType = groupRecordRelationsByType;
 window.relationChipClass = relationChipClass;
+
+function getDirectionalRelationType(rel) {
+  const relationType = String(
+    rel?.relation_type_norm ||
+    rel?.relation_type ||
+    ""
+  )
+    .trim()
+    .toLowerCase();
+
+  const direction = String(
+    rel?.relation_direction || ""
+  )
+    .trim()
+    .toLowerCase();
+
+  const directionalLabels = {
+    "contains / is contained within": {
+      forward: "contains",
+      reverse: "is contained within"
+    },
+
+    "is created by / created": {
+      forward: "is created by",
+      reverse: "created"
+    },
+
+    "is referred to in / refers to": {
+      forward: "is referred to in",
+      reverse: "refers to"
+    },
+
+    "is represented by / represents": {
+      forward: "is represented by",
+      reverse: "represents"
+    },
+
+    "is superseded by / supersedes": {
+      forward: "is superseded by",
+      reverse: "supersedes"
+    }
+  };
+
+  const pair = directionalLabels[relationType];
+
+  if (pair?.[direction]) {
+    return pair[direction];
+  }
+
+  /*
+    These currently have no approved reciprocal term in the database,
+    or are intentionally symmetric.
+  */
+  return (
+    rel?.relation_type ||
+    rel?.relation_type_norm ||
+    "Related resource"
+  );
+}
+
+window.getDirectionalRelationType = getDirectionalRelationType;
+
+function groupRecordRelationsByType(record) {
+  return getRecordRelations(record).reduce((groups, rel) => {
+    const type = getDirectionalRelationType(rel);
+
+    if (!groups[type]) groups[type] = [];
+    groups[type].push(rel);
+
+    return groups;
+  }, {});
+}
+
 
 // ========================================================
 // RELATED CAAL_ID AUTOCOMPLETE
