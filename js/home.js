@@ -2,6 +2,31 @@ document.addEventListener("DOMContentLoaded", async () => {
   const session = await requireSession();
   if (!session) return;
 
+  const fullSearchButton = document.getElementById("openFullDatabaseSearchButton");
+  const fullSearchWrapper = document.getElementById("fullDatabaseSearchWrapper");
+
+  const isCaalUser =
+    String(session.user?.workspace_code || "")
+      .trim()
+      .toLowerCase() === "caal";
+
+  if (fullSearchButton) {
+    fullSearchButton.disabled = !isCaalUser;
+    fullSearchButton.setAttribute("aria-disabled", String(!isCaalUser));
+
+    if (isCaalUser) {
+      fullSearchButton.addEventListener("click", () => {
+        window.location.href = "viewer.html";
+      });
+    }
+  }
+
+  if (fullSearchWrapper) {
+    fullSearchWrapper.title = isCaalUser
+      ? "Open the full CAAL database viewer."
+      : "Full database search is currently available to CAAL users only.";
+  }
+
   const logoutBtn =
     document.getElementById("logoutBtn") ||
     document.querySelector(".js-logout-btn");
