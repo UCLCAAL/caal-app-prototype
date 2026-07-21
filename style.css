@@ -824,6 +824,154 @@ body {
   display: block;
 }
 
+/* measurement tool */
+.viewer-measurement-panel {
+  position: absolute;
+  top: 0.75rem;
+  right: 3.75rem;
+  z-index: 30;
+
+  width: min(220px, calc(100% - 5rem));
+  padding: 0.65rem;
+
+  border: 1px solid #cbd5e1;
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.96);
+  box-shadow: 0 5px 16px rgba(15, 23, 42, 0.16);
+}
+
+.viewer-measurement-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.55rem;
+}
+
+.viewer-measurement-panel-header strong {
+  font-size: 0.95rem;
+  line-height: 1.2;
+}
+
+.viewer-measurement-panel-header .icon-btn {
+  width: 1.6rem;
+  height: 1.6rem;
+  min-width: 1.6rem;
+  padding: 0;
+  font-size: 0.95rem;
+}
+
+.viewer-measurement-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0.45rem;
+}
+
+.viewer-measurement-action {
+  min-height: 2.2rem;
+  padding: 0.4rem 0.5rem;
+
+  border-radius: 8px;
+  font-size: 0.82rem;
+  line-height: 1.15;
+  text-align: center;
+  justify-content: center;
+}
+
+.viewer-measurement-action.is-active,
+.viewer-measurement-action[aria-pressed="true"] {
+  border-color: #0891b2;
+  background: #cffafe;
+  color: #164e63;
+  font-weight: 700;
+}
+
+.viewer-measurement-instruction {
+  margin-top: 0.45rem;
+  color: #475569;
+  font-size: 0.72rem;
+  line-height: 1.3;
+}
+
+.viewer-measurement-result {
+  position: relative;
+
+  margin-top: 0.5rem;
+  padding: 0.5rem 3.2rem 0.5rem 0.6rem;
+
+  border: 1px solid #67e8f9;
+  border-radius: 8px;
+  background: #ecfeff;
+
+  color: #164e63;
+  font-size: 0.76rem;
+  line-height: 1.3;
+}
+
+.viewer-measurement-result strong {
+  display: block;
+  font-size: 0.92rem;
+}
+
+.viewer-measurement-clear-inline {
+  position: absolute;
+  top: 0.4rem;
+  right: 0.45rem;
+
+  border: 0;
+  background: transparent;
+  padding: 0.1rem 0.2rem;
+
+  color: #475569;
+  font-size: 0.7rem;
+  line-height: 1;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.viewer-measurement-clear-inline:hover,
+.viewer-measurement-clear-inline:focus-visible {
+  color: #0f172a;
+}
+
+.viewer-measurement-panel .viewer-measurement-action {
+  min-height: 2rem;
+  padding: 0.35rem 0.45rem;
+
+  font-size: 0.76rem;
+  line-height: 1.15;
+  font-weight: 500;
+
+  border-radius: 8px;
+}
+
+.viewer-measurement-panel
+.viewer-measurement-action.is-active,
+.viewer-measurement-panel
+.viewer-measurement-action[aria-pressed="true"] {
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.viewer-measurement-panel-header strong {
+  font-size: 0.9rem;
+}
+
+.viewer-measurement-placeholder {
+  color: #64748b;
+  font-size: 0.72rem;
+  font-style: italic;
+}
+
+.viewer-measurement-panel {
+  width: min(205px, calc(100% - 5rem));
+}
+
+.viewer-external-reference-link {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
 /*
   Keep right-pane guide tooltips above the adjacent MapLibre map.
 */

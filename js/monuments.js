@@ -5146,11 +5146,47 @@ function applyMonumentScopeUiForSession(
   session = window.appSession,
   { setDefault = false } = {}
 ) {
-  const isGlobalCaalUser = monumentUserIsGlobalCaal(session);
-  const canViewAllCaal = monumentUserCanViewAllCaal(session);
+    const isResearcher = [
+      "caal_researcher",
+      "national_researcher"
+    ].includes(session?.permissions?.role_label);
 
-  const nationalWrapper = showNationalRecords?.closest("label");
-  const workspaceWrapper = showWorkspaceRecords?.closest("label");
+    const isGlobalCaalUser = monumentUserIsGlobalCaal(session);
+    const canViewAllCaal = monumentUserCanViewAllCaal(session);
+
+    const workspaceWrapper = showWorkspaceRecords?.closest("label");
+    const nationalWrapper = showNationalRecords?.closest("label");
+
+    if (isResearcher) {
+      /*
+        Fix the permitted scopes before hiding the controls.
+      */
+      if (showWorkspaceRecords) {
+        showWorkspaceRecords.checked = true;
+        showWorkspaceRecords.disabled = true;
+      }
+
+      if (showNationalRecords) {
+        showNationalRecords.checked = !isGlobalCaalUser;
+        showNationalRecords.disabled = true;
+      }
+
+      if (showAllCaalRecords) {
+        showAllCaalRecords.checked = isGlobalCaalUser && canViewAllCaal;
+        showAllCaalRecords.disabled = true;
+      }
+
+      /*
+        Hide all scope choices.
+      */
+      if (workspaceWrapper) workspaceWrapper.hidden = true;
+      if (nationalWrapper) nationalWrapper.hidden = true;
+      if (allCaalMonumentsToggleWrapper) {
+        allCaalMonumentsToggleWrapper.hidden = true;
+      }
+
+      return;
+    }
 
   if (isGlobalCaalUser) {
     if (nationalWrapper) {
@@ -12464,6 +12500,56 @@ function renderMonumentRecordDetails(record) {
   updateMapOptionsState();
 }
 
+function mExternalReferenceHtml(value) {
+  const text = String(value || "").trim();
+
+  if (!text) {
+    return `<span class="empty-value">${mSafeValue(
+      t("none_recorded", "None recorded")
+    )}</span>`;
+  }
+
+  let parsedUrl;
+
+  try {
+    parsedUrl = new URL(text);
+  } catch {
+    return mSafeValue(text);
+  }
+
+  if (
+    parsedUrl.protocol !== "http:" &&
+    parsedUrl.protocol !== "https:"
+  ) {
+    return mSafeValue(text);
+  }
+
+  return `
+    <a
+      class="viewer-external-reference-link"
+      href="${mSafeValue(parsedUrl.href)}"
+      target="_blank"
+      rel="noopener noreferrer"
+    >
+      ${mSafeValue(text)}
+    </a>
+  `;
+}
+
+function mRenderExternalReferenceItem(label, value) {
+  return `
+    <div class="detail-item full-width">
+      <span class="detail-label">
+        ${mSafeValue(label)}
+      </span>
+
+      <div class="detail-value">
+        ${mExternalReferenceHtml(value)}
+      </div>
+    </div>
+  `;
+}
+
 function renderMonumentDisplayMode(record) {
   const appSession = window.appSession || null;
   const accessLevel =
@@ -12519,7 +12605,10 @@ function renderMonumentDisplayMode(record) {
     mRenderDetailItem(mLabel("Classification", "Classification"), mSummary(record, "classification")),
     mRenderDetailItem(mLabel("CAAL_ID", "CAAL_ID"), mIdentity(record, "caal_id")),
     mRenderDetailItem(mLabel("Internal Reference", "Internal Reference"), mRaw(record, "Internal Reference")),
-    mRenderDetailItem(mLabel("External Reference", "External Reference"), mRaw(record, "External Reference")),
+    mRenderExternalReferenceItem(
+      mLabel("External Reference", "External Reference"),
+      mRaw(record, "External Reference")
+    ),
     mRenderDetailItem(mLabel("Designation", "Designation"), mSummary(record, "designation")),
     mRenderDetailItem(mLabel("World Heritage Site Name", "World Heritage Site Name"), mRaw(record, "World Heritage Site Name"))
   ].join("");

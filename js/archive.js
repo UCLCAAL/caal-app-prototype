@@ -2878,6 +2878,47 @@ function archiveRenderDoiValue(value) {
   `;
 }
 
+function archiveRenderExternalReferenceValue(value) {
+  const text = String(value || "").trim();
+
+  if (!text) {
+    return safeArchiveValue("");
+  }
+
+  let href = text;
+
+  /*
+    Permit addresses stored without a protocol.
+  */
+  if (/^www\./i.test(href)) {
+    href = `https://${href}`;
+  }
+
+  try {
+    const parsed = new URL(href);
+
+    if (
+      parsed.protocol !== "http:" &&
+      parsed.protocol !== "https:"
+    ) {
+      return archiveAttributeValue(text);
+    }
+
+    return `
+      <a
+        class="viewer-external-reference-link"
+        href="${archiveAttributeValue(parsed.href)}"
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        ${archiveAttributeValue(text)}
+      </a>
+    `;
+  } catch {
+    return archiveAttributeValue(text);
+  }
+}
+
 function archiveSvgCopyIcon() {
   return `
     <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16">
@@ -3650,6 +3691,17 @@ function archiveRenderAssociatedMonumentPreview(record, caalId, fullRecordUrl) {
           ${archiveRenderDetailItem(archiveLabel("Region", "Region"), record.summary?.region)}
           ${archiveRenderDetailItem(archiveLabel("Classification", "Classification"), record.summary?.classification)}
           ${archiveRenderDetailItem(archiveLabel("Designation", "Designation"), record.summary?.designation)}
+          ${archiveRenderDetailHtmlItem(
+            archiveLabel(
+              "External Reference",
+              "External Reference"
+            ),
+            archiveRenderExternalReferenceValue(
+              record.raw?.["External Reference"] ??
+              record.summary?.external_reference
+            ),
+            true
+          )}
         </div>
       </div>
 
@@ -3753,7 +3805,13 @@ function archiveRenderInstitutionPreview(inst) {
           ${archiveRenderDetailItem(archiveLabel("Country", "Country"), inst.country)}
           ${archiveRenderDetailItem(t("address", "Address"), inst.address, true)}
           ${archiveRenderDetailItem(archiveLabel("Description", "Description"), inst.description, true)}
-          ${archiveRenderDetailItem(t("external_reference", "External Reference"), inst.external_reference, true)}
+          ${archiveRenderDetailHtmlItem(
+            t("external_reference", "External Reference"),
+            archiveRenderExternalReferenceValue(
+              inst.external_reference
+            ),
+            true
+          )}
         </div>
       </div>
 
@@ -4130,11 +4188,44 @@ function applyArchiveScopeUiForSession(
   session = window.appSession,
   { setDefault = false } = {}
 ) {
+  const isResearcher = [
+    "caal_researcher",
+    "national_researcher"
+  ].includes(session?.permissions?.role_label);
+
   const isGlobalCaalUser = archiveUserIsGlobalCaal(session);
   const canViewAllCaal = archiveUserCanViewAllCaal(session);
 
   const nationalWrapper = showArchiveNationalRef?.closest("label");
   const workspaceWrapper = showArchiveWorkspace?.closest("label");
+
+  if (isResearcher) {
+    if (showArchiveWorkspace) {
+      showArchiveWorkspace.checked = true;
+      showArchiveWorkspace.disabled = true;
+    }
+
+    if (showArchiveNationalRef) {
+      showArchiveNationalRef.checked = !isGlobalCaalUser;
+      showArchiveNationalRef.disabled = true;
+    }
+
+    if (showArchiveAllCaal) {
+      showArchiveAllCaal.checked =
+        isGlobalCaalUser && canViewAllCaal;
+
+      showArchiveAllCaal.disabled = true;
+    }
+
+    if (workspaceWrapper) workspaceWrapper.hidden = true;
+    if (nationalWrapper) nationalWrapper.hidden = true;
+
+    if (allCaalArchiveToggleWrapper) {
+      allCaalArchiveToggleWrapper.hidden = true;
+    }
+
+    return;
+  }
 
   if (isGlobalCaalUser) {
     if (nationalWrapper) {

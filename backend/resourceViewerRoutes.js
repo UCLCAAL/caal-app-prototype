@@ -380,6 +380,9 @@ function allowedScopesForSession(session) {
 
   if (session?.permissions?.can_view_workspace) {
     scopes.push("workspace");
+  }
+
+  if (session?.permissions?.can_view_national_ref) {
     scopes.push("national_ref");
   }
 
@@ -388,8 +391,8 @@ function allowedScopesForSession(session) {
   }
 
   /*
-    Defensive fallback for early testing. Remove later if all sessions reliably
-    carry can_view_workspace / can_view_all_caal.
+    Temporary compatibility fallback.
+    Remove once all active sessions reliably contain permissions.
   */
   if (!scopes.length) {
     if (isCaalWorkspace(session)) {
@@ -405,13 +408,12 @@ function allowedScopesForSession(session) {
 
 function requestedScopes(req, session) {
   const requested = parseCsvParam(req.query.scopes);
+  const allowedScopes = allowedScopesForSession(session);
+  const allowed = new Set(allowedScopes);
 
-  const defaults = isCaalWorkspace(session)
-    ? ["all_caal"]
-    : ["workspace", "national_ref"];
-
-  const rawScopes = requested.length ? requested : defaults;
-  const allowed = new Set(allowedScopesForSession(session));
+  const rawScopes = requested.length
+    ? requested
+    : allowedScopes;
 
   return unique(rawScopes)
     .filter((scope) => ALLOWED_SCOPES.has(scope))

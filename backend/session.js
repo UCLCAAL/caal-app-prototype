@@ -129,18 +129,35 @@ function permissionsFromAccessLevel(accessLevel, workspaceCodeRaw = "") {
   const isNationalAdmin = level === 9 && workspaceCode && workspaceCode !== "caal";
 
   switch (level) {
-    case 1:
+    case 1: {
+      const isCaalResearcher = workspaceCode === "caal";
+      const isNationalResearcher =
+        workspaceCode && workspaceCode !== "caal";
+
       return {
+        // National researchers can see records stored in their own schema.
         can_view_workspace: true,
+
+        // National researchers can also see public CAAL records
+        // assigned to their national workspace.
+        can_view_national_ref: isNationalResearcher,
+
+        // CAAL researchers can see the complete CAAL discovery scope.
+        can_view_all_caal: isCaalResearcher,
+
         can_edit_workspace: false,
-        can_view_national_ref: false,
-        can_view_all_caal: false,
         can_edit_caal: false,
         can_edit_national_caal: false,
         can_delete: false,
         can_promote: false,
-        role_label: "read_only"
+
+        role_label: isCaalResearcher
+          ? "caal_researcher"
+          : isNationalResearcher
+            ? "national_researcher"
+            : "read_only"
       };
+    }
 
     case 2:
       return {

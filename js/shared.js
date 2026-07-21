@@ -2209,6 +2209,42 @@ function caalRecordTypeIconSvg(recordType) {
   }
 }
 
+function svgViewerMeasurementIcon() {
+  return `
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      width="20"
+      height="20"
+    >
+      <rect
+        x="2.5"
+        y="7"
+        width="19"
+        height="10"
+        rx="1.8"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+      />
+
+      <path
+        d="
+          M6 7v4
+          M9 7v2.5
+          M12 7v4
+          M15 7v2.5
+          M18 7v4
+        "
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.8"
+        stroke-linecap="round"
+      />
+    </svg>
+  `;
+}
+
 function caalRecordTypeIconClass(recordType) {
   return `caal-record-type-icon caal-record-type-icon-${String(recordType || "").trim()}`;
 }

@@ -133,6 +133,49 @@ const cancelViewerSpatialDrawBtn = document.getElementById(
   "cancelViewerSpatialDrawBtn"
 );
 
+// measurement tool
+const viewerMeasurementPanel = document.getElementById(
+  "viewerMeasurementPanel"
+);
+
+const closeViewerMeasurementPanelBtn = document.getElementById(
+  "closeViewerMeasurementPanelBtn"
+);
+
+const viewerMeasureDistanceBtn = document.getElementById(
+  "viewerMeasureDistanceBtn"
+);
+
+const viewerMeasureAreaBtn = document.getElementById(
+  "viewerMeasureAreaBtn"
+);
+
+const viewerMeasurementInstruction = document.getElementById(
+  "viewerMeasurementInstruction"
+);
+
+const viewerMeasurementResult = document.getElementById(
+  "viewerMeasurementResult"
+);
+
+let viewerMeasurementControlBtn = null;
+
+let viewerMeasurementMode = null;
+let viewerMeasurementCoordinates = [];
+let viewerMeasurementIsActive = false;
+let viewerMeasurementEventsBound = false;
+
+const VIEWER_MEASUREMENT_SOURCE_ID =
+  "viewer-measurement-source";
+
+const VIEWER_MEASUREMENT_LINE_LAYER_ID =
+  "viewer-measurement-line";
+
+const VIEWER_MEASUREMENT_FILL_LAYER_ID =
+  "viewer-measurement-fill";
+
+const VIEWER_MEASUREMENT_POINT_LAYER_ID =
+  "viewer-measurement-points";
 
 // --------------------------------------------------------
 // CONSTANTS
@@ -673,33 +716,49 @@ const VIEWER_MONUMENT_DETAIL_GROUPS = [
 const VIEWER_ARCHIVE_DETAIL_GROUPS = [
   {
     title: "Material Details",
-    fields: [
-      "CAAL_ID",
-      "Associated CAAL_ID",
-      "Original Reference",
-      "Content Type",
-      "Country",
-      "Level",
-      "Original Title",
-      "English Title",
-      "Description"
-    ]
+    custom: "archive_material"
+  },
+  {
+    title: "Related Resources",
+    custom: "related_resources"
   },
   {
     title: "Publication Details",
-    fields: [
-      "Dates of Original Material",
-      "Author of the Original Material",
-      "Publisher of the Original Material",
-      "Editor of the Original Material",
-      "Volume and Issue Number"
-    ]
+    custom: "archive_publication"
+  },
+  {
+    title: "Content",
+    custom: "archive_content"
+  },
+  {
+    title: "Digital",
+    custom: "archive_digital"
+  },
+  {
+    title: "Metadata",
+    custom: "archive_metadata"
+  }
+];
+
+const VIEWER_INSTITUTION_DETAIL_GROUPS = [
+  {
+    title: "Institution Details",
+    custom: "institution_details"
+  },
+  {
+    title: "Institution Location",
+    custom: "institution_location"
+  },
+  {
+    title: "Related Resources",
+    custom: "related_resources"
   }
 ];
 
 const VIEWER_DETAIL_GROUPS = {
   monument: VIEWER_MONUMENT_DETAIL_GROUPS,
   archive: VIEWER_ARCHIVE_DETAIL_GROUPS,
+  institution: VIEWER_INSTITUTION_DETAIL_GROUPS,
   rs3_poly: VIEWER_RS3_DETAIL_GROUPS,
   rs3_line: VIEWER_RS3_DETAIL_GROUPS,
   rs3_group: VIEWER_RS3_DETAIL_GROUPS,
@@ -885,6 +944,32 @@ function renderViewerField(raw, fieldName, record = null) {
 
   if (!hasViewerFieldValue(raw, fieldName)) {
     return "";
+  }
+
+  if (
+    [
+      "External Reference",
+      "External reference",
+      "external_reference"
+    ].includes(fieldName)
+  ) {
+    const displayValue = viewerTranslatedFieldValue(
+      record,
+      fieldName,
+      value
+    );
+
+    return `
+      <div class="detail-item full-width">
+        <span class="detail-label">
+          ${escapeHtml(vLabel(fieldName, fieldName))}
+        </span>
+
+        <div class="detail-value">
+          ${viewerExternalReferenceHtml(displayValue)}
+        </div>
+      </div>
+    `;
   }
 
   if (VIEWER_BOOLEAN_FIELDS.has(fieldName)) {
@@ -4950,6 +5035,372 @@ function renderViewerDetailItem(label, value, { fullWidth = false } = {}) {
   `;
 }
 
+function viewerHasDisplayValue(value) {
+  if (value === null || value === undefined) return false;
+
+  if (Array.isArray(value)) {
+    return value.some(viewerHasDisplayValue);
+  }
+
+  return String(value).trim() !== "";
+}
+
+function viewerRecordFieldValue(record, ...fieldNames) {
+  const sources = [
+    record?.display,
+    record?.raw,
+    record?.summary,
+    record?.identity,
+    record
+  ];
+
+  /*
+    Search translated display values first, followed by the raw record,
+    summary and identity objects.
+  */
+  for (const source of sources) {
+    if (!source || typeof source !== "object") continue;
+
+    for (const fieldName of fieldNames) {
+      const value = source[fieldName];
+
+      if (viewerHasDisplayValue(value)) {
+        return viewerDisplayValue(fieldNames[0], value);
+      }
+    }
+  }
+
+  return null;
+}
+
+function renderViewerDetailHtmlItem(
+  label,
+  htmlValue,
+  { fullWidth = false } = {}
+) {
+  return `
+    <div class="detail-item ${fullWidth ? "full-width" : ""}">
+      <span class="detail-label">${escapeHtml(label)}</span>
+      <div class="detail-value">${htmlValue}</div>
+    </div>
+  `;
+}
+
+function renderViewerConfiguredGroup(title, record, fields) {
+  const rows = fields.map((field) => {
+    const label = field.label;
+
+    if (typeof field.html === "function") {
+      return renderViewerDetailHtmlItem(
+        label,
+        field.html(record),
+        {
+          fullWidth: field.fullWidth === true
+        }
+      );
+    }
+
+    let value = viewerRecordFieldValue(
+      record,
+      ...(field.names || [])
+    );
+
+    if (typeof field.transform === "function") {
+      value = field.transform(value, record);
+    }
+
+    return renderViewerDetailItem(
+      label,
+      value,
+      {
+        fullWidth: field.fullWidth === true
+      }
+    );
+  }).join("");
+
+  return `
+    <div class="group-block">
+      <div class="group-grid">
+        <div class="detail-item full-width section-header">
+          <span class="detail-section-title">
+            ${escapeHtml(title)}
+          </span>
+        </div>
+
+        ${rows}
+      </div>
+    </div>
+  `;
+}
+
+function viewerListDisplayValue(value) {
+  if (!viewerHasDisplayValue(value)) return null;
+
+  if (Array.isArray(value)) {
+    return value
+      .map((item) => String(item || "").trim())
+      .filter(Boolean)
+      .join(", ");
+  }
+
+  const text = String(value).trim();
+
+  /*
+    Handle a JSON array.
+  */
+  if (text.startsWith("[") && text.endsWith("]")) {
+    try {
+      const parsed = JSON.parse(text);
+
+      if (Array.isArray(parsed)) {
+        return parsed
+          .map((item) => String(item || "").trim())
+          .filter(Boolean)
+          .join(", ");
+      }
+    } catch (error) {
+      // Use the original value.
+    }
+  }
+
+  /*
+    Handle a PostgreSQL-style text array.
+  */
+  if (text.startsWith("{") && text.endsWith("}")) {
+    return text
+      .slice(1, -1)
+      .split(",")
+      .map((item) => item.trim().replace(/^"(.*)"$/, "$1"))
+      .filter(Boolean)
+      .join(", ");
+  }
+
+  return text;
+}
+
+function viewerDateOnly(value) {
+  if (!viewerHasDisplayValue(value)) return value;
+
+  const text = String(value).trim();
+
+  if (/^\d{4}-\d{2}-\d{2}T/.test(text)) {
+    return text.slice(0, 10);
+  }
+
+  return value;
+}
+
+function viewerLanguageDisplayName(value) {
+  if (!viewerHasDisplayValue(value)) return value;
+
+  if (typeof displayLanguageName === "function") {
+    return displayLanguageName(value);
+  }
+
+  return value;
+}
+
+function viewerCopyrightDisplayValue(value) {
+  if (!viewerHasDisplayValue(value)) return value;
+
+  if (typeof value === "boolean") {
+    return value
+      ? t("yes", "Yes")
+      : t("no", "No");
+  }
+
+  const normalised = String(value).trim().toLowerCase();
+
+  if (["true", "t", "1", "yes", "y"].includes(normalised)) {
+    return t("yes", "Yes");
+  }
+
+  if (["false", "f", "0", "no", "n"].includes(normalised)) {
+    return t("no", "No");
+  }
+
+  return value;
+}
+
+function viewerNormaliseDoi(value) {
+  return String(value || "")
+    .trim()
+    .replace(/^https?:\/\/(www\.)?(dx\.)?doi\.org\//i, "")
+    .replace(/^(www\.)?(dx\.)?doi\.org\//i, "")
+    .replace(/^doi:\s*/i, "")
+    .trim();
+}
+
+function viewerDoiHtml(value) {
+  if (!viewerHasDisplayValue(value)) {
+    return viewerSafeDisplayValue(null);
+  }
+
+  const raw = String(value).trim();
+  const doi = viewerNormaliseDoi(raw);
+
+  if (!doi) {
+    return viewerSafeDisplayValue(raw);
+  }
+
+  const href =
+    `https://doi.org/${
+      encodeURIComponent(doi).replace(/%2F/gi, "/")
+    }`;
+
+  return `
+    <a
+      href="${escapeHtml(href)}"
+      target="_blank"
+      rel="noopener noreferrer"
+    >
+      ${escapeHtml(doi)}
+    </a>
+  `;
+}
+
+function viewerExternalReferenceHtml(value) {
+  if (!viewerHasDisplayValue(value)) {
+    return viewerSafeDisplayValue(null);
+  }
+
+  const text = String(value).trim();
+
+  let parsedUrl;
+
+  try {
+    parsedUrl = new URL(text);
+  } catch {
+    return escapeHtml(text);
+  }
+
+  if (
+    parsedUrl.protocol !== "http:" &&
+    parsedUrl.protocol !== "https:"
+  ) {
+    return escapeHtml(text);
+  }
+
+  return `
+    <a
+      class="viewer-external-reference-link"
+      href="${escapeHtml(parsedUrl.href)}"
+      target="_blank"
+      rel="noopener noreferrer"
+    >
+      ${escapeHtml(text)}
+    </a>
+  `;
+}
+
+function viewerArchiveHoldingInstitutionRelation(record) {
+  const relations = Array.isArray(record?.relations)
+    ? record.relations
+    : [];
+
+  return relations.find((relation) => {
+    const storedType = String(
+      relation?.relation_type_norm ||
+      relation?.relation_type ||
+      ""
+    )
+      .trim()
+      .toLowerCase();
+
+    const directionalType =
+      typeof window.getDirectionalRelationType === "function"
+        ? String(
+            window.getDirectionalRelationType(relation) || ""
+          )
+            .trim()
+            .toLowerCase()
+        : "";
+
+    const relatedId = String(
+      relation?.related_caal_id || ""
+    ).trim();
+
+    const acceptedTypes = new Set([
+      "holding_institution",
+      "holding institution",
+      "is held by / holds",
+      "is held by",
+      "is created by / created",
+      "is created by"
+    ]);
+
+    return (
+      acceptedTypes.has(storedType) ||
+      acceptedTypes.has(directionalType) ||
+      relatedId.startsWith("Act_")
+    );
+  }) || null;
+}
+
+function viewerArchiveHoldingInstitutionHtml(record) {
+  const relation =
+    viewerArchiveHoldingInstitutionRelation(record);
+
+  if (!relation?.related_caal_id) {
+    return `
+      <span class="empty-value">
+        ${escapeHtml(
+          t(
+            "holding_institution_missing",
+            "No holding institution recorded"
+          )
+        )}
+      </span>
+    `;
+  }
+
+  const relatedId = String(
+    relation.related_caal_id
+  ).trim();
+
+  const recordType =
+    relation.related_record_type ||
+    "institution";
+
+  const label = firstNonBlank(
+    relation.related_display_label,
+    relation.related_primary_name,
+    relation.related_label,
+    relation.related_title,
+    relation.related_name,
+    relatedId
+  );
+
+  const secondary = [
+    relation.related_name_ru,
+    relation.related_actor_type,
+    relation.related_country,
+    relatedId
+  ]
+    .map((value) => String(value || "").trim())
+    .filter(Boolean)
+    .join(" - ");
+
+  return `
+    <div class="related-id-list viewer-related-detail-id-list">
+      <button
+        type="button"
+        class="${viewerDetailRelationChipClass(relation)} institution-chip viewer-archive-holding-institution-chip"
+        data-viewer-related-id="${escapeHtml(relatedId)}"
+        data-viewer-related-type="${escapeHtml(recordType)}"
+        title="${escapeHtml(secondary)}"
+      >
+        ${relatedRecordTypeIconHtml(recordType)}
+
+        <span class="related-id-chip-text">
+          ${escapeHtml(label)}
+        </span>
+      </button>
+    </div>
+  `;
+}
+
+
 function viewerLookupLabelByValue(lookupNames, value) {
   const needle = String(value ?? "").trim();
   if (!needle) return value;
@@ -5173,6 +5624,577 @@ function renderViewerSubgroup(raw, subgroup, record = null) {
   `;
 }
 
+function renderViewerArchiveMaterialGroup(record) {
+  return renderViewerConfiguredGroup(
+    t("material_details", "Material Details"),
+    record,
+    [
+      {
+        label: vLabel("CAAL_ID", "CAAL_ID"),
+        names: ["CAAL_ID", "caal_id"]
+      },
+      {
+        label: t(
+          "holding_institution",
+          "Holding Institution"
+        ),
+        html: viewerArchiveHoldingInstitutionHtml
+      },
+      {
+        label: vLabel("Level", "Level"),
+        names: ["Level", "level"]
+      },
+      {
+        label: vLabel(
+          "Original Reference",
+          "Original Reference"
+        ),
+        names: [
+          "Original Reference",
+          "original_reference"
+        ]
+      },
+      {
+        label: vLabel(
+          "Original Title",
+          "Original Title"
+        ),
+        names: [
+          "Original Title",
+          "original_title"
+        ],
+        fullWidth: true
+      },
+      {
+        label: vLabel(
+          "English Title",
+          "English Title"
+        ),
+        names: [
+          "English Title",
+          "english_title"
+        ],
+        fullWidth: true
+      },
+      {
+        label: vLabel(
+          "Content Type",
+          "Content Type"
+        ),
+        names: [
+          "Content Type",
+          "content_type"
+        ]
+      },
+      {
+        label: vLabel(
+          "Number and Type of Original Material",
+          "Number and Type of Original Material"
+        ),
+        names: [
+          "Number and Type of Original Material",
+          "number_and_type_of_original_material"
+        ],
+        fullWidth: true
+      },
+      {
+        label: vLabel(
+          "Size and Dimensions of Original Material",
+          "Size and Dimensions of Original Material"
+        ),
+        names: [
+          "Size and Dimensions of Original Material",
+          "size_and_dimensions_of_original_material"
+        ]
+      },
+      {
+        label: vLabel(
+          "Condition of Original Material",
+          "Condition of Original Material"
+        ),
+        names: [
+          "Condition of Original Material",
+          "condition_of_original_material"
+        ]
+      }
+    ]
+  );
+}
+
+function renderViewerArchivePublicationGroup(record) {
+  return renderViewerConfiguredGroup(
+    t("publication_details", "Publication Details"),
+    record,
+    [
+      {
+        label: vLabel(
+          "Dates of Original Material",
+          "Dates of Original Material"
+        ),
+        names: [
+          "Dates of Original Material",
+          "dates_of_original_material"
+        ]
+      },
+      {
+        label: vLabel(
+          "Author of the Original Material",
+          "Author of the Original Material"
+        ),
+        names: [
+          "Author of the Original Material",
+          "author_of_the_original_material"
+        ],
+        fullWidth: true
+      },
+      {
+        label: vLabel(
+          "Publisher of the Original Material",
+          "Publisher of the Original Material"
+        ),
+        names: [
+          "Publisher of the Original Material",
+          "publisher_of_the_original_material"
+        ],
+        fullWidth: true
+      },
+      {
+        label: vLabel(
+          "Editor of the Original Material",
+          "Editor of the Original Material"
+        ),
+        names: [
+          "Editor of the Original Material",
+          "editor_of_the_original_material"
+        ],
+        fullWidth: true
+      },
+      {
+        label: vLabel(
+          "Volume and Issue Number",
+          "Volume and Issue Number"
+        ),
+        names: [
+          "Volume and Issue Number",
+          "volume_and_issue_number"
+        ]
+      },
+      {
+        label: vLabel(
+          "Still under CopyrightYN",
+          "Still under Copyright?"
+        ),
+        names: [
+          "Still under Copyright?",
+          "Still under CopyrightYN",
+          "still_under_copyright"
+        ],
+        transform: viewerCopyrightDisplayValue
+      },
+      {
+        label: vLabel(
+          "Copyright Holder Name",
+          "Copyright Holder Name"
+        ),
+        names: [
+          "Copyright Holder Name",
+          "copyright_holder_name"
+        ],
+        fullWidth: true
+      },
+      {
+        label: vLabel(
+          "Copyright Attribution",
+          "Copyright Attribution"
+        ),
+        names: [
+          "Copyright Attribution",
+          "copyright_attribution"
+        ],
+        fullWidth: true
+      }
+    ]
+  );
+}
+
+function renderViewerArchiveContentGroup(record) {
+  return renderViewerConfiguredGroup(
+    t("content", "Content"),
+    record,
+    [
+      {
+        label: vLabel("Description", "Description"),
+        names: ["Description", "description"],
+        fullWidth: true
+      },
+      {
+        label: vLabel(
+          "Description - alternative language",
+          "Description - alternative language"
+        ),
+        names: [
+          "Description - alternative language",
+          "description_alternative_language"
+        ],
+        fullWidth: true
+      },
+      {
+        label: vLabel(
+          "Related Countries",
+          "Related Countries"
+        ),
+        names: [
+          "Related Countries",
+          "related_countries"
+        ],
+        transform: viewerListDisplayValue,
+        fullWidth: true
+      },
+      {
+        label: vLabel(
+          "Related Towns and Cities",
+          "Related Towns and Cities"
+        ),
+        names: [
+          "Related Towns and Cities",
+          "related_towns_and_cities"
+        ],
+        fullWidth: true
+      },
+      {
+        label: vLabel(
+          "Related Religions",
+          "Related Religions"
+        ),
+        names: [
+          "Related Religions",
+          "related_religions"
+        ],
+        transform: viewerListDisplayValue,
+        fullWidth: true
+      },
+      {
+        label: vLabel(
+          "Related Subjects",
+          "Related Subjects"
+        ),
+        names: [
+          "Related Subjects",
+          "related_subjects"
+        ],
+        transform: viewerListDisplayValue,
+        fullWidth: true
+      },
+      {
+        label: vLabel(
+          "Other Subjects",
+          "Other Subjects"
+        ),
+        names: [
+          "Other Subjects",
+          "other_subjects"
+        ],
+        fullWidth: true
+      },
+      {
+        label: vLabel(
+          "Languages of Material",
+          "Languages of Material"
+        ),
+        names: [
+          "Languages of Material",
+          "languages_of_material"
+        ],
+        transform: viewerListDisplayValue,
+        fullWidth: true
+      },
+      {
+        label: vLabel(
+          "Script of Material",
+          "Script of Material"
+        ),
+        names: [
+          "Script of Material",
+          "script_of_material"
+        ]
+      },
+      {
+        label: vLabel(
+          "Writing System",
+          "Writing System"
+        ),
+        names: [
+          "Writing System",
+          "writing_system"
+        ]
+      }
+    ]
+  );
+}
+
+function renderViewerArchiveDigitalGroup(record) {
+  return renderViewerConfiguredGroup(
+    t("digital", "Digital"),
+    record,
+    [
+      {
+        label: vLabel(
+          "Digital Folder Name",
+          "Digital Folder Name"
+        ),
+        names: [
+          "Digital Folder Name",
+          "digital_folder_name"
+        ],
+        fullWidth: true
+      },
+      {
+        label: vLabel(
+          "Digital Files Name",
+          "Digital Files Name"
+        ),
+        names: [
+          "Digital Files Name",
+          "digital_files_name"
+        ],
+        fullWidth: true
+      },
+      {
+        label: vLabel(
+          "Creation Date of Digital Files",
+          "Creation Date of Digital Files"
+        ),
+        names: [
+          "Creation Date of Digital Files",
+          "creation_date_of_digital_files"
+        ],
+        transform: viewerDateOnly
+      },
+      {
+        label: vLabel(
+          "Format of Digital Files",
+          "Format of Digital Files"
+        ),
+        names: [
+          "Format of Digital Files",
+          "format_of_digital_files"
+        ]
+      },
+      {
+        label: vLabel(
+          "Number of Digital Files",
+          "Number of Digital Files"
+        ),
+        names: [
+          "Number of Digital Files",
+          "number_of_digital_files"
+        ]
+      },
+      {
+        label: vLabel("Colour", "Colour"),
+        names: ["Colour", "colour"]
+      },
+      {
+        label: vLabel("Resolution", "Resolution"),
+        names: ["Resolution", "resolution"]
+      }
+    ]
+  );
+}
+
+function renderViewerArchiveMetadataGroup(record) {
+  return renderViewerConfiguredGroup(
+    t("metadata", "Metadata"),
+    record,
+    [
+      {
+        label: vLabel(
+          "Archive Recorder",
+          "Archive Recorder"
+        ),
+        names: [
+          "Archive Recorder",
+          "archive_recorder"
+        ]
+      },
+      {
+        label: vLabel(
+          "Date of Recording",
+          "Date of Recording"
+        ),
+        names: [
+          "Date of Recording",
+          "date_of_recording"
+        ],
+        transform: viewerDateOnly
+      },
+      {
+        label: t(
+          "recorded_language",
+          "Recorded Language"
+        ),
+        names: [
+          "Preferred Language",
+          "preferred_language"
+        ],
+        transform: viewerLanguageDisplayName
+      },
+      {
+        label: vLabel("Resource", "DOI"),
+        names: ["Resource", "resource"],
+        html: (currentRecord) => {
+          const value = viewerRecordFieldValue(
+            currentRecord,
+            "Resource",
+            "resource"
+          );
+
+          return viewerDoiHtml(value);
+        }
+      }
+    ]
+  );
+}
+
+function viewerInstitutionCoordinate(record, axis) {
+  const fieldName =
+    axis === "longitude"
+      ? "Longitude"
+      : "Latitude";
+
+  const directValue = viewerRecordFieldValue(
+    record,
+    fieldName,
+    axis
+  );
+
+  if (viewerHasDisplayValue(directValue)) {
+    return directValue;
+  }
+
+  if (
+    record?.geometry?.type === "Point" &&
+    Array.isArray(record.geometry.coordinates)
+  ) {
+    return axis === "longitude"
+      ? record.geometry.coordinates[0]
+      : record.geometry.coordinates[1];
+  }
+
+  return null;
+}
+
+function renderViewerInstitutionDetailsGroup(record) {
+  return renderViewerConfiguredGroup(
+    t("institution_details", "Institution Details"),
+    record,
+    [
+      {
+        label: vLabel("CAAL_ID", "CAAL_ID"),
+        names: ["CAAL_ID", "caal_id"]
+      },
+      {
+        label: t("primary_name", "Primary Name"),
+        names: [
+          "Primary Name",
+          "primary_name"
+        ],
+        fullWidth: true
+      },
+      {
+        label: t("name_ru", "Russian Name"),
+        names: [
+          "Russian Name",
+          "Name RU",
+          "name_ru"
+        ],
+        fullWidth: true
+      },
+      {
+        label: t("other_names", "Other Names"),
+        names: [
+          "Other Names",
+          "other_names"
+        ],
+        fullWidth: true
+      },
+      {
+        label: t("actor_type", "Actor Type"),
+        names: [
+          "Actor Type",
+          "actor_type"
+        ]
+      },
+      {
+        label: vLabel("Country", "Country"),
+        names: ["Country", "country"]
+      },
+      {
+        label: t("address", "Address"),
+        names: ["Address", "address"],
+        fullWidth: true
+      },
+      {
+        label: vLabel("Description", "Description"),
+        names: ["Description", "description"],
+        fullWidth: true
+      },
+      {
+        label: t(
+          "external_reference",
+          "External Reference"
+        ),
+        html: (currentRecord) => {
+          const value = viewerRecordFieldValue(
+            currentRecord,
+            "External Reference",
+            "external_reference"
+          );
+
+          return viewerExternalReferenceHtml(value);
+        },
+        fullWidth: true
+      }
+    ]
+  );
+}
+
+function renderViewerInstitutionLocationGroup(record) {
+  return renderViewerConfiguredGroup(
+    t(
+      "institution_location",
+      "Institution Location"
+    ),
+    record,
+    [
+      {
+        label: vLabel("Longitude", "Longitude"),
+        names: ["Longitude", "longitude"],
+        transform: (value, currentRecord) => {
+          return viewerHasDisplayValue(value)
+            ? value
+            : viewerInstitutionCoordinate(
+                currentRecord,
+                "longitude"
+              );
+        }
+      },
+      {
+        label: vLabel("Latitude", "Latitude"),
+        names: ["Latitude", "latitude"],
+        transform: (value, currentRecord) => {
+          return viewerHasDisplayValue(value)
+            ? value
+            : viewerInstitutionCoordinate(
+                currentRecord,
+                "latitude"
+              );
+        }
+      }
+    ]
+  );
+}
+
 function renderViewerDetailGroup(raw, group, record) {
   switch (group.custom) {
     case "rs_basics":
@@ -5193,6 +6215,27 @@ function renderViewerDetailGroup(raw, group, record) {
     case "rs_risk":
       return renderViewerRiskAssessmentGroup(raw);
 
+    case "archive_material":
+      return renderViewerArchiveMaterialGroup(record);
+
+    case "archive_publication":
+      return renderViewerArchivePublicationGroup(record);
+
+    case "archive_content":
+      return renderViewerArchiveContentGroup(record);
+
+    case "archive_digital":
+      return renderViewerArchiveDigitalGroup(record);
+
+    case "archive_metadata":
+      return renderViewerArchiveMetadataGroup(record);
+
+    case "institution_details":
+      return renderViewerInstitutionDetailsGroup(record);
+
+    case "institution_location":
+      return renderViewerInstitutionLocationGroup(record);
+
     case "related_resources":
       return renderViewerRelatedResourcesGroup(record);
 
@@ -5204,12 +6247,16 @@ function renderViewerDetailGroup(raw, group, record) {
   }
 
   const rows = (group.fields || [])
-    .map((fieldName) => renderViewerField(raw, fieldName, record))
+    .map((fieldName) =>
+      renderViewerField(raw, fieldName, record)
+    )
     .filter(Boolean)
     .join("");
 
   const subgroups = (group.subgroups || [])
-    .map((subgroup) => renderViewerSubgroup(raw, subgroup, record))
+    .map((subgroup) =>
+      renderViewerSubgroup(raw, subgroup, record)
+    )
     .filter(Boolean)
     .join("");
 
@@ -5219,8 +6266,13 @@ function renderViewerDetailGroup(raw, group, record) {
     <div class="group-block">
       <div class="group-grid">
         <div class="detail-item full-width section-header">
-          <span class="detail-section-title">${escapeHtml(vLabel(group.title, group.title))}</span>
+          <span class="detail-section-title">
+            ${escapeHtml(
+              vLabel(group.title, group.title)
+            )}
+          </span>
         </div>
+
         ${rows}
         ${subgroups}
       </div>
@@ -6096,6 +7148,7 @@ function initViewerMap() {
 
   addMapResetControl();
   addMapDownloadControl();
+  addViewerMeasurementControl();
   addMapOptionsControl();
   addViewerLegendControl();
 
@@ -6113,6 +7166,8 @@ function initViewerMap() {
     viewerMapLoaded = true;
 
     initialiseViewerSpatialDraw();
+    ensureViewerMeasurementLayers();
+    bindViewerMeasurementMapEvents();
 
     try {
       await reloadViewer({
@@ -6704,7 +7759,12 @@ function bindViewerCentroidEvents() {
     });
 
     viewerMap.on("click", group.unclustered, (event) => {
-      if (viewerSpatialDrawIsActive) return;
+      if (
+        viewerSpatialDrawIsActive ||
+        viewerMeasurementIsActive
+      ) {
+        return;
+      }
       const feature = event.features?.[0];
       if (!feature?.properties) return;
 
@@ -7453,6 +8513,16 @@ function bringViewerLayersToFront() {
     }
   });
   bringViewerRelatedOverlayToFront();
+
+  [
+    VIEWER_MEASUREMENT_FILL_LAYER_ID,
+    VIEWER_MEASUREMENT_LINE_LAYER_ID,
+    VIEWER_MEASUREMENT_POINT_LAYER_ID
+  ].forEach((layerId) => {
+    if (viewerMap.getLayer(layerId)) {
+      viewerMap.moveLayer(layerId);
+    }
+  });
 }
 
 function viewerFeatureRepresentedCount(feature) {
@@ -7926,6 +8996,14 @@ function updateViewerSpatialPolygonButton() {
 
 function startViewerSpatialPolygonDrawing() {
   if (!viewerMap || !viewerSpatialDraw) return;
+
+  if (viewerMeasurementIsActive) {
+    cancelViewerMeasurementDrawing();
+  }
+
+  if (viewerMeasurementIsActive) {
+    cancelViewerMeasurementDrawing();
+  }
 
   removeViewerSpatialDrawFeature();
 
@@ -8405,6 +9483,743 @@ function addMapResetControl() {
 
   viewerMap.addControl(new MapResetControl(), "top-right");
 }
+
+
+// MEASUREMENT TOOL FUNCTIONS
+
+function toggleViewerMeasurementPanel() {
+  if (!viewerMeasurementPanel) return;
+
+  const willOpen = viewerMeasurementPanel.hidden;
+
+  viewerMeasurementPanel.hidden = !willOpen;
+
+  viewerMeasurementControlBtn?.classList.toggle(
+    "is-active",
+    willOpen
+  );
+
+  viewerMeasurementControlBtn?.setAttribute(
+    "aria-expanded",
+    willOpen ? "true" : "false"
+  );
+}
+
+function closeViewerMeasurementPanel() {
+  if (viewerMeasurementPanel) {
+    viewerMeasurementPanel.hidden = true;
+  }
+
+  viewerMeasurementControlBtn?.classList.remove(
+    "is-active"
+  );
+
+  viewerMeasurementControlBtn?.setAttribute(
+    "aria-expanded",
+    "false"
+  );
+}
+
+function addViewerMeasurementControl() {
+  if (!viewerMap) return;
+
+  class ViewerMeasurementControl {
+    onAdd(mapInstance) {
+      this._map = mapInstance;
+
+      const container = document.createElement("div");
+
+      container.className =
+        "maplibregl-ctrl map-custom-control viewer-measurement-map-control";
+
+      const button = document.createElement("button");
+
+      const label = t(
+        "measurement_tools",
+        "Measurement tools"
+      );
+
+      button.type = "button";
+      button.id = "viewerMeasurementControlBtn";
+      button.className =
+        "map-icon-toggle viewer-measurement-map-toggle";
+      button.title = label;
+      button.setAttribute("aria-label", label);
+      button.setAttribute("aria-expanded", "false");
+      button.innerHTML = svgViewerMeasurementIcon();
+
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+
+        toggleViewerMeasurementPanel();
+      });
+
+      container.appendChild(button);
+
+      viewerMeasurementControlBtn = button;
+      this._container = container;
+
+      return container;
+    }
+
+    onRemove() {
+      this._container?.remove();
+
+      viewerMeasurementControlBtn = null;
+      this._map = null;
+    }
+  }
+
+  viewerMap.addControl(
+    new ViewerMeasurementControl(),
+    "top-right"
+  );
+}
+
+function viewerDegreesToRadians(value) {
+  return Number(value) * Math.PI / 180;
+}
+
+function viewerDistanceMetres(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b)) {
+    return 0;
+  }
+
+  const earthRadiusMetres = 6371008.8;
+
+  const lon1 = viewerDegreesToRadians(a[0]);
+  const lat1 = viewerDegreesToRadians(a[1]);
+  const lon2 = viewerDegreesToRadians(b[0]);
+  const lat2 = viewerDegreesToRadians(b[1]);
+
+  const deltaLat = lat2 - lat1;
+  const deltaLon = lon2 - lon1;
+
+  const haversine =
+    Math.sin(deltaLat / 2) ** 2 +
+    Math.cos(lat1) *
+      Math.cos(lat2) *
+      Math.sin(deltaLon / 2) ** 2;
+
+  return (
+    2 *
+    earthRadiusMetres *
+    Math.atan2(
+      Math.sqrt(haversine),
+      Math.sqrt(1 - haversine)
+    )
+  );
+}
+
+function viewerMeasurementTotalDistanceMetres(
+  coordinates = []
+) {
+  let total = 0;
+
+  for (let index = 1; index < coordinates.length; index += 1) {
+    total += viewerDistanceMetres(
+      coordinates[index - 1],
+      coordinates[index]
+    );
+  }
+
+  return total;
+}
+
+/*
+  Approximate spherical polygon area suitable for interactive map
+  measurement. Returned value is square metres.
+*/
+function viewerPolygonAreaSquareMetres(
+  coordinates = []
+) {
+  if (!Array.isArray(coordinates) || coordinates.length < 3) {
+    return 0;
+  }
+
+  const earthRadiusMetres = 6371008.8;
+
+  let total = 0;
+
+  for (let index = 0; index < coordinates.length; index += 1) {
+    const current = coordinates[index];
+    const next =
+      coordinates[(index + 1) % coordinates.length];
+
+    const lon1 = viewerDegreesToRadians(current[0]);
+    const lon2 = viewerDegreesToRadians(next[0]);
+    const lat1 = viewerDegreesToRadians(current[1]);
+    const lat2 = viewerDegreesToRadians(next[1]);
+
+    total +=
+      (lon2 - lon1) *
+      (
+        2 +
+        Math.sin(lat1) +
+        Math.sin(lat2)
+      );
+  }
+
+  return Math.abs(
+    total * earthRadiusMetres * earthRadiusMetres / 2
+  );
+}
+
+function viewerFormatDistance(metres) {
+  const value = Number(metres || 0);
+
+  if (value >= 1000) {
+    return `${(value / 1000).toLocaleString(undefined, {
+      maximumFractionDigits: 2
+    })} km`;
+  }
+
+  return `${value.toLocaleString(undefined, {
+    maximumFractionDigits: 1
+  })} m`;
+}
+
+function viewerFormatArea(squareMetres) {
+  const value = Number(squareMetres || 0);
+
+  if (value >= 1000000) {
+    return `${(value / 1000000).toLocaleString(undefined, {
+      maximumFractionDigits: 2
+    })} km²`;
+  }
+
+  if (value >= 10000) {
+    return `${(value / 10000).toLocaleString(undefined, {
+      maximumFractionDigits: 2
+    })} ha`;
+  }
+
+  return `${value.toLocaleString(undefined, {
+    maximumFractionDigits: 1
+  })} m²`;
+}
+
+function viewerMeasurementGeojson() {
+  const coordinates = viewerMeasurementCoordinates;
+
+  const features = [];
+
+  if (coordinates.length) {
+    features.push({
+      type: "Feature",
+      properties: {
+        measurement_geometry: "points"
+      },
+      geometry: {
+        type: "MultiPoint",
+        coordinates
+      }
+    });
+  }
+
+  if (coordinates.length >= 2) {
+    features.push({
+      type: "Feature",
+      properties: {
+        measurement_geometry: "line"
+      },
+      geometry: {
+        type: "LineString",
+        coordinates
+      }
+    });
+  }
+
+  if (
+    viewerMeasurementMode === "area" &&
+    coordinates.length >= 3
+  ) {
+    const first = coordinates[0];
+
+    features.push({
+      type: "Feature",
+      properties: {
+        measurement_geometry: "area"
+      },
+      geometry: {
+        type: "Polygon",
+        coordinates: [[
+          ...coordinates,
+          first
+        ]]
+      }
+    });
+  }
+
+  return {
+    type: "FeatureCollection",
+    features
+  };
+}
+
+function ensureViewerMeasurementLayers() {
+  if (!viewerMap || !viewerMapLoaded) return;
+
+  if (!viewerMap.getSource(VIEWER_MEASUREMENT_SOURCE_ID)) {
+    viewerMap.addSource(VIEWER_MEASUREMENT_SOURCE_ID, {
+      type: "geojson",
+      data: viewerMeasurementGeojson()
+    });
+  }
+
+  if (!viewerMap.getLayer(VIEWER_MEASUREMENT_FILL_LAYER_ID)) {
+    viewerMap.addLayer({
+      id: VIEWER_MEASUREMENT_FILL_LAYER_ID,
+      type: "fill",
+      source: VIEWER_MEASUREMENT_SOURCE_ID,
+      filter: [
+        "==",
+        ["get", "measurement_geometry"],
+        "area"
+      ],
+      paint: {
+        "fill-color": "#22D3EE",
+        "fill-opacity": 0.22
+      }
+    });
+  }
+
+  if (!viewerMap.getLayer(VIEWER_MEASUREMENT_LINE_LAYER_ID)) {
+    viewerMap.addLayer({
+      id: VIEWER_MEASUREMENT_LINE_LAYER_ID,
+      type: "line",
+      source: VIEWER_MEASUREMENT_SOURCE_ID,
+      filter: [
+        "any",
+        [
+          "==",
+          ["get", "measurement_geometry"],
+          "line"
+        ],
+        [
+          "==",
+          ["get", "measurement_geometry"],
+          "area"
+        ]
+      ],
+      paint: {
+        "line-color": "#083344",
+        "line-width": 3,
+        "line-opacity": 0.95
+      }
+    });
+  }
+
+  if (!viewerMap.getLayer(VIEWER_MEASUREMENT_POINT_LAYER_ID)) {
+    viewerMap.addLayer({
+      id: VIEWER_MEASUREMENT_POINT_LAYER_ID,
+      type: "circle",
+      source: VIEWER_MEASUREMENT_SOURCE_ID,
+      filter: [
+        "==",
+        ["get", "measurement_geometry"],
+        "points"
+      ],
+      paint: {
+        "circle-radius": 5,
+        "circle-color": "#22D3EE",
+        "circle-stroke-color": "#083344",
+        "circle-stroke-width": 2
+      }
+    });
+  }
+}
+
+function updateViewerMeasurementLayers() {
+  ensureViewerMeasurementLayers();
+
+  const source = viewerMap?.getSource(
+    VIEWER_MEASUREMENT_SOURCE_ID
+  );
+
+  source?.setData?.(viewerMeasurementGeojson());
+
+  [
+    VIEWER_MEASUREMENT_FILL_LAYER_ID,
+    VIEWER_MEASUREMENT_LINE_LAYER_ID,
+    VIEWER_MEASUREMENT_POINT_LAYER_ID
+  ].forEach((layerId) => {
+    if (viewerMap?.getLayer(layerId)) {
+      viewerMap.moveLayer(layerId);
+    }
+  });
+}
+
+function updateViewerMeasurementResult() {
+  if (
+    !viewerMeasurementResult ||
+    !viewerMeasurementInstruction
+  ) {
+    return;
+  }
+
+  const coordinateCount =
+    viewerMeasurementCoordinates.length;
+
+  if (!viewerMeasurementMode) {
+    viewerMeasurementInstruction.textContent = t(
+      "select_measurement_type",
+      "Select a measurement type."
+    );
+
+    viewerMeasurementResult.hidden = false;
+    viewerMeasurementResult.innerHTML = `
+      <span class="viewer-measurement-placeholder">
+        ${escapeHtml(
+          t(
+            "measurement_result_placeholder",
+            "Measurement will appear here."
+          )
+        )}
+      </span>
+    `;
+    return;
+  }
+
+  if (viewerMeasurementMode === "distance") {
+    viewerMeasurementInstruction.textContent =
+      viewerMeasurementIsActive
+        ? t(
+            "measure_distance_instruction",
+            "Click to add points. Right-click to finish."
+          )
+        : t(
+            "distance_measurement_complete",
+            "Distance measurement complete."
+          );
+
+    const distance =
+      viewerMeasurementTotalDistanceMetres(
+        viewerMeasurementCoordinates
+      );
+
+    viewerMeasurementResult.hidden = false;
+    if (coordinateCount < 2) {
+      viewerMeasurementResult.innerHTML = `
+        <span class="viewer-measurement-placeholder">
+          ${escapeHtml(
+            t(
+              "measurement_add_points",
+              "Add points on the map."
+            )
+          )}
+        </span>
+      `;
+
+      return;
+    }
+
+    viewerMeasurementResult.innerHTML = `
+      <strong>
+        ${escapeHtml(viewerFormatDistance(distance))}
+      </strong>
+
+      <span>
+        ${escapeHtml(t("total_distance", "Total distance"))}
+      </span>
+
+      <button
+        type="button"
+        class="viewer-measurement-clear-inline"
+        data-viewer-clear-measurement
+      >
+        ${escapeHtml(t("clear_measurement", "Clear"))}
+      </button>
+    `;
+
+    viewerMeasurementResult
+      .querySelector("[data-viewer-clear-measurement]")
+      ?.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        clearViewerMeasurement();
+      });
+
+    return;
+  }
+
+  viewerMeasurementInstruction.textContent =
+    viewerMeasurementIsActive
+      ? t(
+          "measure_area_instruction",
+          "Click to add at least three points. Click the first point or right-click to finish."
+        )
+      : t(
+          "area_measurement_complete",
+          "Area measurement complete."
+        );
+
+  const area =
+    viewerPolygonAreaSquareMetres(
+      viewerMeasurementCoordinates
+    );
+
+  const perimeter =
+    coordinateCount >= 3
+      ? viewerMeasurementTotalDistanceMetres([
+          ...viewerMeasurementCoordinates,
+          viewerMeasurementCoordinates[0]
+        ])
+      : 0;
+
+  viewerMeasurementResult.hidden = false;
+
+  if (coordinateCount < 3) {
+    viewerMeasurementResult.innerHTML = `
+      <span class="viewer-measurement-placeholder">
+        ${escapeHtml(
+          t(
+            "measurement_add_three_points",
+            "Add at least three points."
+          )
+        )}
+      </span>
+    `;
+
+    return;
+  }
+
+  viewerMeasurementResult.innerHTML = `
+    <strong>
+      ${escapeHtml(viewerFormatArea(area))}
+    </strong>
+
+    <span>
+      ${escapeHtml(t("area", "Area"))}
+      ·
+      ${escapeHtml(t("perimeter", "Perimeter"))}:
+      ${escapeHtml(viewerFormatDistance(perimeter))}
+    </span>
+
+    <button
+      type="button"
+      class="viewer-measurement-clear-inline"
+      data-viewer-clear-measurement
+    >
+      ${escapeHtml(t("clear_measurement", "Clear"))}
+    </button>
+  `;
+  
+  viewerMeasurementResult
+    .querySelector("[data-viewer-clear-measurement]")
+    ?.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      clearViewerMeasurement();
+    });
+}
+
+function updateViewerMeasurementButtons() {
+  const distanceActive =
+    viewerMeasurementMode === "distance";
+
+  const areaActive =
+    viewerMeasurementMode === "area";
+
+  viewerMeasureDistanceBtn?.classList.toggle(
+    "is-active",
+    distanceActive
+  );
+
+  viewerMeasureDistanceBtn?.setAttribute(
+    "aria-pressed",
+    distanceActive ? "true" : "false"
+  );
+
+  viewerMeasureAreaBtn?.classList.toggle(
+    "is-active",
+    areaActive
+  );
+
+  viewerMeasureAreaBtn?.setAttribute(
+    "aria-pressed",
+    areaActive ? "true" : "false"
+  );
+
+  viewerMeasurementControlBtn?.classList.toggle(
+    "has-measurement",
+    viewerMeasurementCoordinates.length > 0
+  );
+}
+
+function clearViewerMeasurement({
+  preserveMode = false
+} = {}) {
+  viewerMeasurementCoordinates = [];
+  viewerMeasurementIsActive = false;
+
+  if (!preserveMode) {
+    viewerMeasurementMode = null;
+  }
+
+  if (viewerMap) {
+    viewerMap.getCanvas().style.cursor = "";
+  }
+
+  updateViewerMeasurementLayers();
+  updateViewerMeasurementButtons();
+  updateViewerMeasurementResult();
+}
+
+function cancelViewerMeasurementDrawing() {
+  viewerMeasurementIsActive = false;
+
+  if (viewerMap) {
+    viewerMap.getCanvas().style.cursor = "";
+  }
+
+  updateViewerMeasurementButtons();
+  updateViewerMeasurementResult();
+}
+
+function finishViewerMeasurement() {
+  if (!viewerMeasurementIsActive) return;
+
+  const minimumPoints =
+    viewerMeasurementMode === "area" ? 3 : 2;
+
+  if (
+    viewerMeasurementCoordinates.length <
+    minimumPoints
+  ) {
+    setViewerStatus(
+      viewerMeasurementMode === "area"
+        ? t(
+            "measurement_area_needs_three_points",
+            "Add at least three points before finishing the area."
+          )
+        : t(
+            "measurement_distance_needs_two_points",
+            "Add at least two points before finishing the distance."
+          ),
+      {
+        isError: true
+      }
+    );
+
+    return;
+  }
+
+  viewerMeasurementIsActive = false;
+
+  if (viewerMap) {
+    viewerMap.getCanvas().style.cursor = "";
+  }
+
+  updateViewerMeasurementLayers();
+  updateViewerMeasurementButtons();
+  updateViewerMeasurementResult();
+}
+
+function startViewerMeasurement(mode) {
+  if (!viewerMap || !viewerMapLoaded) return;
+
+  if (!["distance", "area"].includes(mode)) {
+    return;
+  }
+
+  /*
+    Cancel unfinished spatial search. This does not remove an already
+    applied spatial filter polygon.
+  */
+  if (viewerSpatialDrawIsActive) {
+    cancelViewerSpatialPolygonDrawing({
+      clearCompletedPolygon: false
+    });
+  }
+
+  viewerMeasurementMode = mode;
+  viewerMeasurementCoordinates = [];
+  viewerMeasurementIsActive = true;
+
+  viewerMeasurementPanel.hidden = false;
+
+  viewerMap.getCanvas().style.cursor = "crosshair";
+
+  updateViewerMeasurementLayers();
+  updateViewerMeasurementButtons();
+  updateViewerMeasurementResult();
+}
+
+function bindViewerMeasurementMapEvents() {
+  if (
+    !viewerMap ||
+    viewerMeasurementEventsBound
+  ) {
+    return;
+  }
+
+  viewerMeasurementEventsBound = true;
+
+  viewerMap.on("click", (event) => {
+    if (!viewerMeasurementIsActive) return;
+
+    const coordinate = [
+      Number(event.lngLat.lng.toFixed(6)),
+      Number(event.lngLat.lat.toFixed(6))
+    ];
+
+    const previous =
+      viewerMeasurementCoordinates[
+        viewerMeasurementCoordinates.length - 1
+      ];
+
+    if (
+      previous &&
+      previous[0] === coordinate[0] &&
+      previous[1] === coordinate[1]
+    ) {
+      return;
+    }
+
+    /*
+      For area measurement, clicking close to the first point finishes
+      instead of adding another point.
+    */
+    if (
+      viewerMeasurementMode === "area" &&
+      viewerMeasurementCoordinates.length >= 3
+    ) {
+      const first =
+        viewerMeasurementCoordinates[0];
+
+      const firstPixel = viewerMap.project(first);
+      const clickPixel = viewerMap.project(coordinate);
+
+      const distancePixels = Math.hypot(
+        firstPixel.x - clickPixel.x,
+        firstPixel.y - clickPixel.y
+      );
+
+      if (distancePixels <= 12) {
+        finishViewerMeasurement();
+        return;
+      }
+    }
+
+    viewerMeasurementCoordinates.push(coordinate);
+
+    updateViewerMeasurementLayers();
+    updateViewerMeasurementResult();
+  });
+
+  viewerMap.on("contextmenu", (event) => {
+    if (!viewerMeasurementIsActive) return;
+
+    event.preventDefault?.();
+    event.originalEvent?.preventDefault?.();
+
+    finishViewerMeasurement();
+  });
+}
+
+// END OF MEASUREMENT FUNCTIONS
 
 async function waitForViewerMapExportRender() {
   if (!viewerMap) return;
@@ -9525,11 +11340,36 @@ function wireViewerEvents() {
     });
   }
 
+  viewerMeasureDistanceBtn?.addEventListener(
+    "click",
+    () => {
+      startViewerMeasurement("distance");
+    }
+  );
+
+  viewerMeasureAreaBtn?.addEventListener(
+    "click",
+    () => {
+      startViewerMeasurement("area");
+    }
+  );
+
+  closeViewerMeasurementPanelBtn?.addEventListener(
+    "click",
+    () => {
+      closeViewerMeasurementPanel();
+    }
+  );
+
   document.addEventListener("keydown", (event) => {
-    if (
-      event.key === "Escape" &&
-      viewerSpatialDrawIsActive
-    ) {
+    if (event.key !== "Escape") return;
+
+    if (viewerMeasurementIsActive) {
+      cancelViewerMeasurementDrawing();
+      return;
+    }
+
+    if (viewerSpatialDrawIsActive) {
       cancelViewerSpatialPolygonDrawing({
         clearCompletedPolygon: true
       });

@@ -183,7 +183,8 @@
           />
         </div>
 
-        <div class="browse-controls">
+        <div class="browse-controls"
+        hidden>
           <label class="browse-checkbox">
             <input type="checkbox" id="showViewerWorkspaceRecords" checked />
             <span data-i18n="monuments_workspace_records">My workspace records</span>
@@ -628,6 +629,62 @@
             Cancel
           </button>
         </div>
+
+        <div
+          id="viewerMeasurementPanel"
+          class="viewer-measurement-panel"
+          hidden
+        >
+          <div class="viewer-measurement-panel-header">
+            <strong data-i18n="measurement_tools">
+              Measurement tools
+            </strong>
+
+            <button
+              type="button"
+              id="closeViewerMeasurementPanelBtn"
+              class="icon-btn"
+              aria-label="Close measurement tools"
+              title="Close measurement tools"
+            >
+              ×
+            </button>
+          </div>
+
+          <div class="viewer-measurement-actions">
+            <button
+              type="button"
+              id="viewerMeasureDistanceBtn"
+              class="action-btn viewer-measurement-action"
+              aria-pressed="false"
+              data-i18n="measure_distance"
+            >
+              Measure distance
+            </button>
+
+            <button
+              type="button"
+              id="viewerMeasureAreaBtn"
+              class="action-btn viewer-measurement-action"
+              aria-pressed="false"
+              data-i18n="measure_area"
+            >
+              Measure area
+            </button>
+          </div>
+
+          <div
+            id="viewerMeasurementInstruction"
+            class="viewer-measurement-instruction"
+            hidden
+          ></div>
+
+          <div
+            id="viewerMeasurementResult"
+            class="viewer-measurement-result"
+            aria-live="polite"
+          ></div>
+
 
         <div class="map-options-panel" id="mapOptionsPanel" hidden>
           <div class="map-options-header">
