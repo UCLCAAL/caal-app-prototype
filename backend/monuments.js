@@ -371,7 +371,12 @@ function ownedWorkspaceMonumentFullSql(storage, userId) {
   `;
 }
 
-function workspaceCardSelectSqlForStorage(storageScopeSql, lang = "en") {
+function workspaceCardSelectSqlForStorage(
+  storageScopeSql,
+  lang = "en",
+  sourceScope = "workspace",
+  isEditableSql = "true"
+) {
   const safeLang = safeMonumentLang(lang);
   const fallbackLang = fallbackLookupLang(safeLang);
 
@@ -402,10 +407,10 @@ function workspaceCardSelectSqlForStorage(storageScopeSql, lang = "en") {
     m."Latitude",
     m."Tstamp",
     m.created_by_app_user_id,
-    'workspace'::text AS source_scope,
+    ${sqlTextLiteral(sourceScope)}::text AS source_scope,
     ${storageScopeSql}::text AS storage_scope,
     false AS is_promoted,
-    true AS is_editable,
+    ${isEditableSql} AS is_editable,
     ${workspaceListFilterColumnsSql("m")}
   `;
 }
@@ -502,6 +507,63 @@ function allWorkspaceMonumentsSqlForCaalAdmin(currentSession) {
     .join("\nUNION ALL\n");
 }
 
+function nationalWorkspaceMonumentListSql(
+  storage,
+  currentSession,
+  lang = "en"
+) {
+  const tableName = tableSql(storage.schema, storage.monumentTable);
+  const storageScope = sqlTextLiteral(storage.storageScope);
+  const sourceSchema = sqlTextLiteral(storage.schema);
+  const userId = currentAppUserIdFromSession(currentSession) ?? -1;
+
+  return `
+    SELECT
+      ${workspaceCardSelectSqlForStorage(
+        storageScope,
+        lang,
+        "national_ref",
+        "false"
+      )}
+    FROM ${tableName} m
+    LEFT JOIN public.record_registry rr
+      ON rr.source_schema = ${sourceSchema}
+     AND rr.source_table = 'CAAL_Monuments'
+     AND rr.source_row_id = m.id
+    ${workspaceCardJoinsSql()}
+    WHERE COALESCE(rr.status, '') <> 'deleted'
+      AND COALESCE(m.created_by_app_user_id, -1) <> ${userId}
+  `;
+}
+
+function nationalWorkspaceMonumentFullSql(storage, currentSession) {
+  const viewName = viewSql(
+    storage.schema,
+    storage.monumentAppView || storage.monumentView
+  );
+
+  const storageScope = sqlTextLiteral(storage.storageScope);
+  const sourceSchema = sqlTextLiteral(storage.schema);
+  const userId = currentAppUserIdFromSession(currentSession) ?? -1;
+
+  return `
+    SELECT
+      ${monumentBrowseRawColumnsSql("v")},
+      ${monumentHelperColumnsSql("v")},
+      'national_ref'::text AS source_scope,
+      ${storageScope}::text AS storage_scope,
+      false AS is_promoted,
+      false AS is_editable
+    FROM ${viewName} v
+    LEFT JOIN public.record_registry rr
+      ON rr.source_schema = ${sourceSchema}
+     AND rr.source_table = 'CAAL_Monuments'
+     AND rr.source_row_id = v.id
+    WHERE COALESCE(rr.status, '') <> 'deleted'
+      AND COALESCE(v.created_by_app_user_id, -1) <> ${userId}
+  `;
+}
+
 function makeBrowseScopeConfig(currentSession, options = {}) {
   const caalSource = options.caalSource || MONUMENTS_CAAL_MV;
   const currentAppUserId = currentAppUserIdFromSession(currentSession);
@@ -558,6 +620,14 @@ function makeBrowseScopeConfig(currentSession, options = {}) {
   `;
   const allWorkspaceMonumentsSql = allWorkspaceMonumentsSqlForCaalAdmin(currentSession);
 
+  const nationalWorkspaceSql =
+    getSessionWorkspaceCode(currentSession) === "caal"
+      ? ""
+      : nationalWorkspaceMonumentFullSql(
+          getWorkspaceStorage(currentSession),
+          currentSession
+        );
+
   return {
     workspace: {
       sql: [workspaceSchemaSql, workspacePublicOwnedSql]
@@ -566,25 +636,28 @@ function makeBrowseScopeConfig(currentSession, options = {}) {
     },
 
     national_ref: {
-      sql: `
-        SELECT
-          ${monumentBrowseRawColumnsSql("m")},
-          ${monumentExistingHelperColumnsSql("m")},
-          'national_ref'::text AS source_scope,
-          'public_caal'::text AS storage_scope,
-          true AS is_promoted,
-          ${publicEditableSql} AS is_editable
-        FROM ${caalSource} m
-        WHERE (${nationalWhere})
-          AND COALESCE(m.created_by_app_user_id, -1) <> ${userId}
-          AND NOT EXISTS (
-            SELECT 1
-            FROM public.record_registry rr
-            WHERE rr.caal_id = m."CAAL_ID"
-              AND rr.created_by_app_user_id = ${userId}
-              AND COALESCE(rr.status, '') <> 'deleted'
-          )
-      `
+      sql: [
+        nationalWorkspaceSql,
+        `
+          SELECT
+            ${monumentBrowseRawColumnsSql("m")},
+            ${monumentExistingHelperColumnsSql("m")},
+            'national_ref'::text AS source_scope,
+            'public_caal'::text AS storage_scope,
+            true AS is_promoted,
+            ${publicEditableSql} AS is_editable
+          FROM ${caalSource} m
+          WHERE (${nationalWhere})
+            AND COALESCE(m.created_by_app_user_id, -1) <> ${userId}
+            AND NOT EXISTS (
+              SELECT 1
+              FROM public.record_registry rr
+              WHERE rr.caal_id = m."CAAL_ID"
+                AND rr.created_by_app_user_id = ${userId}
+                AND COALESCE(rr.status, '') <> 'deleted'
+            )
+        `
+      ].filter(Boolean).join("\nUNION ALL\n")
     },
 
     all_caal: {
@@ -716,33 +789,45 @@ function buildBrowseListUnionSql(scopes, currentSession, lang = "en", options = 
     allWorkspaceSqlPresent: Boolean(allWorkspaceMonumentListSql)
   });
 
+  const nationalWorkspaceListSql =
+    workspaceCode === "caal"
+      ? ""
+      : nationalWorkspaceMonumentListSql(
+          getWorkspaceStorage(currentSession),
+          currentSession,
+          lang
+        );
+
   const config = {
     workspace: [workspaceSchemaListSql, workspacePublicOwnedListSql]
       .filter(Boolean)
       .join("\nUNION ALL\n"),
 
-    national_ref: `
-      SELECT
-        ${monumentCardSelectSql("m", lang)}
-      FROM (
+    national_ref: [
+      nationalWorkspaceListSql,
+      `
         SELECT
-          base.*,
-          'national_ref'::text AS source_scope,
-          'public_caal'::text AS storage_scope,
-          true AS is_promoted,
-          ${publicEditableSqlForListBase} AS is_editable
-        FROM ${caalListSource} base
-      ) m
-      WHERE (${nationalRefWhereSql("m", currentSession)})
-        AND COALESCE(m.created_by_app_user_id, -1) <> ${userId}
-        AND NOT EXISTS (
-          SELECT 1
-          FROM public.record_registry rr
-          WHERE rr.caal_id = m."CAAL_ID"
-            AND rr.created_by_app_user_id = ${userId}
-            AND COALESCE(rr.status, '') <> 'deleted'
-        )
-    `,
+          ${monumentCardSelectSql("m", lang)}
+        FROM (
+          SELECT
+            base.*,
+            'national_ref'::text AS source_scope,
+            'public_caal'::text AS storage_scope,
+            true AS is_promoted,
+            ${publicEditableSqlForListBase} AS is_editable
+          FROM ${caalListSource} base
+        ) m
+        WHERE (${nationalRefWhereSql("m", currentSession)})
+          AND COALESCE(m.created_by_app_user_id, -1) <> ${userId}
+          AND NOT EXISTS (
+            SELECT 1
+            FROM public.record_registry rr
+            WHERE rr.caal_id = m."CAAL_ID"
+              AND rr.created_by_app_user_id = ${userId}
+              AND COALESCE(rr.status, '') <> 'deleted'
+          )
+      `
+    ].filter(Boolean).join("\nUNION ALL\n"),
 
     all_caal: [
       `
