@@ -57,7 +57,8 @@ const viewerFilterRiskMin = document.getElementById("viewerFilterRiskMin");
 let viewerLookups = {};
 let viewerLabels = {};
 
-let viewerCentroidsAbortController = null;
+let viewerOverviewAbortController = null;
+let viewerOverviewRequestSequence = 0;
 let viewerSuppressMapReloadUntil = 0;
 
 function suppressViewerMapReload(ms = 2500) {
@@ -176,6 +177,68 @@ const VIEWER_MEASUREMENT_FILL_LAYER_ID =
 
 const VIEWER_MEASUREMENT_POINT_LAYER_ID =
   "viewer-measurement-points";
+
+let viewerMapReloadQueued = false;
+let viewerMapReloadTimer = null;
+
+function queueViewerMapReloadAfterZoom() {
+  if (!viewerMap || !viewerMapLoaded) {
+    return;
+  }
+
+  viewerMapReloadQueued = true;
+
+  if (viewerMapReloadTimer) {
+    clearTimeout(viewerMapReloadTimer);
+  }
+
+  const attemptReload = async () => {
+    if (!viewerMap || !viewerMapLoaded) {
+      viewerMapReloadQueued = false;
+      viewerMapReloadTimer = null;
+      return;
+    }
+
+    if (viewerRelatedOverlayActive) {
+      viewerMapReloadQueued = false;
+      viewerMapReloadTimer = null;
+
+      updateViewerMapModeVisibility();
+      bringViewerRelatedOverlayToFront();
+      return;
+    }
+
+    /*
+      Do not discard the zoom reload while another Viewer request
+      is active. Wait until the shared loading state is clear.
+    */
+    if (viewerIsLoading) {
+      viewerMapReloadTimer = window.setTimeout(
+        attemptReload,
+        100
+      );
+
+      return;
+    }
+
+    viewerMapReloadQueued = false;
+    viewerMapReloadTimer = null;
+
+    try {
+      await loadViewerMap();
+    } catch (error) {
+      console.error(
+        "Viewer queued zoom reload failed:",
+        error
+      );
+    }
+  };
+
+  viewerMapReloadTimer = window.setTimeout(
+    attemptReload,
+    50
+  );
+}
 
 // --------------------------------------------------------
 // CONSTANTS
@@ -301,15 +364,20 @@ const VIEWER_LAYER_IDS = {
   rs3_poly: {
     source: "viewer-rs3-poly",
     fill: "viewer-rs3-poly-fill",
+    halo: "viewer-rs3-poly-halo",
     outline: "viewer-rs3-poly-outline"
   },
+
   rs3_line: {
     source: "viewer-rs3-line",
+    casing: "viewer-rs3-line-casing",
     line: "viewer-rs3-line-line"
   },
+
   rs3_group: {
     source: "viewer-rs3-group",
     fill: "viewer-rs3-group-fill",
+    halo: "viewer-rs3-group-halo",
     outline: "viewer-rs3-group-outline"
   },
   institution: {
@@ -436,8 +504,147 @@ const VIEWER_CLUSTER_GROUPS = {
   }
 };
 
-const VIEWER_CLUSTER_MAX_ZOOM = 7;
-const VIEWER_GEOMETRY_MIN_ZOOM = 10;
+const VIEWER_GROUP_ZOOM_MODES = {
+  monuments: {
+    clusterMaxZoom: 7,
+    geometryMinZoom: 7
+  },
+
+  vernacular: {
+    clusterMaxZoom: 9,
+    geometryMinZoom: 9
+  },
+
+  remote_sensing: {
+    clusterMaxZoom: 8,
+    geometryMinZoom: 10
+  }
+};
+
+function viewerOverviewGroupForRecordType(recordType) {
+  if (recordType === "monument") {
+    return "monuments";
+  }
+
+  if (
+    recordType === "rs3_poly" ||
+    recordType === "rs3_line" ||
+    recordType === "rs3_group"
+  ) {
+    return "remote_sensing";
+  }
+
+  if (recordType === "vernacular") {
+    return "vernacular";
+  }
+
+  return null;
+}
+
+function viewerGroupZoomConfig(groupKey) {
+  return (
+    VIEWER_GROUP_ZOOM_MODES[groupKey] || {
+      clusterMaxZoom: 0,
+      geometryMinZoom: 0
+    }
+  );
+}
+
+function viewerGroupClusterMaxZoom(groupKey) {
+  return Number(
+    viewerGroupZoomConfig(groupKey).clusterMaxZoom
+  );
+}
+
+function viewerGroupGeometryMinZoom(groupKey) {
+  return Number(
+    viewerGroupZoomConfig(groupKey).geometryMinZoom
+  );
+}
+
+function viewerGroupMapMode(groupKey) {
+  if (!viewerMap) {
+    return "clusters";
+  }
+
+  const config = viewerGroupZoomConfig(groupKey);
+  const zoom = viewerMap.getZoom();
+
+  if (zoom < config.clusterMaxZoom) {
+    return "clusters";
+  }
+
+  if (zoom < config.geometryMinZoom) {
+    return "centroids";
+  }
+
+  return "geometry";
+}
+
+function viewerRecordTypeMapMode(recordType) {
+  const groupKey =
+    viewerOverviewGroupForRecordType(recordType);
+
+  if (!groupKey) {
+    return "geometry";
+  }
+
+  return viewerGroupMapMode(groupKey);
+}
+
+function viewerCurrentClusterGroupKeys() {
+  return Object.keys(VIEWER_CLUSTER_GROUPS)
+    .filter(
+      (groupKey) =>
+        viewerGroupMapMode(groupKey) === "clusters"
+    );
+}
+
+function viewerCurrentCentroidGroupKeys() {
+  return Object.keys(VIEWER_CLUSTER_GROUPS)
+    .filter(
+      (groupKey) =>
+        viewerGroupMapMode(groupKey) === "centroids"
+    );
+}
+
+function viewerOverviewRecordTypesForGroups(groupKeys) {
+  const visibleTypes =
+    new Set(getVisibleMapLayerTypes());
+
+  const selectedTypes =
+    new Set(getSelectedResourceTypes());
+
+  return groupKeys
+    .flatMap(
+      (groupKey) =>
+        VIEWER_CLUSTER_GROUPS[groupKey]?.types || []
+    )
+    .filter(
+      (recordType) =>
+        visibleTypes.has(recordType) &&
+        selectedTypes.has(recordType)
+    );
+}
+
+function viewerCurrentClusterRecordTypes() {
+  return viewerOverviewRecordTypesForGroups(
+    viewerCurrentClusterGroupKeys()
+  );
+}
+
+function viewerCurrentCentroidRecordTypes() {
+  return viewerOverviewRecordTypesForGroups(
+    viewerCurrentCentroidGroupKeys()
+  );
+}
+
+function getCentroidQueryRecordTypes() {
+  return Array.from(
+    new Set(viewerCurrentCentroidRecordTypes())
+  );
+}
+
 const VIEWER_SURVEY_GRID_OUTLINE_ONLY_ZOOM = 10;
 const VIEWER_SURVEY_GRID_REGION_MAX_ZOOM = 5;
 
@@ -2900,56 +3107,77 @@ function getVisibleMapLayerTypes() {
 }
 
 function getClusterQueryRecordTypes() {
-  const selectedResourceTypes = new Set(getSelectedResourceTypes());
-
-  return getVisibleMapLayerTypes().filter((type) => {
-    if (!selectedResourceTypes.has(type)) return false;
-    if (VIEWER_ALWAYS_GEOMETRY_TYPES.includes(type)) return false;
-
-    return (
-      type === "monument" ||
-      type === "rs3_poly" ||
-      type === "rs3_line" ||
-      type === "rs3_group" ||
-      type === "vernacular"
-    );
-  });
+  return Array.from(
+    new Set(viewerCurrentClusterRecordTypes())
+  );
 }
 
 function getGeometryQueryRecordTypes() {
-  const zoom = viewerMap ? viewerMap.getZoom() : 0;
+  const zoom = viewerMap
+    ? viewerMap.getZoom()
+    : 0;
 
-  const selectedResourceTypes = new Set(getSelectedResourceTypes());
-  const visibleMapTypes = getVisibleMapLayerTypes();
+  const selectedResourceTypes =
+    new Set(getSelectedResourceTypes());
 
-  const mainTypes = visibleMapTypes.filter((type) => {
-    if (!selectedResourceTypes.has(type)) return false;
+  const visibleMapTypes =
+    getVisibleMapLayerTypes();
 
-    if (VIEWER_ALWAYS_GEOMETRY_TYPES.includes(type)) {
-      return true;
+  const mainTypes = visibleMapTypes.filter(
+    (recordType) => {
+      if (
+        !selectedResourceTypes.has(recordType)
+      ) {
+        return false;
+      }
+
+      if (
+        VIEWER_ALWAYS_GEOMETRY_TYPES.includes(
+          recordType
+        )
+      ) {
+        return true;
+      }
+
+      return (
+        viewerRecordTypeMapMode(recordType) ===
+        "geometry"
+      );
     }
-
-    return getViewerMapMode() === "geometry";
-  });
+  );
 
   const optionalMapTypes = [];
 
   if (viewerMapLayerSurveyGrid?.checked === true) {
-    if (zoom < VIEWER_SURVEY_GRID_REGION_MAX_ZOOM) {
-      optionalMapTypes.push("survey_grid_region");
+    if (
+      zoom <
+      VIEWER_SURVEY_GRID_REGION_MAX_ZOOM
+    ) {
+      optionalMapTypes.push(
+        "survey_grid_region"
+      );
     } else {
-      optionalMapTypes.push("survey_grid");
+      optionalMapTypes.push(
+        "survey_grid"
+      );
     }
   }
 
-  if (showCentralAsiaBordersCheckbox?.checked === true) {
-    optionalMapTypes.push("admin_boundary");
+  if (
+    showCentralAsiaBordersCheckbox?.checked ===
+    true
+  ) {
+    optionalMapTypes.push(
+      "admin_boundary"
+    );
   }
 
-  return Array.from(new Set([
-    ...mainTypes,
-    ...optionalMapTypes
-  ]));
+  return Array.from(
+    new Set([
+      ...mainTypes,
+      ...optionalMapTypes
+    ])
+  );
 }
 
 function getViewerTextSearch() {
@@ -7216,32 +7444,21 @@ function initViewerMap() {
         return;
       }
 
-      try {
-        await loadViewerMap();
-      } catch (error) {
-        console.error("Viewer map reload failed:", error);
-      }
+      queueViewerMapReloadAfterZoom();
     }, 1200);
   });
 
-  viewerMap.on("zoomend", async () => {
-    updateViewerMapModeVisibility();
+  viewerMap.on("zoomend", () => {
     renderViewerMapLabels();
 
-    if (Date.now() < viewerSuppressMapReloadUntil) return;
-
-    if (viewerRelatedOverlayActive) {
-      bringViewerRelatedOverlayToFront();
+    if (
+      Date.now() < viewerSuppressMapReloadUntil &&
+      !viewerRelatedOverlayActive
+    ) {
       return;
     }
 
-    if (viewerIsLoading) return;
-
-    try {
-      await loadViewerMap();
-    } catch (error) {
-      console.error("Viewer map zoom reload failed:", error);
-    }
+    queueViewerMapReloadAfterZoom();
   });
 
   if (basemapSelect) {
@@ -7280,8 +7497,14 @@ function initViewerMap() {
 async function loadViewerMap() {
   if (!viewerMap || !viewerMapLoaded) return;
 
-  const geometryLayers = getGeometryQueryRecordTypes();
-  const clusterLayers = getClusterQueryRecordTypes();
+  const geometryLayers =
+    getGeometryQueryRecordTypes();
+
+  const clusterLayers =
+    getClusterQueryRecordTypes();
+
+  const centroidLayers =
+    getCentroidQueryRecordTypes();
 
   const hasReferenceLayers =
     geometryLayers.includes("survey_grid_region") ||
@@ -7291,7 +7514,8 @@ async function loadViewerMap() {
   const shouldShowMapLoading =
     hasReferenceLayers ||
     geometryLayers.length > 0 ||
-    clusterLayers.length > 0;
+    clusterLayers.length > 0 ||
+    centroidLayers.length > 0;
 
   if (shouldShowMapLoading) {
     setViewerLoading(true, t("loading_map_layers", "Loading map layers..."));
@@ -7299,7 +7523,11 @@ async function loadViewerMap() {
 
   try {
 
-  if (!geometryLayers.length && !clusterLayers.length) {
+  if (
+    !geometryLayers.length &&
+    !clusterLayers.length &&
+    !centroidLayers.length
+  ) {
     Object.keys(VIEWER_CLUSTER_GROUPS).forEach((groupKey) => {
       viewerCentroidGeojsonByGroup[groupKey] = {
         type: "FeatureCollection",
@@ -7315,13 +7543,18 @@ async function loadViewerMap() {
     return;
   }
 
-  const mapMode = getViewerMapMode();
-
-  if (mapMode === "clusters") {
-    await loadViewerClusters();
-  } else if (mapMode === "centroids") {
-    await loadViewerCentroids();
+  if (
+    clusterLayers.length ||
+    centroidLayers.length
+  ) {
+    await loadViewerOverviewData();
   } else {
+    if (viewerOverviewAbortController) {
+      viewerOverviewAbortController.abort();
+      viewerOverviewAbortController = null;
+    }
+
+    viewerOverviewRequestSequence += 1;
     clearViewerClusterData();
   }
 
@@ -7387,161 +7620,248 @@ function clearViewerClusterData() {
   drawViewerCentroidLayers();
 }
 
-async function loadViewerClusters() {
-  if (!viewerMap || !viewerMapLoaded) return;
+function viewerCurrentOverviewRequestKey() {
+  const clusterTypes =
+    getClusterQueryRecordTypes()
+      .slice()
+      .sort()
+      .join(",");
 
-  const selectedLayers = getClusterQueryRecordTypes();
+  const centroidTypes =
+    getCentroidQueryRecordTypes()
+      .slice()
+      .sort()
+      .join(",");
 
-  if (!selectedLayers.length) {
+  return `clusters:${clusterTypes}|centroids:${centroidTypes}`;
+}
+
+function beginViewerOverviewRequest() {
+  if (viewerOverviewAbortController) {
+    viewerOverviewAbortController.abort();
+  }
+
+  viewerOverviewAbortController =
+    new AbortController();
+
+  viewerOverviewRequestSequence += 1;
+
+  return {
+    controller: viewerOverviewAbortController,
+    signal: viewerOverviewAbortController.signal,
+    sequence: viewerOverviewRequestSequence,
+    requestKey: viewerCurrentOverviewRequestKey()
+  };
+}
+
+function viewerOverviewRequestIsCurrent(request) {
+  return (
+    request.sequence === viewerOverviewRequestSequence &&
+    request.signal.aborted !== true &&
+    request.requestKey === viewerCurrentOverviewRequestKey()
+  );
+}
+
+function finishViewerOverviewRequest(request) {
+  if (
+    viewerOverviewAbortController ===
+    request.controller
+  ) {
+    viewerOverviewAbortController = null;
+  }
+}
+
+async function loadViewerOverviewData() {
+  if (!viewerMap || !viewerMapLoaded) {
+    return;
+  }
+
+  const clusterTypes =
+    getClusterQueryRecordTypes();
+
+  const centroidTypes =
+    getCentroidQueryRecordTypes();
+
+  if (
+    !clusterTypes.length &&
+    !centroidTypes.length
+  ) {
     clearViewerClusterData();
     return;
   }
 
-  if (viewerCentroidsAbortController) {
-    viewerCentroidsAbortController.abort();
-  }
+  const request =
+    beginViewerOverviewRequest();
 
-  viewerCentroidsAbortController = new AbortController();
-  const signal = viewerCentroidsAbortController.signal;
-
-  const params = buildViewerQueryParams({
-    includePaging: false,
-    includeMapBbox: true
-  });
-
-  params.set("recordTypes", selectedLayers.join(","));
-  params.set("zoom", String(viewerMap.getZoom()));
-
-  let data;
-
-  try {
-    const response = await fetch(`/api/viewer/clusters?${params.toString()}`, {
-      method: "GET",
-      credentials: "include",
-      signal
+  const makeParams = (recordTypes) => {
+    const params = buildViewerQueryParams({
+      includePaging: false,
+      includeMapBbox: true
     });
 
-    data = await response.json();
+    params.set(
+      "recordTypes",
+      recordTypes.join(",")
+    );
 
-    if (!response.ok || !data.ok) {
-      throw new Error(data.detail || data.error || "Failed to load viewer clusters");
+    params.set(
+      "zoom",
+      String(viewerMap.getZoom())
+    );
+
+    return params;
+  };
+
+  try {
+    const clusterPromise = clusterTypes.length
+      ? fetch(
+          `/api/viewer/clusters?${makeParams(
+            clusterTypes
+          ).toString()}`,
+          {
+            method: "GET",
+            credentials: "include",
+            signal: request.signal
+          }
+        ).then(async (response) => {
+          const data = await response.json();
+
+          if (!response.ok || !data.ok) {
+            throw new Error(
+              data.detail ||
+              data.error ||
+              "Failed to load viewer clusters"
+            );
+          }
+
+          return Array.isArray(
+            data.clusters?.features
+          )
+            ? data.clusters.features
+            : [];
+        })
+      : Promise.resolve([]);
+
+    const centroidPromise = centroidTypes.length
+      ? fetch(
+          `/api/viewer/centroids?${makeParams(
+            centroidTypes
+          ).toString()}`,
+          {
+            method: "GET",
+            credentials: "include",
+            signal: request.signal
+          }
+        ).then(async (response) => {
+          const data = await response.json();
+
+          if (!response.ok || !data.ok) {
+            throw new Error(
+              data.detail ||
+              data.error ||
+              "Failed to load viewer centroids"
+            );
+          }
+
+          return Array.isArray(
+            data.centroids?.features
+          )
+            ? data.centroids.features
+            : [];
+        })
+      : Promise.resolve([]);
+
+    const [
+      clusterFeatures,
+      centroidFeatures
+    ] = await Promise.all([
+      clusterPromise,
+      centroidPromise
+    ]);
+
+    if (
+      !viewerOverviewRequestIsCurrent(request)
+    ) {
+      return;
     }
-  } catch (error) {
-    if (error.name === "AbortError") return;
-    throw error;
-  } finally {
-    if (viewerCentroidsAbortController?.signal === signal) {
-      viewerCentroidsAbortController = null;
-    }
-  }
 
-  const features = Array.isArray(data.clusters?.features)
-    ? data.clusters.features
-    : [];
+    const requestedClusterTypes =
+      new Set(clusterTypes);
 
-  Object.entries(VIEWER_CLUSTER_GROUPS).forEach(([groupKey, group]) => {
-    viewerCentroidGeojsonByGroup[groupKey] = {
-      type: "FeatureCollection",
-      features: features.filter((feature) =>
-        group.types.includes(feature.properties?.record_type)
-      )
-    };
-  });
+    const requestedCentroidTypes =
+      new Set(centroidTypes);
 
-  drawViewerCentroidLayers();
-  updateMapStatusLine();
-}
+    Object.entries(
+      VIEWER_CLUSTER_GROUPS
+    ).forEach(([groupKey, group]) => {
+      const mode =
+        viewerGroupMapMode(groupKey);
 
-function getViewerMapMode() {
-  if (!viewerMap) return "clusters";
+      let features = [];
 
-  const zoom = viewerMap.getZoom();
+      if (mode === "clusters") {
+        features = clusterFeatures.filter(
+          (feature) => {
+            const recordType =
+              feature.properties?.record_type;
 
-  if (zoom < VIEWER_CLUSTER_MAX_ZOOM) {
-    return "clusters";
-  }
+            return (
+              group.types.includes(recordType) &&
+              requestedClusterTypes.has(recordType)
+            );
+          }
+        );
+      }
 
-  if (zoom < VIEWER_GEOMETRY_MIN_ZOOM) {
-    return "centroids";
-  }
+      if (mode === "centroids") {
+        features = centroidFeatures.filter(
+          (feature) => {
+            const recordType =
+              feature.properties?.record_type;
 
-  return "geometry";
-}
+            return (
+              group.types.includes(recordType) &&
+              requestedCentroidTypes.has(recordType)
+            );
+          }
+        );
+      }
 
-async function loadViewerCentroids() {
-  if (!viewerMap || !viewerMapLoaded) return;
-
-  const selectedLayers = getClusterQueryRecordTypes();
-
-  if (!selectedLayers.length) {
-    Object.keys(VIEWER_CLUSTER_GROUPS).forEach((groupKey) => {
       viewerCentroidGeojsonByGroup[groupKey] = {
         type: "FeatureCollection",
-        features: []
+        features
       };
     });
 
     drawViewerCentroidLayers();
     updateMapStatusLine();
-
-    return;
-  }
-
-  const mode = getViewerMapMode();
-
-  const params = buildViewerQueryParams({
-    includePaging: false,
-    includeMapBbox: true
-  });
-
-  params.set("recordTypes", selectedLayers.join(","));
-  params.set("zoom", String(viewerMap.getZoom()));
-
-  const endpoint = mode === "clusters"
-    ? "/api/viewer/clusters"
-    : "/api/viewer/centroids";
-
-  let data;
-
-  try {
-    const response = await fetch(`${endpoint}?${params.toString()}`, {
-      method: "GET",
-      credentials: "include"
-    });
-
-    data = await response.json();
-
-    if (!response.ok || !data.ok) {
-      throw new Error(data.detail || data.error || "Failed to load viewer map overview");
-    }
   } catch (error) {
     if (error.name === "AbortError") {
       return;
     }
 
     throw error;
+  } finally {
+    finishViewerOverviewRequest(request);
+  }
+}
+
+function getViewerMapMode() {
+  const clusterGroups =
+    viewerCurrentClusterGroupKeys();
+
+  if (
+    clusterGroups.length ===
+    Object.keys(VIEWER_CLUSTER_GROUPS).length
+  ) {
+    return "clusters";
   }
 
-  const allFeatures =
-    mode === "clusters"
-      ? Array.isArray(data.clusters?.features)
-        ? data.clusters.features
-        : []
-      : Array.isArray(data.centroids?.features)
-        ? data.centroids.features
-        : [];
+  if (clusterGroups.length > 0) {
+    return "mixed";
+  }
 
-  Object.entries(VIEWER_CLUSTER_GROUPS).forEach(([groupKey, group]) => {
-    viewerCentroidGeojsonByGroup[groupKey] = {
-      type: "FeatureCollection",
-      features: allFeatures.filter((feature) =>
-        group.types.includes(feature.properties?.record_type)
-      )
-    };
-  });
-
-  drawViewerCentroidLayers();
-  updateMapStatusLine();
+  return "geometry";
 }
 
 function drawViewerCentroidLayers() {
@@ -7676,108 +7996,147 @@ function ensureViewerCentroidLayers(group) {
   }
 }
 
-function getClusterExpansionZoomSafe(source, clusterId) {
-  return new Promise((resolve, reject) => {
-    try {
-      const maybePromise = source.getClusterExpansionZoom(Number(clusterId), (error, zoom) => {
-        if (error) {
-          reject(error);
-          return;
-        }
-
-        resolve(zoom);
-      });
-
-      if (maybePromise && typeof maybePromise.then === "function") {
-        maybePromise.then(resolve).catch(reject);
-      }
-    } catch (error) {
-      reject(error);
-    }
-  });
-}
-
 function bindViewerCentroidEvents() {
-  if (!viewerMap || viewerCentroidEventsBound) return;
+  if (
+    !viewerMap ||
+    viewerCentroidEventsBound
+  ) {
+    return;
+  }
 
-  Object.entries(VIEWER_CLUSTER_GROUPS).forEach(([groupKey, group]) => {
+  Object.entries(
+    VIEWER_CLUSTER_GROUPS
+  ).forEach(([groupKey, group]) => {
     [
       group.clusters,
       group.clusterCount
     ].forEach((layerId) => {
-      viewerMap.on("click", layerId, async (event) => {
-        const feature = event.features?.[0];
-        if (!feature) return;
+      viewerMap.on(
+        "click",
+        layerId,
+        (event) => {
+          if (
+            viewerSpatialDrawIsActive ||
+            viewerMeasurementIsActive
+          ) {
+            return;
+          }
 
-        const clusterId = feature.properties?.cluster_id;
-        const coords = feature.geometry?.coordinates;
+          const feature =
+            event.features?.[0];
 
-        if (!Array.isArray(coords)) {
-          return;
+          const coords =
+            feature?.geometry?.coordinates;
+
+          if (
+            !Array.isArray(coords) ||
+            coords.length < 2 ||
+            !Number.isFinite(Number(coords[0])) ||
+            !Number.isFinite(Number(coords[1]))
+          ) {
+            return;
+          }
+
+          const currentZoom =
+            viewerMap.getZoom();
+
+          const nextBoundary =
+            currentZoom <
+            viewerGroupClusterMaxZoom(groupKey)
+              ? viewerGroupClusterMaxZoom(groupKey)
+              : viewerGroupGeometryMinZoom(groupKey);
+
+          const targetZoom = Math.min(
+            currentZoom + 2,
+            nextBoundary + 0.25
+          );
+
+          viewerMap.easeTo({
+            center: [
+              Number(coords[0]),
+              Number(coords[1])
+            ],
+            zoom: targetZoom,
+            duration: 500
+          });
         }
+      );
 
-        const source = viewerMap.getSource(group.source);
+      viewerMap.on(
+        "mouseenter",
+        layerId,
+        () => {
+          if (
+            viewerSpatialDrawIsActive ||
+            viewerMeasurementIsActive
+          ) {
+            return;
+          }
 
+          viewerMap.getCanvas()
+            .style.cursor = "pointer";
+        }
+      );
+
+      viewerMap.on(
+        "mouseleave",
+        layerId,
+        () => {
+          viewerMap.getCanvas()
+            .style.cursor = "";
+        }
+      );
+    });
+
+    viewerMap.on(
+      "click",
+      group.unclustered,
+      (event) => {
         if (
-          clusterId === undefined ||
-          clusterId === null ||
-          !source ||
-          typeof source.getClusterExpansionZoom !== "function"
+          viewerSpatialDrawIsActive ||
+          viewerMeasurementIsActive
         ) {
-          suppressViewerMapReload();
-
-          viewerMap.easeTo({
-            center: coords,
-            zoom: Math.min(viewerMap.getZoom() + 2, VIEWER_GEOMETRY_MIN_ZOOM),
-            duration: 500
-          });
           return;
         }
 
-        try {
-          const zoom = await getClusterExpansionZoomSafe(source, clusterId);
+        const feature =
+          event.features?.[0];
 
-          suppressViewerMapReload();
-
-          viewerMap.easeTo({
-            center: coords,
-            zoom: Math.min(zoom, VIEWER_GEOMETRY_MIN_ZOOM),
-            duration: 500
-          });
-        } catch (error) {
-          console.error("Could not expand viewer cluster:", error);
+        if (!feature?.properties) {
+          return;
         }
-      });
 
-      viewerMap.on("mouseenter", layerId, () => {
-        viewerMap.getCanvas().style.cursor = "pointer";
-      });
-
-      viewerMap.on("mouseleave", layerId, () => {
-        viewerMap.getCanvas().style.cursor = "";
-      });
-    });
-
-    viewerMap.on("click", group.unclustered, (event) => {
-      if (
-        viewerSpatialDrawIsActive ||
-        viewerMeasurementIsActive
-      ) {
-        return;
+        showViewerMapPopup(
+          feature,
+          event.lngLat
+        );
       }
-      const feature = event.features?.[0];
-      if (!feature?.properties) return;
+    );
 
-      showViewerMapPopup(feature, event.lngLat);
-    });
+    viewerMap.on(
+      "mouseenter",
+      group.unclustered,
+      () => {
+        if (
+          viewerSpatialDrawIsActive ||
+          viewerMeasurementIsActive
+        ) {
+          return;
+        }
 
-    viewerMap.on("mouseenter", group.unclustered, () => {
-      viewerMap.getCanvas().style.cursor = "pointer";
-    });
+        viewerMap.getCanvas()
+          .style.cursor = "pointer";
+      }
+    );
 
-    viewerMap.on("mouseleave", group.unclustered, () => {
-      viewerMap.getCanvas().style.cursor = "";
-    });
+    viewerMap.on(
+      "mouseleave",
+      group.unclustered,
+      () => {
+        viewerMap.getCanvas()
+          .style.cursor = "";
+      }
+    );
   });
 
   viewerCentroidEventsBound = true;
@@ -7809,63 +8168,90 @@ function clearViewerCentroidLayer() {
 function updateViewerMapModeVisibility() {
   if (!viewerMap) return;
 
-  const mode = getViewerMapMode();
-  const selectedTypes = getVisibleMapLayerTypes();
+  const selectedTypes =
+    getVisibleMapLayerTypes();
 
-  const showClusters = mode === "clusters";
-  const showCentroids = mode === "centroids";
-  const showGeometry = mode === "geometry";
+  Object.entries(
+    VIEWER_CLUSTER_GROUPS
+  ).forEach(([groupKey, group]) => {
+    const mode =
+      viewerGroupMapMode(groupKey);
 
-  // Remote-sensing clusters and vernacular clusters are separate sources/layers.
-  Object.values(VIEWER_CLUSTER_GROUPS).forEach((group) => {
+    const showClusters =
+      mode === "clusters";
+
+    const showCentroids =
+      mode === "centroids";
+
     [
       group.clusters,
       group.clusterCount
     ].forEach((layerId) => {
-      if (viewerMap.getLayer(layerId)) {
-        viewerMap.setLayoutProperty(
-          layerId,
-          "visibility",
-          showClusters ? "visible" : "none"
-        );
+      if (!viewerMap.getLayer(layerId)) {
+        return;
       }
+
+      viewerMap.setLayoutProperty(
+        layerId,
+        "visibility",
+        showClusters
+          ? "visible"
+          : "none"
+      );
     });
 
-    if (viewerMap.getLayer(group.unclustered)) {
+    if (
+      viewerMap.getLayer(group.unclustered)
+    ) {
       viewerMap.setLayoutProperty(
         group.unclustered,
         "visibility",
-        showCentroids ? "visible" : "none"
+        showCentroids
+          ? "visible"
+          : "none"
       );
     }
   });
 
-  // Geometry layers:
-  // - normal resource geometries only show at geometry zoom
-  // - institutions and survey grid layers show whenever selected/checked
-  VIEWER_ALL_MAP_TYPES.forEach((recordType) => {
-    const ids = VIEWER_LAYER_IDS[recordType];
-    if (!ids) return;
+  VIEWER_ALL_MAP_TYPES.forEach(
+    (recordType) => {
+      const ids =
+        VIEWER_LAYER_IDS[recordType];
 
-    const isAlwaysGeometryType =
-      VIEWER_ALWAYS_GEOMETRY_TYPES.includes(recordType);
+      if (!ids) return;
 
-    const showThisGeometry =
-      selectedTypes.includes(recordType) &&
-      (showGeometry || isAlwaysGeometryType);
-
-    Object.entries(ids).forEach(([key, layerId]) => {
-      if (key === "source") return;
-
-      if (viewerMap.getLayer(layerId)) {
-        viewerMap.setLayoutProperty(
-          layerId,
-          "visibility",
-          showThisGeometry ? "visible" : "none"
+      const isAlwaysGeometryType =
+        VIEWER_ALWAYS_GEOMETRY_TYPES.includes(
+          recordType
         );
-      }
-    });
-  });
+
+      const showGeometry =
+        isAlwaysGeometryType ||
+        viewerRecordTypeMapMode(recordType) ===
+          "geometry";
+
+      const showThisGeometry =
+        selectedTypes.includes(recordType) &&
+        showGeometry;
+
+      Object.entries(ids).forEach(
+        ([key, layerId]) => {
+          if (key === "source") return;
+
+          if (viewerMap.getLayer(layerId)) {
+            viewerMap.setLayoutProperty(
+              layerId,
+              "visibility",
+              showThisGeometry
+                ? "visible"
+                : "none"
+            );
+          }
+        }
+      );
+    }
+  );
+
   renderViewerLegend();
 }
 
@@ -8129,6 +8515,40 @@ function ensureViewerStyleLayers(recordType) {
       });
     }
 
+    if (
+      ids.halo &&
+      !viewerMap.getLayer(ids.halo)
+    ) {
+      viewerMap.addLayer({
+        id: ids.halo,
+        type: "line",
+        source: ids.source,
+        filter: VIEWER_POLYGON_GEOMETRY_FILTER,
+        paint: {
+          "line-color": "#ffffff",
+
+          "line-opacity": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            11, 0.82,
+            13, 0.55,
+            15, 0.18,
+            16, 0
+          ],
+
+          "line-width": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            11, 4,
+            13, 4.5,
+            16, 5
+          ]
+        }
+      });
+    }
+
     if (!viewerMap.getLayer(ids.outline)) {
       viewerMap.addLayer({
         id: ids.outline,
@@ -8141,10 +8561,9 @@ function ensureViewerStyleLayers(recordType) {
             "interpolate",
             ["linear"],
             ["zoom"],
-            3, 0.6,
-            5, 0.9,
-            8, 1.2,
-            10, 1.6
+            11, 1.8,
+            13, 2.5,
+            16, 3.2
           ],
           "line-opacity": 0.75
         }
@@ -8291,6 +8710,40 @@ function ensureViewerStyleLayers(recordType) {
 
   // Resource lines
   if (recordType === "rs3_line") {
+    if (
+      ids.casing &&
+      !viewerMap.getLayer(ids.casing)
+    ) {
+      viewerMap.addLayer({
+        id: ids.casing,
+        type: "line",
+        source: ids.source,
+        filter: VIEWER_LINE_GEOMETRY_FILTER,
+        paint: {
+          "line-color": "#ffffff",
+
+          "line-opacity": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            11, 0.88,
+            13, 0.6,
+            15, 0.2,
+            16, 0
+          ],
+
+          "line-width": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            11, 5,
+            13, 5.5,
+            16, 6.5
+          ]
+        }
+      });
+    }
+
     if (!viewerMap.getLayer(ids.line)) {
       viewerMap.addLayer({
         id: ids.line,
@@ -8312,7 +8765,10 @@ function ensureViewerStyleLayers(recordType) {
       });
     }
 
-    bindViewerLayerEvents(recordType, [ids.line]);
+    bindViewerLayerEvents(
+      recordType,
+      [ids.casing, ids.line].filter(Boolean)
+    );
     return;
   }
 
@@ -8397,27 +8853,43 @@ function featureToViewerLightRecord(feature) {
   };
 }
 
-function setViewerLayerVisibility(recordType, visible) {
-  const ids = VIEWER_LAYER_IDS[recordType];
+function setViewerLayerVisibility(
+  recordType,
+  visible
+) {
+  const ids =
+    VIEWER_LAYER_IDS[recordType];
+
   if (!ids || !viewerMap) return;
 
-  const isAlwaysGeometryType = VIEWER_ALWAYS_GEOMETRY_TYPES.includes(recordType);
+  const isAlwaysGeometryType =
+    VIEWER_ALWAYS_GEOMETRY_TYPES.includes(
+      recordType
+    );
 
   const showGeometry =
     visible &&
-    (getViewerMapMode() === "geometry" || isAlwaysGeometryType);
+    (
+      isAlwaysGeometryType ||
+      viewerRecordTypeMapMode(recordType) ===
+        "geometry"
+    );
 
-  Object.entries(ids).forEach(([key, layerId]) => {
-    if (key === "source") return;
+  Object.entries(ids).forEach(
+    ([key, layerId]) => {
+      if (key === "source") return;
 
-    if (viewerMap.getLayer(layerId)) {
-      viewerMap.setLayoutProperty(
-        layerId,
-        "visibility",
-        showGeometry ? "visible" : "none"
-      );
+      if (viewerMap.getLayer(layerId)) {
+        viewerMap.setLayoutProperty(
+          layerId,
+          "visibility",
+          showGeometry
+            ? "visible"
+            : "none"
+        );
+      }
     }
-  });
+  );
 }
 
 function clearAllViewerMapLayers() {
@@ -8469,12 +8941,18 @@ function bringViewerLayersToFront() {
     "viewer-cartography-circle",
     "viewer-dataset-circle",
 
-    // Site/resource features
+    // Site/resource fills
     "viewer-monument-fill",
     "viewer-rs3-poly-fill",
     "viewer-rs3-group-fill",
     "viewer-vernacular-fill",
 
+    // White RS geometry casings
+    "viewer-rs3-poly-halo",
+    "viewer-rs3-group-halo",
+    "viewer-rs3-line-casing",
+
+    // Normal resource outlines
     "viewer-monument-outline",
     "viewer-rs3-poly-outline",
     "viewer-rs3-group-outline",
@@ -9121,24 +9599,6 @@ function updateMapStatusLine() {
     mapStatusLine.textContent = t(
       "viewer_clustered_records_status",
       "Showing clustered overview for {mapped} resource records."
-    ).replace("{mapped}", formatCount(centroidCount));
-    return;
-  }
-
-  if (mode === "centroids") {
-    if (totalCount && centroidCount < totalCount) {
-      mapStatusLine.textContent = t(
-        "viewer_centroid_records_partial_status",
-        "Showing point overview for {mapped} mapped records from {total} matching records. Zoom in for detailed geometry."
-      )
-        .replace("{mapped}", formatCount(centroidCount))
-        .replace("{total}", formatCount(totalCount));
-      return;
-    }
-
-    mapStatusLine.textContent = t(
-      "viewer_centroid_records_status",
-      "Showing point overview for {mapped} resource records. Zoom in for detailed geometry."
     ).replace("{mapped}", formatCount(centroidCount));
     return;
   }
@@ -10769,7 +11229,10 @@ function getCurrentViewerMapLegendItems() {
   const items = [];
   const mode = getViewerMapMode();
 
-  if (mode === "clusters") {
+  if (
+    mode === "clusters" ||
+    mode === "mixed"
+  ) {
     if (viewerCentroidGroupHasFeatures("monuments")) {
       items.push({
         label: t("viewer_monument_clusters", "Monument clusters"),
@@ -10810,27 +11273,50 @@ function renderViewerLegend() {
   if (!viewerLegendEl) return;
 
   const rows = [];
-  const mode = getViewerMapMode();
-  const showDetailedResourceSymbols = mode !== "clusters";
+
+  const monumentMode =
+    viewerGroupMapMode("monuments");
+
+  const remoteSensingMode =
+    viewerGroupMapMode("remote_sensing");
+
+  const vernacularMode =
+    viewerGroupMapMode("vernacular");
 
   const showMonumentCluster =
-    mode === "clusters" &&
+    monumentMode === "clusters" &&
     viewerCentroidGroupHasFeatures("monuments");
 
   const showRemoteSensingCluster =
-    mode === "clusters" &&
+    remoteSensingMode === "clusters" &&
+    viewerCentroidGroupHasFeatures("remote_sensing");
+
+  const showRemoteSensingCentroids =
+    remoteSensingMode === "centroids" &&
     viewerCentroidGroupHasFeatures("remote_sensing");
 
   const showVernacularCluster =
-    mode === "clusters" &&
+    vernacularMode === "clusters" &&
     viewerCentroidGroupHasFeatures("vernacular");
+
+  const showMonumentGeometry =
+    monumentMode === "geometry";
+
+  const showRemoteSensingGeometry =
+    remoteSensingMode === "geometry";
+
+  const showVernacularGeometry =
+    vernacularMode === "geometry";
 
   if (showMonumentCluster) {
     rows.push(
       viewerLegendSymbolRow({
-        symbolClass: "viewer-legend-cluster-monument",
-        labelKey: "viewer_monument_clusters",
-        fallback: "Monument clusters"
+        symbolClass:
+          "viewer-legend-cluster-monument",
+        labelKey:
+          "viewer_monument_clusters",
+        fallback:
+          "Monument clusters"
       })
     );
   }
@@ -10838,9 +11324,25 @@ function renderViewerLegend() {
   if (showRemoteSensingCluster) {
     rows.push(
       viewerLegendSymbolRow({
-        symbolClass: "viewer-legend-cluster-rs",
-        labelKey: "viewer_remote_sensing_clusters",
-        fallback: "Remote sensing clusters"
+        symbolClass:
+          "viewer-legend-cluster-rs",
+        labelKey:
+          "viewer_remote_sensing_clusters",
+        fallback:
+          "Remote sensing clusters"
+      })
+    );
+  }
+
+  if (showRemoteSensingCentroids) {
+    rows.push(
+      viewerLegendSymbolRow({
+        symbolClass:
+          "viewer-legend-centroid-rs",
+        labelKey:
+          "viewer_remote_sensing_locations",
+        fallback:
+          "Remote sensing feature locations"
       })
     );
   }
@@ -10848,69 +11350,107 @@ function renderViewerLegend() {
   if (showVernacularCluster) {
     rows.push(
       viewerLegendSymbolRow({
-        symbolClass: "viewer-legend-cluster-vernacular",
-        labelKey: "viewer_vernacular_clusters",
-        fallback: "Vernacular clusters"
+        symbolClass:
+          "viewer-legend-cluster-vernacular",
+        labelKey:
+          "viewer_vernacular_clusters",
+        fallback:
+          "Vernacular clusters"
       })
     );
   }
 
-  if (showDetailedResourceSymbols && viewerLegendShouldShowLayer("monument")) {
+  if (
+    showMonumentGeometry &&
+    viewerLegendShouldShowLayer("monument")
+  ) {
     rows.push(
       viewerLegendSymbolRow({
-        symbolClass: "viewer-legend-monument",
-        labelKey: "viewer_layer_monument",
-        fallback: "Monuments"
+        symbolClass:
+          "viewer-legend-monument",
+        labelKey:
+          "viewer_layer_monument",
+        fallback:
+          "Monuments"
       })
     );
   }
 
-  if (showDetailedResourceSymbols && viewerLegendShouldShowLayer("rs3_poly")) {
+  if (
+    showRemoteSensingGeometry &&
+    viewerLegendShouldShowLayer("rs3_poly")
+  ) {
     rows.push(
       viewerLegendSymbolRow({
-        symbolClass: "viewer-legend-rs3-poly",
-        labelKey: "viewer_layer_rs3_poly",
-        fallback: "RS3 polygons"
+        symbolClass:
+          "viewer-legend-rs3-poly",
+        labelKey:
+          "viewer_layer_rs3_poly",
+        fallback:
+          "RS3 polygons"
       })
     );
   }
 
-  if (showDetailedResourceSymbols && viewerLegendShouldShowLayer("rs3_line")) {
+  if (
+    showRemoteSensingGeometry &&
+    viewerLegendShouldShowLayer("rs3_line")
+  ) {
     rows.push(
       viewerLegendSymbolRow({
-        symbolClass: "viewer-legend-rs3-line",
-        labelKey: "viewer_layer_rs3_line",
-        fallback: "RS3 lines"
+        symbolClass:
+          "viewer-legend-rs3-line",
+        labelKey:
+          "viewer_layer_rs3_line",
+        fallback:
+          "RS3 lines"
       })
     );
   }
 
-  if (showDetailedResourceSymbols && viewerLegendShouldShowLayer("rs3_group")) {
+  if (
+    showRemoteSensingGeometry &&
+    viewerLegendShouldShowLayer("rs3_group")
+  ) {
     rows.push(
       viewerLegendSymbolRow({
-        symbolClass: "viewer-legend-rs3-group",
-        labelKey: "viewer_layer_rs3_group",
-        fallback: "RS3 groups"
+        symbolClass:
+          "viewer-legend-rs3-group",
+        labelKey:
+          "viewer_layer_rs3_group",
+        fallback:
+          "RS3 groups"
       })
     );
   }
 
-  if (viewerLegendShouldShowLayer("institution")) {
+  if (
+    viewerLegendShouldShowLayer("institution")
+  ) {
     rows.push(
       viewerLegendSymbolRow({
-        symbolClass: "viewer-legend-institution",
-        labelKey: "viewer_layer_institution",
-        fallback: "Institutions"
+        symbolClass:
+          "viewer-legend-institution",
+        labelKey:
+          "viewer_layer_institution",
+        fallback:
+          "Institutions"
       })
     );
   }
 
-  if (showDetailedResourceSymbols && viewerLegendShouldShowLayer("vernacular")) {
+  if (
+    showVernacularGeometry &&
+    viewerLegendShouldShowLayer("vernacular")
+  ) {
     rows.push(
       viewerLegendSymbolRow({
-        symbolClass: "viewer-legend-vernacular",
-        labelKey: "viewer_layer_vernacular",
-        fallback: "Vernacular"
+        symbolClass:
+          "viewer-legend-vernacular",
+        labelKey:
+          "viewer_layer_vernacular",
+        fallback:
+          "Vernacular"
       })
     );
   }
@@ -10919,57 +11459,78 @@ function renderViewerLegend() {
     viewerMapLayerSurveyGrid?.checked &&
     (
       viewerMapLayerHasFeatures("survey_grid") ||
-      viewerMapLayerHasFeatures("survey_grid_region")
+      viewerMapLayerHasFeatures(
+        "survey_grid_region"
+      )
     )
   ) {
-    const surveyMode = getSurveyGridStyleMode();
+    const surveyMode =
+      getSurveyGridStyleMode();
 
     if (surveyMode === "status") {
       rows.push(
         viewerLegendSymbolRow({
-          symbolClass: "viewer-legend-grid-complete",
-          labelKey: "viewer_survey_grid_complete",
-          fallback: "Survey grid: complete"
+          symbolClass:
+            "viewer-legend-grid-complete",
+          labelKey:
+            "viewer_survey_grid_complete",
+          fallback:
+            "Survey grid: complete"
         })
       );
 
       rows.push(
         viewerLegendSymbolRow({
-          symbolClass: "viewer-legend-grid-progress",
-          labelKey: "viewer_survey_grid_in_progress",
-          fallback: "Survey grid: in progress"
+          symbolClass:
+            "viewer-legend-grid-progress",
+          labelKey:
+            "viewer_survey_grid_in_progress",
+          fallback:
+            "Survey grid: in progress"
         })
       );
 
       rows.push(
         viewerLegendSymbolRow({
-          symbolClass: "viewer-legend-grid-not-started",
-          labelKey: "viewer_survey_grid_not_started",
-          fallback: "Survey grid: not started"
+          symbolClass:
+            "viewer-legend-grid-not-started",
+          labelKey:
+            "viewer_survey_grid_not_started",
+          fallback:
+            "Survey grid: not started"
         })
       );
     } else if (surveyMode === "checked") {
       rows.push(
         viewerLegendSymbolRow({
-          symbolClass: "viewer-legend-grid-checked",
-          labelKey: "viewer_survey_grid_checked",
-          fallback: "Survey grid: checked"
+          symbolClass:
+            "viewer-legend-grid-checked",
+          labelKey:
+            "viewer_survey_grid_checked",
+          fallback:
+            "Survey grid: checked"
         })
       );
 
       rows.push(
         viewerLegendSymbolRow({
-          symbolClass: "viewer-legend-grid-not-checked",
-          labelKey: "viewer_survey_grid_not_checked",
-          fallback: "Survey grid: not checked"
+          symbolClass:
+            "viewer-legend-grid-not-checked",
+          labelKey:
+            "viewer_survey_grid_not_checked",
+          fallback:
+            "Survey grid: not checked"
         })
       );
     } else {
       rows.push(
         viewerLegendSymbolRow({
-          symbolClass: "viewer-legend-grid",
-          labelKey: "viewer_layer_survey_grid",
-          fallback: "Survey grid"
+          symbolClass:
+            "viewer-legend-grid",
+          labelKey:
+            "viewer_layer_survey_grid",
+          fallback:
+            "Survey grid"
         })
       );
     }
@@ -10978,9 +11539,12 @@ function renderViewerLegend() {
   if (viewerSelectedRecord?.geometry) {
     rows.push(
       viewerLegendSymbolRow({
-        symbolClass: "legend-selected",
-        labelKey: "selected_record",
-        fallback: "Selected record"
+        symbolClass:
+          "legend-selected",
+        labelKey:
+          "selected_record",
+        fallback:
+          "Selected record"
       })
     );
   }
@@ -10988,68 +11552,111 @@ function renderViewerLegend() {
   if (viewerRelatedOverlayActive) {
     rows.push(
       viewerLegendSymbolRow({
-        symbolClass: "viewer-legend-related",
-        labelKey: "related_record",
-        fallback: "Related record"
+        symbolClass:
+          "viewer-legend-related",
+        labelKey:
+          "related_record",
+        fallback:
+          "Related record"
       })
     );
   }
 
-  viewerLegendEl.hidden = rows.length === 0;
+  viewerLegendEl.hidden =
+    rows.length === 0;
 
   if (!rows.length) {
     viewerLegendEl.innerHTML = "";
+    viewerLegendEl.classList.remove(
+      "legend-collapsed"
+    );
     return;
   }
 
   if (viewerLegendCollapsed) {
-    viewerLegendEl.classList.add("legend-collapsed");
+    viewerLegendEl.classList.add(
+      "legend-collapsed"
+    );
+
     viewerLegendEl.innerHTML = `
       <button
         type="button"
         class="legend-toggle-btn legend-show-btn"
         id="showViewerLegendBtn"
-        title="${escapeHtml(t("show_map_key", "Show map key"))}"
-        aria-label="${escapeHtml(t("show_map_key", "Show map key"))}"
+        title="${escapeHtml(
+          t("show_map_key", "Show map key")
+        )}"
+        aria-label="${escapeHtml(
+          t("show_map_key", "Show map key")
+        )}"
       >
-        ${escapeHtml(t("map_key_short", "Key"))}
+        ${escapeHtml(
+          t("map_key_short", "Key")
+        )}
       </button>
     `;
 
-    const showBtn = document.getElementById("showViewerLegendBtn");
+    const showBtn =
+      document.getElementById(
+        "showViewerLegendBtn"
+      );
+
     if (showBtn) {
-      showBtn.addEventListener("click", () => {
-        viewerLegendCollapsed = false;
-        renderViewerLegend();
-      });
+      showBtn.addEventListener(
+        "click",
+        () => {
+          viewerLegendCollapsed = false;
+          renderViewerLegend();
+        }
+      );
     }
 
     return;
   }
 
-  viewerLegendEl.classList.remove("legend-collapsed");
+  viewerLegendEl.classList.remove(
+    "legend-collapsed"
+  );
+
   viewerLegendEl.innerHTML = `
     <div class="legend-header">
-      <div class="legend-title">${escapeHtml(t("map_key", "Map key"))}</div>
+      <div class="legend-title">
+        ${escapeHtml(
+          t("map_key", "Map key")
+        )}
+      </div>
+
       <button
         type="button"
         class="legend-toggle-btn legend-hide-btn"
         id="hideViewerLegendBtn"
-        title="${escapeHtml(t("hide_map_key", "Hide map key"))}"
-        aria-label="${escapeHtml(t("hide_map_key", "Hide map key"))}"
+        title="${escapeHtml(
+          t("hide_map_key", "Hide map key")
+        )}"
+        aria-label="${escapeHtml(
+          t("hide_map_key", "Hide map key")
+        )}"
       >
         ×
       </button>
     </div>
+
     ${rows.join("")}
   `;
 
-  const hideBtn = document.getElementById("hideViewerLegendBtn");
+  const hideBtn =
+    document.getElementById(
+      "hideViewerLegendBtn"
+    );
+
   if (hideBtn) {
-    hideBtn.addEventListener("click", () => {
-      viewerLegendCollapsed = true;
-      renderViewerLegend();
-    });
+    hideBtn.addEventListener(
+      "click",
+      () => {
+        viewerLegendCollapsed = true;
+        renderViewerLegend();
+      }
+    );
   }
 }
 
