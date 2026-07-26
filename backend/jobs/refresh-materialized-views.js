@@ -41,6 +41,21 @@ const VIEWER_SOURCES_CHANGED_SQL = `
   ) AS changed
 `;
 
+// RS display geometry is a ~6-minute derived MV whose staleness is
+// cosmetic and self-correcting (missing rows fall back to true
+// geometry on the map). Returns should_refresh=true only in the 02:00 UTC
+// hour and only if not already refreshed since 02:00 today.
+const RS_DISPLAY_OVERNIGHT_SQL = `
+  SELECT (
+    EXTRACT(HOUR FROM now() AT TIME ZONE 'UTC') IN (2,3)
+    AND COALESCE(
+      (SELECT refreshed_at FROM ui.app_cache_status
+        WHERE cache_key = 'resource_rs_display_geometry_cache'),
+      'epoch'::timestamptz
+    ) < date_trunc('day', now() AT TIME ZONE 'UTC') + interval '2 hours'
+  ) AS should_refresh
+`;
+
 // Change-check for the monuments family (grid base reads public.CAAL_Monuments).
 const MONUMENTS_CHANGED_SQL = `
   SELECT GREATEST(
@@ -99,6 +114,11 @@ const MATERIALIZED_VIEWS = [
     name: "ui.mv_resource_viewer_base",
     cacheKey: "resource_viewer_base_cache",
     changeCheck: VIEWER_SOURCES_CHANGED_SQL
+  },
+  {
+    name: "ui.mv_resource_rs_display_geometry",
+    cacheKey: "resource_rs_display_geometry_cache",
+    changeCheck: RS_DISPLAY_OVERNIGHT_SQL
   },
   { name: "ui.mv_resource_viewer_rs3_poly_map",     cacheKey: "resource_viewer_rs3_poly_map_cache",     dependsOn: "ui.mv_resource_viewer_base" },
   { name: "ui.mv_resource_viewer_rs3_line_map",     cacheKey: "resource_viewer_rs3_line_map_cache",     dependsOn: "ui.mv_resource_viewer_base" },
