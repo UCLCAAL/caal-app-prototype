@@ -1487,6 +1487,145 @@ function appendBboxFilter({
   };
 }
 
+function parseSpatialPolygonParam(value) {
+  if (!value) return null;
+
+  let geometry;
+
+  try {
+    geometry = JSON.parse(String(value));
+  } catch {
+    return null;
+  }
+
+  if (
+    !geometry ||
+    geometry.type !== "Polygon" ||
+    !Array.isArray(geometry.coordinates) ||
+    !geometry.coordinates.length
+  ) {
+    return null;
+  }
+
+  let vertexCount = 0;
+  const normalisedRings = [];
+
+  for (const ring of geometry.coordinates) {
+    if (!Array.isArray(ring) || ring.length < 3) {
+      return null;
+    }
+
+    const normalisedRing = [];
+
+    for (const coordinate of ring) {
+      if (!Array.isArray(coordinate) || coordinate.length < 2) {
+        return null;
+      }
+
+      const lng = Number(coordinate[0]);
+      const lat = Number(coordinate[1]);
+
+      if (
+        !Number.isFinite(lng) ||
+        !Number.isFinite(lat) ||
+        lng < -180 ||
+        lng > 180 ||
+        lat < -90 ||
+        lat > 90
+      ) {
+        return null;
+      }
+
+      normalisedRing.push([
+        Number(lng.toFixed(6)),
+        Number(lat.toFixed(6))
+      ]);
+
+      vertexCount += 1;
+      if (vertexCount > 200) return null;
+    }
+
+    const first = normalisedRing[0];
+    const last = normalisedRing[normalisedRing.length - 1];
+
+    if (first[0] !== last[0] || first[1] !== last[1]) {
+      normalisedRing.push([...first]);
+      vertexCount += 1;
+
+      if (vertexCount > 200) return null;
+    }
+
+    if (normalisedRing.length < 4) {
+      return null;
+    }
+
+    normalisedRings.push(normalisedRing);
+  }
+
+  return {
+    type: "Polygon",
+    coordinates: normalisedRings
+  };
+}
+
+function appendSpatialPolygonFilter({
+  sql,
+  values,
+  tableAlias = "",
+  polygonParam
+}) {
+  if (!polygonParam) {
+    return {
+      sql,
+      values: [...values]
+    };
+  }
+
+  const polygon = parseSpatialPolygonParam(polygonParam);
+
+  if (!polygon) {
+    return {
+      sql: sql ? `${sql} AND false` : "WHERE false",
+      values: [...values]
+    };
+  }
+
+  const p = tableAlias ? `${tableAlias}.` : "";
+  const nextIndex = values.length + 1;
+
+  const polygonClause = `
+    ${p}"Longitude" IS NOT NULL
+    AND ${p}"Latitude" IS NOT NULL
+    AND ST_Covers(
+      ST_MakeValid(
+        ST_SetSRID(
+          ST_GeomFromGeoJSON($${nextIndex}),
+          4326
+        )
+      ),
+      ST_SetSRID(
+        ST_MakePoint(
+          ${p}"Longitude",
+          ${p}"Latitude"
+        ),
+        4326
+      )
+    )
+  `;
+
+  const nextValues = [
+    ...values,
+    JSON.stringify(polygon)
+  ];
+
+  return {
+    sql: sql
+      ? `${sql} AND ${polygonClause}`
+      : `WHERE ${polygonClause}`,
+    values: nextValues
+  };
+}
+
 async function applyCulturalPeriodDatesToPayload(payload) {
   const periodValues = [
     payload["Cultural Period1"],
@@ -2404,22 +2543,53 @@ router.get("/monuments/map-national-clusters", async (req, res) => {
   );
   nextIndex += 4;
 
-  const filterBbox = parseBboxParam(req.query.filterBbox);
+  const spatialPolygon = parseSpatialPolygonParam(
+    req.query.spatialPolygon
+  );
 
-  if (filterBbox) {
+  if (req.query.spatialPolygon && !spatialPolygon) {
+    extraClauses.push("false");
+  } else if (spatialPolygon) {
     extraClauses.push(`
-      m."Longitude" BETWEEN $${nextIndex} AND $${nextIndex + 1}
-      AND m."Latitude" BETWEEN $${nextIndex + 2} AND $${nextIndex + 3}
+      m."Longitude" IS NOT NULL
+      AND m."Latitude" IS NOT NULL
+      AND ST_Covers(
+        ST_MakeValid(
+          ST_SetSRID(
+            ST_GeomFromGeoJSON($${nextIndex}),
+            4326
+          )
+        ),
+        ST_SetSRID(
+          ST_MakePoint(
+            m."Longitude",
+            m."Latitude"
+          ),
+          4326
+        )
+      )
     `);
 
-    values.push(
-      filterBbox.minLng,
-      filterBbox.maxLng,
-      filterBbox.minLat,
-      filterBbox.maxLat
-    );
+    values.push(JSON.stringify(spatialPolygon));
+    nextIndex += 1;
+  } else {
+    const filterBbox = parseBboxParam(req.query.filterBbox);
 
-    nextIndex += 4;
+    if (filterBbox) {
+      extraClauses.push(`
+        m."Longitude" BETWEEN $${nextIndex} AND $${nextIndex + 1}
+        AND m."Latitude" BETWEEN $${nextIndex + 2} AND $${nextIndex + 3}
+      `);
+
+      values.push(
+        filterBbox.minLng,
+        filterBbox.maxLng,
+        filterBbox.minLat,
+        filterBbox.maxLat
+      );
+
+      nextIndex += 4;
+    }
   }
 
   const adminBoundaryId = parseAdminBoundaryId(req.query.adminBoundaryId);
@@ -2881,7 +3051,10 @@ router.get("/monuments/map", async (req, res) => {
   const workspaceOnly =
     scopes.length === 1 &&
     scopes[0] === "workspace" &&
-    getSessionWorkspaceCode(currentSession) !== "caal";
+    getSessionWorkspaceCode(currentSession) !== "caal" &&
+    !req.query.filterBbox &&
+    !req.query.spatialPolygon &&
+    !req.query.adminBoundaryId;
 
   if (workspaceOnly) {
     try {
@@ -3050,11 +3223,20 @@ router.get("/monuments/map", async (req, res) => {
     boundaryId: adminBoundaryId
   });
 
-  const bboxFiltered = appendBboxFilter({
+  const polygonFiltered = appendSpatialPolygonFilter({
     sql: boundaryFiltered.sql,
     values: boundaryFiltered.values,
     tableAlias: "combined",
-    bboxParam: req.query.filterBbox
+    polygonParam: req.query.spatialPolygon
+  });
+
+  const bboxFiltered = appendBboxFilter({
+    sql: polygonFiltered.sql,
+    values: polygonFiltered.values,
+    tableAlias: "combined",
+    bboxParam: req.query.spatialPolygon
+      ? null
+      : req.query.filterBbox
   });
 
   combinedWhere = bboxFiltered.sql;
@@ -3214,7 +3396,10 @@ router.get("/monuments", async (req, res) => {
   const workspaceOnly =
     scopes.length === 1 &&
     scopes[0] === "workspace" &&
-    getSessionWorkspaceCode(currentSession) !== "caal";
+    getSessionWorkspaceCode(currentSession) !== "caal" &&
+    !req.query.filterBbox &&
+    !req.query.spatialPolygon &&
+    !req.query.adminBoundaryId;
 
   if (workspaceOnly) {
     try {
@@ -3363,11 +3548,20 @@ router.get("/monuments", async (req, res) => {
       boundaryId: adminBoundaryId
     });
 
-    const bboxFiltered = appendBboxFilter({
+    const polygonFiltered = appendSpatialPolygonFilter({
       sql: boundaryFiltered.sql,
       values: boundaryFiltered.values,
       tableAlias: "combined",
-      bboxParam: req.query.filterBbox
+      polygonParam: req.query.spatialPolygon
+    });
+
+    const bboxFiltered = appendBboxFilter({
+      sql: polygonFiltered.sql,
+      values: polygonFiltered.values,
+      tableAlias: "combined",
+      bboxParam: req.query.spatialPolygon
+        ? null
+        : req.query.filterBbox
     });
 
     const finalWhereSql = bboxFiltered.sql;

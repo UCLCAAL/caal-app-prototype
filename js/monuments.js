@@ -54,6 +54,42 @@ const mapLabelWarning = document.getElementById("mapLabelWarning");
 const showRelatedFromMapOptionsBtn = document.getElementById("showRelatedFromMapOptionsBtn");
 
 const filterToMapViewBtn = document.getElementById("filterToMapViewBtn");
+const filterToMapViewBtnLabel = document.getElementById("filterToMapViewBtnLabel");
+
+const drawMonumentSpatialPolygonBtn = document.getElementById(
+  "drawMonumentSpatialPolygonBtn"
+);
+const drawMonumentSpatialPolygonBtnLabel = document.getElementById(
+  "drawMonumentSpatialPolygonBtnLabel"
+);
+const monumentSpatialDrawMessage = document.getElementById(
+  "monumentSpatialDrawMessage"
+);
+const monumentSpatialDrawMessageText = document.getElementById(
+  "monumentSpatialDrawMessageText"
+);
+const cancelMonumentSpatialDrawBtn = document.getElementById(
+  "cancelMonumentSpatialDrawBtn"
+);
+
+const monumentMeasurementPanel = document.getElementById(
+  "monumentMeasurementPanel"
+);
+const closeMonumentMeasurementPanelBtn = document.getElementById(
+  "closeMonumentMeasurementPanelBtn"
+);
+const monumentMeasureDistanceBtn = document.getElementById(
+  "monumentMeasureDistanceBtn"
+);
+const monumentMeasureAreaBtn = document.getElementById(
+  "monumentMeasureAreaBtn"
+);
+const monumentMeasurementInstruction = document.getElementById(
+  "monumentMeasurementInstruction"
+);
+const monumentMeasurementResult = document.getElementById(
+  "monumentMeasurementResult"
+);
 
 const relationshipMapOptions = document.getElementById("relationshipMapOptions");
 const showRelatedPointsCheckbox = document.getElementById("showRelatedPointsCheckbox");
@@ -208,6 +244,23 @@ let centralAsiaBorderStyle = "subtle";
 let centralAsiaBordersRequestSeq = 0;
 
 let activeMapViewFilterBbox = null;
+let activeMonumentSpatialPolygon = null;
+
+let monumentSpatialDraw = null;
+let monumentSpatialDrawFeatureId = null;
+let monumentSpatialDrawIsActive = false;
+let monumentSpatialDrawCoordinates = [];
+
+let monumentMeasurementControlBtn = null;
+let monumentMeasurementMode = null;
+let monumentMeasurementCoordinates = [];
+let monumentMeasurementIsActive = false;
+let monumentMeasurementEventsBound = false;
+
+const MONUMENT_MEASUREMENT_SOURCE_ID = "monument-measurement-source";
+const MONUMENT_MEASUREMENT_LINE_LAYER_ID = "monument-measurement-line";
+const MONUMENT_MEASUREMENT_FILL_LAYER_ID = "monument-measurement-fill";
+const MONUMENT_MEASUREMENT_POINT_LAYER_ID = "monument-measurement-points";
 
 let selectedAdminBoundary = null;
 let adminBoundarySummaryClickEnabled = false;
@@ -1880,9 +1933,35 @@ function getCurrentMapViewBbox() {
 function updateFilterToMapViewButton() {
   if (!filterToMapViewBtn) return;
 
-  filterToMapViewBtn.textContent = activeMapViewFilterBbox
-    ? t("update_map_view_filter", "Update map-view filter")
-    : t("filter_to_map_view", "Filter results to map view");
+  const isActive = Boolean(activeMapViewFilterBbox);
+
+  const label = isActive
+    ? t("viewer_update_map_extent", "Update extent")
+    : t("viewer_spatial_map_extent", "Map extent");
+
+  const title = isActive
+    ? t(
+        "viewer_update_map_extent_help",
+        "Update the spatial filter to the current visible map extent"
+      )
+    : t(
+        "viewer_spatial_map_extent_help",
+        "Search using the current visible map extent"
+      );
+
+  if (filterToMapViewBtnLabel) {
+    filterToMapViewBtnLabel.textContent = label;
+  } else {
+    filterToMapViewBtn.textContent = label;
+  }
+
+  filterToMapViewBtn.title = title;
+  filterToMapViewBtn.setAttribute("aria-label", title);
+  filterToMapViewBtn.setAttribute(
+    "aria-pressed",
+    isActive ? "true" : "false"
+  );
+  filterToMapViewBtn.classList.toggle("is-active", isActive);
 }
 
 async function applyMapViewFilterFromCurrentMap() {
@@ -1891,28 +1970,22 @@ async function applyMapViewFilterFromCurrentMap() {
   const bbox = getCurrentMapViewBbox();
   if (!bbox) return;
 
+  cancelMonumentSpatialPolygonDrawing({
+    clearCompletedPolygon: true
+  });
+
+  activeMonumentSpatialPolygon = null;
   activeMapViewFilterBbox = bbox;
   monumentPageOffset = 0;
 
+  updateMonumentSpatialPolygonButton();
   updateFilterToMapViewButton();
   renderActiveFilterChips();
 
-  setMonumentsLoading(true, t("updating_results", "Updating results..."));
-
-  try {
-    await loadMonumentListRecords();
-
-    setMonumentsLoading(true, t("redrawing_map", "Redrawing map..."));
-    await loadMonumentMapRecords();
-
-    syncOpenMonumentAfterBrowseReload();
-    renderActiveFilterChips();
-  } catch (error) {
-    console.error("Failed to apply map-view filter:", error);
-    alert(error.message || t("could_not_apply_map_view_filter", "Could not apply map-view filter"));
-  } finally {
-    setMonumentsLoading(false);
-  }
+  await applyMonumentFilters({
+    includeMap: true,
+    listFirst: true
+  });
 }
 
 function parseBboxString(bboxString) {
@@ -1948,6 +2021,1042 @@ function fitMapToSavedMapViewFilter() {
   );
 
   return true;
+}
+
+function monumentMapInteractionToolIsActive() {
+  return monumentSpatialDrawIsActive || monumentMeasurementIsActive;
+}
+
+function showMonumentMapToolMessage(key, fallback) {
+  const message = t(key, fallback);
+
+  if (typeof showToast === "function") {
+    showToast(message, 4200);
+    return;
+  }
+
+  console.warn(message);
+}
+
+async function applyCompletedMonumentSpatialPolygon(featureId, geometry) {
+  const polygon = normaliseMonumentSpatialPolygon(geometry);
+
+  if (!polygon) {
+    cancelMonumentSpatialPolygonDrawing({
+      clearCompletedPolygon: true
+    });
+
+    showMonumentMapToolMessage(
+      "viewer_spatial_polygon_invalid",
+      "The drawn area was not valid. Draw a simpler polygon."
+    );
+
+    return false;
+  }
+
+  monumentSpatialDrawFeatureId = featureId;
+  activeMonumentSpatialPolygon = polygon;
+  activeMapViewFilterBbox = null;
+
+  monumentSpatialDrawIsActive = false;
+  monumentSpatialDrawCoordinates = [];
+
+  monumentSpatialDraw?.setMode("monument-spatial-render");
+
+  if (map) {
+    map.getCanvas().style.cursor = "";
+  }
+
+  updateMonumentSpatialPolygonButton();
+  updateFilterToMapViewButton();
+  setMonumentSpatialDrawMessage(false);
+  renderActiveFilterChips();
+
+  monumentPageOffset = 0;
+
+  await applyMonumentFilters({
+    includeMap: true,
+    listFirst: true
+  });
+
+  return true;
+}
+
+function initialiseMonumentSpatialDraw() {
+  if (!map || monumentSpatialDraw) return;
+
+  const terraDrawLib = window.terraDraw;
+  const mapLibreAdapterLib =
+    window.terraDrawMaplibreGlAdapter ||
+    window.terraDrawMapLibreGLAdapter;
+
+  if (!terraDrawLib || !mapLibreAdapterLib) {
+    console.error("Terra Draw did not load.");
+
+    if (drawMonumentSpatialPolygonBtn) {
+      drawMonumentSpatialPolygonBtn.disabled = true;
+      drawMonumentSpatialPolygonBtn.title = t(
+        "viewer_spatial_polygon_unavailable",
+        "Polygon drawing is unavailable"
+      );
+    }
+
+    return;
+  }
+
+  const {
+    TerraDraw,
+    TerraDrawPolygonMode,
+    TerraDrawRenderMode
+  } = terraDrawLib;
+
+  const { TerraDrawMapLibreGLAdapter } = mapLibreAdapterLib;
+
+  monumentSpatialDraw = new TerraDraw({
+    adapter: new TerraDrawMapLibreGLAdapter({
+      map,
+      coordinatePrecision: 6,
+      ignoreMismatchedPointerEvents: true
+    }),
+
+    modes: [
+      new TerraDrawPolygonMode({
+        pointerEvents: {
+          rightClick: false,
+          contextMenu: false
+        },
+
+        styles: {
+          fillColor: "#FFEA00",
+          fillOpacity: 0.32,
+          outlineColor: "#111827",
+          outlineOpacity: 0.95,
+          outlineWidth: 3,
+          closingPointColor: "#FFEA00",
+          closingPointWidth: 7,
+          closingPointOutlineColor: "#111827",
+          closingPointOutlineWidth: 2
+        }
+      }),
+
+      new TerraDrawRenderMode({
+        modeName: "monument-spatial-render",
+        styles: {
+          polygonFillColor: "#FFEA00",
+          polygonFillOpacity: 0.26,
+          polygonOutlineColor: "#111827",
+          polygonOutlineWidth: 3
+        }
+      })
+    ]
+  });
+
+  monumentSpatialDraw.start();
+  monumentSpatialDraw.setMode("monument-spatial-render");
+
+  monumentSpatialDraw.on("finish", async (featureId, context) => {
+    if (
+      !monumentSpatialDrawIsActive ||
+      context?.action !== "draw" ||
+      context?.mode !== "polygon"
+    ) {
+      return;
+    }
+
+    const snapshot = monumentSpatialDraw.getSnapshot();
+    const feature = snapshot.find(
+      (item) => String(item.id) === String(featureId)
+    );
+
+    if (!feature || feature.geometry?.type !== "Polygon") {
+      cancelMonumentSpatialPolygonDrawing({
+        clearCompletedPolygon: true
+      });
+      return;
+    }
+
+    await applyCompletedMonumentSpatialPolygon(
+      featureId,
+      feature.geometry
+    );
+  });
+
+  map.on("click", (event) => {
+    if (!monumentSpatialDrawIsActive) return;
+
+    const coordinate = [
+      Number(event.lngLat.lng.toFixed(6)),
+      Number(event.lngLat.lat.toFixed(6))
+    ];
+
+    const previous =
+      monumentSpatialDrawCoordinates[
+        monumentSpatialDrawCoordinates.length - 1
+      ];
+
+    if (
+      previous &&
+      previous[0] === coordinate[0] &&
+      previous[1] === coordinate[1]
+    ) {
+      return;
+    }
+
+    monumentSpatialDrawCoordinates.push(coordinate);
+  });
+
+  map.on("contextmenu", (event) => {
+    if (!monumentSpatialDrawIsActive) return;
+
+    event.preventDefault?.();
+    event.originalEvent?.preventDefault?.();
+
+    void finishMonumentSpatialPolygonWithRightClick();
+  });
+}
+
+async function finishMonumentSpatialPolygonWithRightClick() {
+  if (!monumentSpatialDrawIsActive || !monumentSpatialDraw) {
+    return;
+  }
+
+  if (monumentSpatialDrawCoordinates.length < 3) {
+    showMonumentMapToolMessage(
+      "viewer_spatial_polygon_needs_three_points",
+      "Add at least three points before finishing the area."
+    );
+    return;
+  }
+
+  const firstCoordinate = monumentSpatialDrawCoordinates[0];
+  const ring = [
+    ...monumentSpatialDrawCoordinates.map((coordinate) => [
+      coordinate[0],
+      coordinate[1]
+    ]),
+    [firstCoordinate[0], firstCoordinate[1]]
+  ];
+
+  const geometry = normaliseMonumentSpatialPolygon({
+    type: "Polygon",
+    coordinates: [ring]
+  });
+
+  if (!geometry) {
+    showMonumentMapToolMessage(
+      "viewer_spatial_polygon_invalid",
+      "The drawn area was not valid. Draw a simpler polygon."
+    );
+    return;
+  }
+
+  monumentSpatialDrawIsActive = false;
+  monumentSpatialDraw.setMode("monument-spatial-render");
+
+  const featureId =
+    window.crypto?.randomUUID?.() ||
+    `monument-spatial-${Date.now()}-${Math.random()
+      .toString(36)
+      .slice(2)}`;
+
+  const addResult = monumentSpatialDraw.addFeatures([
+    {
+      id: featureId,
+      type: "Feature",
+      properties: {
+        mode: "monument-spatial-render"
+      },
+      geometry
+    }
+  ])?.[0];
+
+  if (!addResult?.valid) {
+    monumentSpatialDrawCoordinates = [];
+    cancelMonumentSpatialPolygonDrawing({
+      clearCompletedPolygon: true
+    });
+
+    showMonumentMapToolMessage(
+      "viewer_spatial_polygon_invalid",
+      addResult?.reason ||
+        "The drawn area was not valid. Draw a simpler polygon."
+    );
+    return;
+  }
+
+  await applyCompletedMonumentSpatialPolygon(
+    featureId,
+    geometry
+  );
+}
+
+function normaliseMonumentSpatialPolygon(geometry) {
+  if (geometry?.type !== "Polygon") return null;
+
+  const rings = geometry.coordinates;
+  if (!Array.isArray(rings) || !rings.length) return null;
+
+  let totalVertices = 0;
+  const normalisedRings = [];
+
+  for (const ring of rings) {
+    if (!Array.isArray(ring) || ring.length < 4) return null;
+
+    const normalisedRing = [];
+
+    for (const coordinate of ring) {
+      if (!Array.isArray(coordinate) || coordinate.length < 2) {
+        return null;
+      }
+
+      const lng = Number(coordinate[0]);
+      const lat = Number(coordinate[1]);
+
+      if (
+        !Number.isFinite(lng) ||
+        !Number.isFinite(lat) ||
+        lng < -180 ||
+        lng > 180 ||
+        lat < -90 ||
+        lat > 90
+      ) {
+        return null;
+      }
+
+      normalisedRing.push([
+        Number(lng.toFixed(6)),
+        Number(lat.toFixed(6))
+      ]);
+
+      totalVertices += 1;
+      if (totalVertices > 200) return null;
+    }
+
+    const first = normalisedRing[0];
+    const last = normalisedRing[normalisedRing.length - 1];
+
+    if (first[0] !== last[0] || first[1] !== last[1]) {
+      normalisedRing.push([...first]);
+      totalVertices += 1;
+    }
+
+    normalisedRings.push(normalisedRing);
+  }
+
+  return {
+    type: "Polygon",
+    coordinates: normalisedRings
+  };
+}
+
+function removeMonumentSpatialDrawFeature() {
+  if (!monumentSpatialDraw || monumentSpatialDrawFeatureId === null) {
+    monumentSpatialDrawFeatureId = null;
+    return;
+  }
+
+  try {
+    monumentSpatialDraw.removeFeatures([
+      monumentSpatialDrawFeatureId
+    ]);
+  } catch (error) {
+    console.warn("Could not remove monument spatial polygon:", error);
+  }
+
+  monumentSpatialDrawFeatureId = null;
+}
+
+function setMonumentSpatialDrawMessage(visible) {
+  if (!monumentSpatialDrawMessage) return;
+
+  monumentSpatialDrawMessage.hidden = !visible;
+
+  if (monumentSpatialDrawMessageText && visible) {
+    monumentSpatialDrawMessageText.textContent = t(
+      "viewer_spatial_draw_instruction",
+      "Click to add points. Click the first point or right-click anywhere on the map to finish."
+    );
+  }
+}
+
+function updateMonumentSpatialPolygonButton() {
+  if (!drawMonumentSpatialPolygonBtn) return;
+
+  const isApplied = Boolean(activeMonumentSpatialPolygon);
+
+  if (drawMonumentSpatialPolygonBtnLabel) {
+    drawMonumentSpatialPolygonBtnLabel.textContent = monumentSpatialDrawIsActive
+      ? t("viewer_spatial_drawing", "Drawing...")
+      : isApplied
+        ? t("viewer_spatial_redraw_area", "Redraw area")
+        : t("viewer_spatial_draw_area", "Draw area");
+  }
+
+  drawMonumentSpatialPolygonBtn.setAttribute(
+    "aria-pressed",
+    isApplied || monumentSpatialDrawIsActive ? "true" : "false"
+  );
+
+  drawMonumentSpatialPolygonBtn.classList.toggle(
+    "is-active",
+    isApplied || monumentSpatialDrawIsActive
+  );
+}
+
+function startMonumentSpatialPolygonDrawing() {
+  if (!map || !monumentSpatialDraw) return;
+
+  if (monumentMeasurementIsActive) {
+    cancelMonumentMeasurementDrawing();
+  }
+
+  removeMonumentSpatialDrawFeature();
+  activeMonumentSpatialPolygon = null;
+  activeMapViewFilterBbox = null;
+  monumentSpatialDrawCoordinates = [];
+  monumentSpatialDrawIsActive = true;
+
+  monumentSpatialDraw.setMode("polygon");
+  map.getCanvas().style.cursor = "crosshair";
+
+  updateMonumentSpatialPolygonButton();
+  updateFilterToMapViewButton();
+  setMonumentSpatialDrawMessage(true);
+  renderActiveFilterChips();
+}
+
+function cancelMonumentSpatialPolygonDrawing({
+  clearCompletedPolygon = false
+} = {}) {
+  monumentSpatialDrawIsActive = false;
+  monumentSpatialDrawCoordinates = [];
+
+  monumentSpatialDraw?.setMode("monument-spatial-render");
+
+  if (clearCompletedPolygon) {
+    removeMonumentSpatialDrawFeature();
+    activeMonumentSpatialPolygon = null;
+  }
+
+  if (map) {
+    map.getCanvas().style.cursor = "";
+  }
+
+  updateMonumentSpatialPolygonButton();
+  setMonumentSpatialDrawMessage(false);
+  renderActiveFilterChips();
+}
+
+async function clearMonumentSpatialPolygonFilter({
+  reload = true
+} = {}) {
+  cancelMonumentSpatialPolygonDrawing({
+    clearCompletedPolygon: true
+  });
+
+  monumentPageOffset = 0;
+
+  if (reload) {
+    await applyMonumentFilters({
+      includeMap: true,
+      listFirst: true
+    });
+  }
+}
+
+function toggleMonumentMeasurementPanel() {
+  if (!monumentMeasurementPanel) return;
+
+  const willOpen = monumentMeasurementPanel.hidden;
+  monumentMeasurementPanel.hidden = !willOpen;
+
+  monumentMeasurementControlBtn?.classList.toggle(
+    "is-active",
+    willOpen
+  );
+
+  monumentMeasurementControlBtn?.setAttribute(
+    "aria-expanded",
+    willOpen ? "true" : "false"
+  );
+}
+
+function closeMonumentMeasurementPanel() {
+  if (monumentMeasurementPanel) {
+    monumentMeasurementPanel.hidden = true;
+  }
+
+  monumentMeasurementControlBtn?.classList.remove("is-active");
+  monumentMeasurementControlBtn?.setAttribute(
+    "aria-expanded",
+    "false"
+  );
+}
+
+function addMonumentMeasurementControl() {
+  if (!map) return;
+
+  class MonumentMeasurementControl {
+    onAdd(mapInstance) {
+      this._map = mapInstance;
+
+      const container = document.createElement("div");
+      container.className =
+        "maplibregl-ctrl map-custom-control viewer-measurement-map-control";
+
+      const button = document.createElement("button");
+      const label = t("measurement_tools", "Measurement tools");
+
+      button.type = "button";
+      button.id = "monumentMeasurementControlBtn";
+      button.className =
+        "map-icon-toggle viewer-measurement-map-toggle";
+      button.title = label;
+      button.setAttribute("aria-label", label);
+      button.setAttribute("aria-expanded", "false");
+      button.innerHTML = svgViewerMeasurementIcon();
+
+      button.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        toggleMonumentMeasurementPanel();
+      });
+
+      container.appendChild(button);
+      monumentMeasurementControlBtn = button;
+      this._container = container;
+
+      return container;
+    }
+
+    onRemove() {
+      this._container?.remove();
+      monumentMeasurementControlBtn = null;
+      this._map = null;
+    }
+  }
+
+  map.addControl(
+    new MonumentMeasurementControl(),
+    "top-right"
+  );
+}
+
+function monumentDegreesToRadians(value) {
+  return Number(value) * Math.PI / 180;
+}
+
+function monumentDistanceMetres(a, b) {
+  if (!Array.isArray(a) || !Array.isArray(b)) return 0;
+
+  const earthRadiusMetres = 6371008.8;
+  const lon1 = monumentDegreesToRadians(a[0]);
+  const lat1 = monumentDegreesToRadians(a[1]);
+  const lon2 = monumentDegreesToRadians(b[0]);
+  const lat2 = monumentDegreesToRadians(b[1]);
+  const deltaLat = lat2 - lat1;
+  const deltaLon = lon2 - lon1;
+
+  const haversine =
+    Math.sin(deltaLat / 2) ** 2 +
+    Math.cos(lat1) *
+      Math.cos(lat2) *
+      Math.sin(deltaLon / 2) ** 2;
+
+  return 2 * earthRadiusMetres * Math.atan2(
+    Math.sqrt(haversine),
+    Math.sqrt(1 - haversine)
+  );
+}
+
+function monumentMeasurementTotalDistanceMetres(coordinates = []) {
+  let total = 0;
+
+  for (let index = 1; index < coordinates.length; index += 1) {
+    total += monumentDistanceMetres(
+      coordinates[index - 1],
+      coordinates[index]
+    );
+  }
+
+  return total;
+}
+
+function monumentPolygonAreaSquareMetres(coordinates = []) {
+  if (!Array.isArray(coordinates) || coordinates.length < 3) {
+    return 0;
+  }
+
+  const earthRadiusMetres = 6371008.8;
+  let total = 0;
+
+  for (let index = 0; index < coordinates.length; index += 1) {
+    const current = coordinates[index];
+    const next = coordinates[(index + 1) % coordinates.length];
+    const lon1 = monumentDegreesToRadians(current[0]);
+    const lon2 = monumentDegreesToRadians(next[0]);
+    const lat1 = monumentDegreesToRadians(current[1]);
+    const lat2 = monumentDegreesToRadians(next[1]);
+
+    total += (lon2 - lon1) * (
+      2 + Math.sin(lat1) + Math.sin(lat2)
+    );
+  }
+
+  return Math.abs(
+    total * earthRadiusMetres * earthRadiusMetres / 2
+  );
+}
+
+function monumentFormatDistance(metres) {
+  const value = Number(metres || 0);
+
+  if (value >= 1000) {
+    return `${(value / 1000).toLocaleString(undefined, {
+      maximumFractionDigits: 2
+    })} km`;
+  }
+
+  return `${value.toLocaleString(undefined, {
+    maximumFractionDigits: 1
+  })} m`;
+}
+
+function monumentFormatArea(squareMetres) {
+  const value = Number(squareMetres || 0);
+
+  if (value >= 1000000) {
+    return `${(value / 1000000).toLocaleString(undefined, {
+      maximumFractionDigits: 2
+    })} km²`;
+  }
+
+  if (value >= 10000) {
+    return `${(value / 10000).toLocaleString(undefined, {
+      maximumFractionDigits: 2
+    })} ha`;
+  }
+
+  return `${value.toLocaleString(undefined, {
+    maximumFractionDigits: 1
+  })} m²`;
+}
+
+function monumentMeasurementGeojson() {
+  const coordinates = monumentMeasurementCoordinates;
+  const features = [];
+
+  if (coordinates.length) {
+    features.push({
+      type: "Feature",
+      properties: { measurement_geometry: "points" },
+      geometry: {
+        type: "MultiPoint",
+        coordinates
+      }
+    });
+  }
+
+  if (coordinates.length >= 2) {
+    features.push({
+      type: "Feature",
+      properties: { measurement_geometry: "line" },
+      geometry: {
+        type: "LineString",
+        coordinates
+      }
+    });
+  }
+
+  if (
+    monumentMeasurementMode === "area" &&
+    coordinates.length >= 3
+  ) {
+    features.push({
+      type: "Feature",
+      properties: { measurement_geometry: "area" },
+      geometry: {
+        type: "Polygon",
+        coordinates: [[...coordinates, coordinates[0]]]
+      }
+    });
+  }
+
+  return {
+    type: "FeatureCollection",
+    features
+  };
+}
+
+function ensureMonumentMeasurementLayers() {
+  if (!map || !mapLoaded) return;
+
+  if (!map.getSource(MONUMENT_MEASUREMENT_SOURCE_ID)) {
+    map.addSource(MONUMENT_MEASUREMENT_SOURCE_ID, {
+      type: "geojson",
+      data: monumentMeasurementGeojson()
+    });
+  }
+
+  if (!map.getLayer(MONUMENT_MEASUREMENT_FILL_LAYER_ID)) {
+    map.addLayer({
+      id: MONUMENT_MEASUREMENT_FILL_LAYER_ID,
+      type: "fill",
+      source: MONUMENT_MEASUREMENT_SOURCE_ID,
+      filter: ["==", ["get", "measurement_geometry"], "area"],
+      paint: {
+        "fill-color": "#22D3EE",
+        "fill-opacity": 0.22
+      }
+    });
+  }
+
+  if (!map.getLayer(MONUMENT_MEASUREMENT_LINE_LAYER_ID)) {
+    map.addLayer({
+      id: MONUMENT_MEASUREMENT_LINE_LAYER_ID,
+      type: "line",
+      source: MONUMENT_MEASUREMENT_SOURCE_ID,
+      filter: [
+        "any",
+        ["==", ["get", "measurement_geometry"], "line"],
+        ["==", ["get", "measurement_geometry"], "area"]
+      ],
+      paint: {
+        "line-color": "#083344",
+        "line-width": 3,
+        "line-opacity": 0.95
+      }
+    });
+  }
+
+  if (!map.getLayer(MONUMENT_MEASUREMENT_POINT_LAYER_ID)) {
+    map.addLayer({
+      id: MONUMENT_MEASUREMENT_POINT_LAYER_ID,
+      type: "circle",
+      source: MONUMENT_MEASUREMENT_SOURCE_ID,
+      filter: ["==", ["get", "measurement_geometry"], "points"],
+      paint: {
+        "circle-radius": 5,
+        "circle-color": "#22D3EE",
+        "circle-stroke-color": "#083344",
+        "circle-stroke-width": 2
+      }
+    });
+  }
+}
+
+function updateMonumentMeasurementLayers() {
+  ensureMonumentMeasurementLayers();
+
+  map?.getSource(MONUMENT_MEASUREMENT_SOURCE_ID)
+    ?.setData?.(monumentMeasurementGeojson());
+
+  [
+    MONUMENT_MEASUREMENT_FILL_LAYER_ID,
+    MONUMENT_MEASUREMENT_LINE_LAYER_ID,
+    MONUMENT_MEASUREMENT_POINT_LAYER_ID
+  ].forEach((layerId) => {
+    if (map?.getLayer(layerId)) {
+      map.moveLayer(layerId);
+    }
+  });
+}
+
+function updateMonumentMeasurementResult() {
+  if (!monumentMeasurementResult || !monumentMeasurementInstruction) {
+    return;
+  }
+
+  const coordinateCount = monumentMeasurementCoordinates.length;
+  monumentMeasurementInstruction.hidden = false;
+  monumentMeasurementResult.hidden = false;
+
+  if (!monumentMeasurementMode) {
+    monumentMeasurementInstruction.textContent = t(
+      "select_measurement_type",
+      "Select a measurement type."
+    );
+
+    monumentMeasurementResult.innerHTML = `
+      <span class="viewer-measurement-placeholder">
+        ${escapeHtml(t(
+          "measurement_result_placeholder",
+          "Measurement will appear here."
+        ))}
+      </span>
+    `;
+    return;
+  }
+
+  if (monumentMeasurementMode === "distance") {
+    monumentMeasurementInstruction.textContent = monumentMeasurementIsActive
+      ? t(
+          "measure_distance_instruction",
+          "Click to add points. Right-click to finish."
+        )
+      : t(
+          "distance_measurement_complete",
+          "Distance measurement complete."
+        );
+
+    if (coordinateCount < 2) {
+      monumentMeasurementResult.innerHTML = `
+        <span class="viewer-measurement-placeholder">
+          ${escapeHtml(t(
+            "measurement_add_points",
+            "Add points on the map."
+          ))}
+        </span>
+      `;
+      return;
+    }
+
+    const distance = monumentMeasurementTotalDistanceMetres(
+      monumentMeasurementCoordinates
+    );
+
+    monumentMeasurementResult.innerHTML = `
+      <strong>${escapeHtml(monumentFormatDistance(distance))}</strong>
+      <span>${escapeHtml(t("total_distance", "Total distance"))}</span>
+      <button
+        type="button"
+        class="viewer-measurement-clear-inline"
+        data-monument-clear-measurement
+      >${escapeHtml(t("clear_measurement", "Clear"))}</button>
+    `;
+
+    monumentMeasurementResult
+      .querySelector("[data-monument-clear-measurement]")
+      ?.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        clearMonumentMeasurement();
+      });
+
+    return;
+  }
+
+  monumentMeasurementInstruction.textContent = monumentMeasurementIsActive
+    ? t(
+        "measure_area_instruction",
+        "Click to add at least three points. Click the first point or right-click to finish."
+      )
+    : t(
+        "area_measurement_complete",
+        "Area measurement complete."
+      );
+
+  if (coordinateCount < 3) {
+    monumentMeasurementResult.innerHTML = `
+      <span class="viewer-measurement-placeholder">
+        ${escapeHtml(t(
+          "measurement_add_three_points",
+          "Add at least three points."
+        ))}
+      </span>
+    `;
+    return;
+  }
+
+  const area = monumentPolygonAreaSquareMetres(
+    monumentMeasurementCoordinates
+  );
+  const perimeter = monumentMeasurementTotalDistanceMetres([
+    ...monumentMeasurementCoordinates,
+    monumentMeasurementCoordinates[0]
+  ]);
+
+  monumentMeasurementResult.innerHTML = `
+    <strong>${escapeHtml(monumentFormatArea(area))}</strong>
+    <span>
+      ${escapeHtml(t("area", "Area"))} ·
+      ${escapeHtml(t("perimeter", "Perimeter"))}:
+      ${escapeHtml(monumentFormatDistance(perimeter))}
+    </span>
+    <button
+      type="button"
+      class="viewer-measurement-clear-inline"
+      data-monument-clear-measurement
+    >${escapeHtml(t("clear_measurement", "Clear"))}</button>
+  `;
+
+  monumentMeasurementResult
+    .querySelector("[data-monument-clear-measurement]")
+    ?.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      clearMonumentMeasurement();
+    });
+}
+
+function updateMonumentMeasurementButtons() {
+  const distanceActive = monumentMeasurementMode === "distance";
+  const areaActive = monumentMeasurementMode === "area";
+
+  monumentMeasureDistanceBtn?.classList.toggle(
+    "is-active",
+    distanceActive
+  );
+  monumentMeasureDistanceBtn?.setAttribute(
+    "aria-pressed",
+    distanceActive ? "true" : "false"
+  );
+
+  monumentMeasureAreaBtn?.classList.toggle(
+    "is-active",
+    areaActive
+  );
+  monumentMeasureAreaBtn?.setAttribute(
+    "aria-pressed",
+    areaActive ? "true" : "false"
+  );
+
+  monumentMeasurementControlBtn?.classList.toggle(
+    "has-measurement",
+    monumentMeasurementCoordinates.length > 0
+  );
+}
+
+function clearMonumentMeasurement({ preserveMode = false } = {}) {
+  monumentMeasurementCoordinates = [];
+  monumentMeasurementIsActive = false;
+
+  if (!preserveMode) {
+    monumentMeasurementMode = null;
+  }
+
+  if (map) {
+    map.getCanvas().style.cursor = "";
+  }
+
+  updateMonumentMeasurementLayers();
+  updateMonumentMeasurementButtons();
+  updateMonumentMeasurementResult();
+}
+
+function cancelMonumentMeasurementDrawing() {
+  monumentMeasurementIsActive = false;
+
+  if (map) {
+    map.getCanvas().style.cursor = "";
+  }
+
+  updateMonumentMeasurementButtons();
+  updateMonumentMeasurementResult();
+}
+
+function finishMonumentMeasurement() {
+  if (!monumentMeasurementIsActive) return;
+
+  const minimumPoints = monumentMeasurementMode === "area" ? 3 : 2;
+
+  if (monumentMeasurementCoordinates.length < minimumPoints) {
+    showMonumentMapToolMessage(
+      monumentMeasurementMode === "area"
+        ? "measurement_area_needs_three_points"
+        : "measurement_distance_needs_two_points",
+      monumentMeasurementMode === "area"
+        ? "Add at least three points before finishing the area."
+        : "Add at least two points before finishing the distance."
+    );
+    return;
+  }
+
+  monumentMeasurementIsActive = false;
+
+  if (map) {
+    map.getCanvas().style.cursor = "";
+  }
+
+  updateMonumentMeasurementLayers();
+  updateMonumentMeasurementButtons();
+  updateMonumentMeasurementResult();
+}
+
+function startMonumentMeasurement(mode) {
+  if (!map || !mapLoaded || !["distance", "area"].includes(mode)) {
+    return;
+  }
+
+  if (monumentSpatialDrawIsActive) {
+    cancelMonumentSpatialPolygonDrawing({
+      clearCompletedPolygon: false
+    });
+  }
+
+  monumentMeasurementMode = mode;
+  monumentMeasurementCoordinates = [];
+  monumentMeasurementIsActive = true;
+
+  if (monumentMeasurementPanel) {
+    monumentMeasurementPanel.hidden = false;
+  }
+
+  map.getCanvas().style.cursor = "crosshair";
+
+  updateMonumentMeasurementLayers();
+  updateMonumentMeasurementButtons();
+  updateMonumentMeasurementResult();
+}
+
+function bindMonumentMeasurementMapEvents() {
+  if (!map || monumentMeasurementEventsBound) return;
+
+  monumentMeasurementEventsBound = true;
+
+  map.on("click", (event) => {
+    if (!monumentMeasurementIsActive) return;
+
+    const coordinate = [
+      Number(event.lngLat.lng.toFixed(6)),
+      Number(event.lngLat.lat.toFixed(6))
+    ];
+
+    const previous =
+      monumentMeasurementCoordinates[
+        monumentMeasurementCoordinates.length - 1
+      ];
+
+    if (
+      previous &&
+      previous[0] === coordinate[0] &&
+      previous[1] === coordinate[1]
+    ) {
+      return;
+    }
+
+    if (
+      monumentMeasurementMode === "area" &&
+      monumentMeasurementCoordinates.length >= 3
+    ) {
+      const firstPixel = map.project(
+        monumentMeasurementCoordinates[0]
+      );
+      const clickPixel = map.project(coordinate);
+
+      if (
+        Math.hypot(
+          firstPixel.x - clickPixel.x,
+          firstPixel.y - clickPixel.y
+        ) <= 12
+      ) {
+        finishMonumentMeasurement();
+        return;
+      }
+    }
+
+    monumentMeasurementCoordinates.push(coordinate);
+    updateMonumentMeasurementLayers();
+    updateMonumentMeasurementResult();
+  });
+
+  map.on("contextmenu", (event) => {
+    if (!monumentMeasurementIsActive) return;
+
+    event.preventDefault?.();
+    event.originalEvent?.preventDefault?.();
+    finishMonumentMeasurement();
+  });
 }
 
 async function fetchNationalMapClusters() {
@@ -2923,8 +4032,17 @@ function getActiveFilterChips() {
   if (activeMapViewFilterBbox) {
     chips.push({
       kind: "map_view",
-      label: t("map_view", "Map view"),
-      title: t("map_view_filter", "Map-view filter"),
+      label: t("viewer_spatial_map_extent", "Map extent"),
+      title: t("viewer_spatial_search", "Spatial search"),
+      className: "active-filter-chip-map"
+    });
+  }
+
+  if (activeMonumentSpatialPolygon) {
+    chips.push({
+      kind: "spatial_polygon",
+      label: t("viewer_spatial_drawn_area", "Drawn area"),
+      title: t("viewer_spatial_search", "Spatial search"),
       className: "active-filter-chip-map"
     });
   }
@@ -3005,6 +4123,12 @@ async function removeActiveFilterChip(chip) {
     case "map_view":
       activeMapViewFilterBbox = null;
       updateFilterToMapViewButton();
+      break;
+
+    case "spatial_polygon":
+      await clearMonumentSpatialPolygonFilter({
+        reload: false
+      });
       break;
     
     case "admin_boundary":
@@ -5399,7 +6523,12 @@ function buildMonumentQueryParams({ includePaging = true } = {}) {
     params.set("adminBoundaryId", String(selectedAdminBoundary.boundary_id));
   }
 
-  if (activeMapViewFilterBbox) {
+  if (activeMonumentSpatialPolygon) {
+    params.set(
+      "spatialPolygon",
+      JSON.stringify(activeMonumentSpatialPolygon)
+    );
+  } else if (activeMapViewFilterBbox) {
     params.set("filterBbox", activeMapViewFilterBbox);
   }
 
@@ -7329,7 +8458,10 @@ function bringMonumentOverlaysToFront() {
     "monument-pick-point-layer",
     "monument-hover-ring",
     "monument-result-focus-ring",
-    "monument-live-labels"
+    "monument-live-labels",
+    MONUMENT_MEASUREMENT_FILL_LAYER_ID,
+    MONUMENT_MEASUREMENT_LINE_LAYER_ID,
+    MONUMENT_MEASUREMENT_POINT_LAYER_ID
   ].forEach((layerId) => {
     if (map.getLayer(layerId)) {
       map.moveLayer(layerId);
@@ -7343,6 +8475,8 @@ function bindAdminBoundaryLayerEvents() {
   map.__adminBoundaryEventsBound = true;
 
   map.on("click", "central-asia-borders-fill", (event) => {
+    if (monumentMapInteractionToolIsActive()) return;
+
     const feature = event.features?.[0];
     if (!feature) return;
 
@@ -10267,6 +11401,9 @@ function resetMonumentBrowseAfterSave() {
   // Clear spatial/region filters as well, otherwise the saved record may still be hidden.
   activeMapViewFilterBbox = null;
   selectedAdminBoundary = null;
+  cancelMonumentSpatialPolygonDrawing({
+    clearCompletedPolygon: true
+  });
 
   // Return to first page so newest records are visible at the top.
   monumentPageOffset = 0;
@@ -10305,8 +11442,12 @@ async function clearMonumentFilters() {
 
   activeMapViewFilterBbox = null;
   selectedAdminBoundary = null;
+  cancelMonumentSpatialPolygonDrawing({
+    clearCompletedPolygon: true
+  });
   renderActiveFilterChips();
   updateFilterToMapViewButton();
+  updateMonumentSpatialPolygonButton();
 
   syncAllAdvancedFilterTreesFromSelects();
   renderAllFilterChips();
@@ -10409,7 +11550,11 @@ function refreshMapLibreControlTooltips() {
     ),
     "#resetMapBtn": t("reset_map", "Reset map"),
     "#downloadMapBtn": t("download_map", "Download map"),
-    "#mapOptionsBtn": t("map_options", "Map options")
+    "#mapOptionsBtn": t("map_options", "Map options"),
+    "#monumentMeasurementControlBtn": t(
+      "measurement_tools",
+      "Measurement tools"
+    )
   };
 
   Object.entries(labels).forEach(([selector, label]) => {
@@ -11036,6 +12181,8 @@ function bindMonumentLayerEvents() {
       if (!map.getLayer(clusterLayerId)) return;
 
       map.on("click", clusterLayerId, async (e) => {
+        if (monumentMapInteractionToolIsActive()) return;
+
         const activeClusterLayers = clusterLayerIds.filter((layerId) =>
           map.getLayer(layerId)
         );
@@ -11120,6 +12267,8 @@ function bindMonumentLayerEvents() {
     if (!map.getLayer(layerId)) return;
 
     map.on("click", layerId, (event) => {
+      if (monumentMapInteractionToolIsActive()) return;
+
       const feature = event.features?.[0];
       const coords = feature?.geometry?.coordinates;
 
@@ -11280,6 +12429,8 @@ function bindMonumentLayerEvents() {
   }
 
   async function handleMonumentPointClick(e) {
+    if (monumentMapInteractionToolIsActive()) return;
+
     e?.originalEvent?.preventDefault?.();
     e?.originalEvent?.stopPropagation?.();
 
@@ -14087,6 +15238,32 @@ if (filterToMapViewBtn) {
   updateFilterToMapViewButton();
 }
 
+if (drawMonumentSpatialPolygonBtn) {
+  drawMonumentSpatialPolygonBtn.addEventListener("click", () => {
+    startMonumentSpatialPolygonDrawing();
+  });
+}
+
+if (cancelMonumentSpatialDrawBtn) {
+  cancelMonumentSpatialDrawBtn.addEventListener("click", () => {
+    cancelMonumentSpatialPolygonDrawing({
+      clearCompletedPolygon: true
+    });
+  });
+}
+
+monumentMeasureDistanceBtn?.addEventListener("click", () => {
+  startMonumentMeasurement("distance");
+});
+
+monumentMeasureAreaBtn?.addEventListener("click", () => {
+  startMonumentMeasurement("area");
+});
+
+closeMonumentMeasurementPanelBtn?.addEventListener("click", () => {
+  closeMonumentMeasurementPanel();
+});
+
 if (toggleFiltersBtn && filtersPanel) {
   toggleFiltersBtn.addEventListener("click", () => {
     const isHidden = filtersPanel.hidden;
@@ -14274,6 +15451,18 @@ if (borderStyleSelect) {
 
 document.addEventListener("keydown", async (event) => {
   if (event.key === "Escape") {
+    if (monumentMeasurementIsActive) {
+      cancelMonumentMeasurementDrawing();
+      return;
+    }
+
+    if (monumentSpatialDrawIsActive) {
+      cancelMonumentSpatialPolygonDrawing({
+        clearCompletedPolygon: true
+      });
+      return;
+    }
+
     if (monumentIsAddMode) {
       monumentIsAddMode = false;
       clearPendingPickPoint();
@@ -14315,6 +15504,9 @@ document.addEventListener("app:languageChanged", async () => {
 
     applyMonumentScopeUiForSession(window.appSession);
     refreshMapLibreControlTooltips();
+    updateFilterToMapViewButton();
+    updateMonumentSpatialPolygonButton();
+    updateMonumentMeasurementResult();
     renderMonumentLegend();
 
     await loadMonumentLookups();
@@ -14764,6 +15956,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     addMapResetControl();
     addMapDownloadControl();
+    addMonumentMeasurementControl();
     addMapOptionsControl();
 
     refreshMapLibreControlTooltips();
@@ -14771,6 +15964,7 @@ document.addEventListener("DOMContentLoaded", async () => {
     addMonumentLegendControl();
 
     map.on("click", (event) => {
+      if (monumentMapInteractionToolIsActive()) return;
       if (!monumentIsAddMode) return;
 
       applyMapClickToSelectedRecord(event.lngLat);
@@ -14793,6 +15987,11 @@ document.addEventListener("DOMContentLoaded", async () => {
     map.on("load", async () => {
       mapLoaded = true;
       updateAddModeUI();
+
+      initialiseMonumentSpatialDraw();
+      ensureMonumentMeasurementLayers();
+      bindMonumentMeasurementMapEvents();
+      updateMonumentMeasurementResult();
 
       ensureCentralAsiaBordersLayer();
 
@@ -14876,6 +16075,10 @@ document.addEventListener("DOMContentLoaded", async () => {
 
         map.once("style.load", async () => {
           mapLoaded = true;
+
+          initialiseMonumentSpatialDraw();
+          ensureMonumentMeasurementLayers();
+          updateMonumentMeasurementLayers();
 
           ensureCentralAsiaBordersLayer();
           await loadCentralAsiaBorders();
