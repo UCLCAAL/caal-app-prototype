@@ -34,7 +34,40 @@ const SHELL_TRANSLATIONS = {
     login_username: "Username",
     login_password: "Password",
     login_sign_in: "Sign in",
-    signed_in_as: "Signed in as"
+    signed_in_as: "Signed in as",
+
+    viewer_spatial_search: "Spatial search",
+    viewer_spatial_draw_area: "Draw area",
+    viewer_spatial_map_extent: "Map extent",
+    viewer_update_map_extent: "Update extent",
+    viewer_spatial_drawn_area: "Drawn area",
+    viewer_spatial_drawing: "Drawing...",
+    viewer_spatial_redraw_area: "Redraw area",
+    viewer_spatial_draw_area_help: "Draw an area on the map to search within",
+    viewer_spatial_map_extent_help: "Search using the current visible map extent",
+    viewer_update_map_extent_help: "Update the spatial filter to the current visible map extent",
+    viewer_spatial_draw_instruction: "Click to add points. Click the first point or right-click anywhere on the map to finish.",
+    viewer_spatial_polygon_needs_three_points: "Add at least three points before finishing the area.",
+    viewer_spatial_polygon_invalid: "The drawn area was not valid. Draw a simpler polygon.",
+    viewer_spatial_polygon_unavailable: "Polygon drawing is unavailable",
+    measurement_tools: "Measurement tools",
+    close_measurement_tools: "Close measurement tools",
+    measure_distance: "Measure distance",
+    measure_area: "Measure area",
+    total_distance: "Total distance",
+    clear_measurement: "Clear",
+    select_measurement_type: "Select a measurement type.",
+    measurement_result_placeholder: "Measurement will appear here.",
+    measure_distance_instruction: "Click to add points. Right-click to finish.",
+    distance_measurement_complete: "Distance measurement complete.",
+    measurement_add_points: "Add points on the map.",
+    measure_area_instruction: "Click to add at least three points. Click the first point or right-click to finish.",
+    area_measurement_complete: "Area measurement complete.",
+    measurement_add_three_points: "Add at least three points.",
+    measurement_area_needs_three_points: "Add at least three points before finishing the area.",
+    measurement_distance_needs_two_points: "Add at least two points before finishing the distance.",
+    area: "Area",
+    perimeter: "Perimeter"
   },
 
   ru: {
@@ -52,7 +85,40 @@ const SHELL_TRANSLATIONS = {
     login_username: "Имя пользователя",
     login_password: "Пароль",
     login_sign_in: "Войти",
-    signed_in_as: "Вошли как"
+    signed_in_as: "Вошли как",
+
+    viewer_spatial_search: "Пространственный поиск",
+    viewer_spatial_draw_area: "Нарисовать область",
+    viewer_spatial_map_extent: "Область карты",
+    viewer_update_map_extent: "Обновить область",
+    viewer_spatial_drawn_area: "Нарисованная область",
+    viewer_spatial_drawing: "Рисование...",
+    viewer_spatial_redraw_area: "Нарисовать заново",
+    viewer_spatial_draw_area_help: "Нарисуйте область на карте для поиска внутри неё",
+    viewer_spatial_map_extent_help: "Искать в пределах текущей видимой области карты",
+    viewer_update_map_extent_help: "Обновить пространственный фильтр по текущей видимой области карты",
+    viewer_spatial_draw_instruction: "Щёлкайте по карте, чтобы добавлять точки. Для завершения щёлкните по первой точке или правой кнопкой мыши в любом месте карты.",
+    viewer_spatial_polygon_needs_three_points: "Добавьте не менее трёх точек перед завершением области.",
+    viewer_spatial_polygon_invalid: "Нарисованная область недействительна. Нарисуйте более простой полигон.",
+    viewer_spatial_polygon_unavailable: "Рисование полигона недоступно",
+    measurement_tools: "Инструменты измерения",
+    close_measurement_tools: "Закрыть инструменты измерения",
+    measure_distance: "Измерить расстояние",
+    measure_area: "Измерить площадь",
+    total_distance: "Общая длина",
+    clear_measurement: "Очистить",
+    select_measurement_type: "Выберите тип измерения.",
+    measurement_result_placeholder: "Результат измерения появится здесь.",
+    measure_distance_instruction: "Щёлкайте по карте, чтобы добавлять точки. Для завершения щёлкните правой кнопкой мыши.",
+    distance_measurement_complete: "Измерение расстояния завершено.",
+    measurement_add_points: "Добавьте точки на карте.",
+    measure_area_instruction: "Добавьте не менее трёх точек. Для завершения щёлкните по первой точке или правой кнопкой мыши.",
+    area_measurement_complete: "Измерение площади завершено.",
+    measurement_add_three_points: "Добавьте не менее трёх точек.",
+    measurement_area_needs_three_points: "Добавьте не менее трёх точек перед завершением измерения площади.",
+    measurement_distance_needs_two_points: "Добавьте не менее двух точек перед завершением измерения расстояния.",
+    area: "Площадь",
+    perimeter: "Периметр"
   },
 
   zh: {
@@ -2245,6 +2311,18 @@ function svgViewerMeasurementIcon() {
   `;
 }
 
+function iconMapImageDownload() {
+  return `
+    <svg class="menu-icon" viewBox="0 0 24 24" width="16" height="16"
+         fill="none" stroke="currentColor" stroke-width="1.8"
+         stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <rect x="3" y="4" width="18" height="12" rx="2"/>
+      <circle cx="8" cy="9" r="1.4"/>
+      <path d="M3 14l4-3 3 2 3-3 4 3"/>
+      <path d="M12 18v4m0 0l-2-2m2 2l2-2"/>
+    </svg>`;
+}
+
 function caalRecordTypeIconClass(recordType) {
   return `caal-record-type-icon caal-record-type-icon-${String(recordType || "").trim()}`;
 }
@@ -2254,6 +2332,8 @@ window.svgTargetIcon = svgTargetIcon;
 window.svgCloseIcon = svgCloseIcon;
 window.svgMapOptionsIcon = svgMapOptionsIcon;
 window.svgCopyIcon = svgCopyIcon;
+window.svgViewerMeasurementIcon = svgViewerMeasurementIcon;
+window.iconMapImageDownload = iconMapImageDownload;
 
 // --------------------------------------------------------
 // Shared language application

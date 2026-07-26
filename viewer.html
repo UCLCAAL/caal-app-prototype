@@ -396,28 +396,87 @@
           </button>
         </div>
 
-        <div class="filter-live-results-summary">
+        <div
+          class="filter-live-results-summary"
+          id="viewerResultsSummary"
+        >
           <div class="filter-live-results-text">
-            <span data-i18n="current_results">Current results:</span>
-            <strong id="filterResultsCount" data-i18n="loading_records_count">Loading...</strong>
+            <span data-i18n="current_results">
+              Current results:
+            </span>
+
+            <strong
+              id="filterResultsCount"
+              data-i18n="loading_records_count"
+            >
+              Loading...
+            </strong>
           </div>
 
-          <button
-            type="button"
-            class="icon-action-btn results-map-icon-btn"
-            id="showViewerResultsOnMapBtn"
-            title="Show current results on map"
-            aria-label="Show current results on map"
-            data-i18n-title="show_results_on_map"
-            data-i18n-aria-label="show_results_on_map"
-          >
-            <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16">
-              <path
-                d="M12 2a1 1 0 0 1 1 1v1.1a8 8 0 0 1 6.9 6.9H21a1 1 0 1 1 0 2h-1.1a8 8 0 0 1-6.9 6.9V21a1 1 0 1 1-2 0v-1.1A8 8 0 0 1 4.1 13H3a1 1 0 1 1 0-2h1.1A8 8 0 0 1 11 4.1V3a1 1 0 0 1 1-1Zm0 4a6 6 0 1 0 0 12 6 6 0 0 0 0-12Zm0 3.2a2.8 2.8 0 1 1 0 5.6 2.8 2.8 0 0 1 0-5.6Z"
-                fill="currentColor"
-              />
-            </svg>
-          </button>
+          <div class="filter-live-results-actions">
+            <button
+              type="button"
+              class="icon-action-btn results-map-icon-btn"
+              id="showViewerResultsOnMapBtn"
+              title="Show current results on map"
+              aria-label="Show current results on map"
+              data-i18n-title="show_results_on_map"
+              data-i18n-aria-label="show_results_on_map"
+            >
+              <svg
+                aria-hidden="true"
+                viewBox="0 0 24 24"
+                width="16"
+                height="16"
+              >
+                <path
+                  d="M12 2a1 1 0 0 1 1 1v1.1a8 8 0 0 1 6.9 6.9H21a1 1 0 1 1 0 2h-1.1a8 8 0 0 1-6.9 6.9V21a1 1 0 1 1-2 0v-1.1A8 8 0 0 1 4.1 13H3a1 1 0 1 1 0-2h1.1A8 8 0 0 1 11 4.1V3a1 1 0 0 1 1-1Zm0 4a6 6 0 1 0 0 12 6 6 0 0 0 0-12Zm0 3.2a2.8 2.8 0 1 1 0 5.6 2.8 2.8 0 0 1 0-5.6Z"
+                  fill="currentColor"
+                />
+              </svg>
+            </button>
+
+            <button
+              type="button"
+              class="icon-action-btn results-map-icon-btn results-download-icon-btn"
+              id="downloadViewerResultsBtn"
+              title="Download current results"
+              aria-label="Download current results"
+              aria-haspopup="dialog"
+              aria-expanded="false"
+              aria-controls="viewerResultsDownloadMenu"
+              data-i18n-title="download_results"
+              data-i18n-aria-label="download_results"
+              hidden
+            >
+              <!-- Same download icon used by the map control -->
+              <svg
+                aria-hidden="true"
+                viewBox="0 0 24 24"
+                width="18"
+                height="18"
+              >
+                <path
+                  d="M12 4a1 1 0 0 1 1 1v8.1l2.8-2.8a1 1 0 0 1 1.4 1.4l-4.5 4.5a1 1 0 0 1-1.4 0l-4.5-4.5a1 1 0 1 1 1.4-1.4L11 13.1V5a1 1 0 0 1 1-1Z"
+                  fill="currentColor"
+                />
+
+                <path
+                  d="M5 18a1 1 0 0 1 1-1h1.5a1 1 0 1 1 0 2H6v1h12v-1h-1.5a1 1 0 1 1 0-2H18a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-2Z"
+                  fill="currentColor"
+                />
+              </svg>
+            </button>
+          </div>
+
+          <div
+            id="viewerResultsDownloadMenu"
+            class="map-download-menu results-download-menu"
+            role="dialog"
+            aria-modal="false"
+            aria-label="Download results"
+            aria-hidden="true"
+          ></div>
         </div>
 
         <div class="filters-panel" id="viewerFiltersPanel" hidden>
@@ -684,6 +743,7 @@
             class="viewer-measurement-result"
             aria-live="polite"
           ></div>
+        </div>
 
 
         <div class="map-options-panel" id="mapOptionsPanel" hidden>

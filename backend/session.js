@@ -150,6 +150,7 @@ function permissionsFromAccessLevel(accessLevel, workspaceCodeRaw = "") {
         can_edit_national_caal: false,
         can_delete: false,
         can_promote: false,
+        can_export_data: false,
 
         role_label: isCaalResearcher
           ? "caal_researcher"
@@ -169,6 +170,7 @@ function permissionsFromAccessLevel(accessLevel, workspaceCodeRaw = "") {
         can_edit_national_caal: false,
         can_delete: false,
         can_promote: false,
+        can_export_data: false,
         role_label: "workspace_editor_plus_national_ref"
       };
 
@@ -182,6 +184,7 @@ function permissionsFromAccessLevel(accessLevel, workspaceCodeRaw = "") {
         can_edit_national_caal: false,
         can_delete: false,
         can_promote: false,
+        can_export_data: true,
         role_label: "workspace_editor_plus_all_caal_view"
       };
 
@@ -201,6 +204,7 @@ function permissionsFromAccessLevel(accessLevel, workspaceCodeRaw = "") {
         // global-only unless we want national admins to promote/delete
         can_delete: false,
         can_promote: isCaalAdmin,
+        can_export_data: true,
 
         role_label: isCaalAdmin
           ? "caal_admin"
@@ -219,6 +223,7 @@ function permissionsFromAccessLevel(accessLevel, workspaceCodeRaw = "") {
         can_edit_national_caal: false,
         can_delete: false,
         can_promote: false,
+        can_export_data: false,
         role_label: "unknown"
       };
   }

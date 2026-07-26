@@ -15,6 +15,8 @@ const {
   getSessionWorkspaceCode
 } = require("./workspaceStorage");
 
+
+
 const router = express.Router();
 
 // ========================================================
@@ -22,6 +24,15 @@ const router = express.Router();
 // ========================================================
 
 const VIEWER_BASE_MV = "ui.mv_resource_viewer_base";
+
+const VIEWER_RS_DISPLAY_MV =
+  "ui.mv_resource_rs_display_geometry";
+
+const VIEWER_RS_RECORD_TYPES = new Set([
+  "rs3_poly",
+  "rs3_line",
+  "rs3_group"
+]);
 
 const VIEWER_LAYER_MVS = {
   rs3_poly: "ui.mv_resource_viewer_rs3_poly_map",
@@ -214,6 +225,16 @@ function requireSession(req, res) {
   }
 
   return session;
+}
+
+function requireExportCapability(req, res, session) {
+  if (session?.permissions?.can_export_data) return true;
+  res.status(403).json({
+    ok: false,
+    error: "export_not_permitted",
+    detail: "This account can view data but not download it."
+  });
+  return false;
 }
 
 function currentAppUserIdFromSession(session) {
@@ -952,6 +973,20 @@ function mapSimplifyToleranceForZoom(zoomValue) {
   return 0;
 }
 
+function viewerRsDisplayZoomBand(zoomValue) {
+  const zoom = Number(zoomValue);
+
+  if (!Number.isFinite(zoom)) {
+    return null;
+  }
+
+  const zoomBand = Math.floor(zoom);
+
+  return zoomBand >= 7 && zoomBand <= 8
+    ? zoomBand
+    : null;
+}
+
 // ========================================================
 // RECORD BUILDERS
 // ========================================================
@@ -1078,6 +1113,15 @@ function buildMapFeature(row) {
       source_scope: row.source_scope,
       storage_scope: row.storage_scope,
       is_editable: row.is_editable === true || row.is_editable === "true",
+      display_geometry:
+        row.is_display_geometry === true ||
+        row.is_display_geometry === "true",
+
+      display_zoom_band:
+        row.display_zoom_band !== null &&
+        row.display_zoom_band !== undefined
+          ? Number(row.display_zoom_band)
+          : null,
 
       monument_type_path: monumentTypePath,
       monument_type_leaf: monumentTypePath.length
@@ -1102,7 +1146,757 @@ function emptyFeatureCollection() {
 
 // ========================================================
 // ROUTES
-// ========================================================
+// ============================================================
+// EXPORT
+const EXPORT_LIMITS = Object.freeze({
+  csv: 60000,
+  gpkg: 60000,
+  kml: 2000
+});
+
+function exportLimitFor(format) {
+  const key = String(format || "").trim().toLowerCase();
+
+  return Object.prototype.hasOwnProperty.call(
+    EXPORT_LIMITS,
+    key
+  )
+    ? EXPORT_LIMITS[key]
+    : null;
+}
+
+const EXPORT_STRUCTURED_KML_MAX_SELECTED = 1500;
+// Centroids-only roughly halves per-record node cost, so allow a
+// larger node budget when the caller has requested it.
+const EXPORT_KML_NODE_BUDGET_CENTROIDS = 8000;
+const EXPORT_KML_NODE_BUDGET = 4000;        // structured-KML sidebar budget
+
+function buildExportEstimateSql({ whereSql, scopesParam, includeRelated }) {
+  // Selection = exactly what /records counts, deduplicated on caal_id_norm.
+  // Related = one hop via mv_resource_related_search, re-checked for
+  // visibility with the same scope rules, never silently exposing a
+  // restricted endpoint (dropped edges are counted, not shown).
+  const relatedCtes = includeRelated
+    ? `,
+    edges AS (
+      SELECT
+        r.edge_id,
+        lower(btrim(r.returned_caal_id)) AS from_norm,
+        lower(btrim(r.related_caal_id))  AS to_norm,
+        r.relation_type_norm
+      FROM ui.mv_resource_related_search r
+      JOIN sel_dedup s
+        ON lower(btrim(r.returned_caal_id)) = s.caal_id_norm
+      WHERE r.related_caal_id IS NOT NULL
+    ),
+    visible_related AS (
+      SELECT DISTINCT v.caal_id_norm
+      FROM ${VIEWER_BASE_MV} v
+      JOIN (SELECT DISTINCT to_norm FROM edges) e
+        ON v.caal_id_norm = e.to_norm
+      WHERE ${sourceScopeCaseSql("$1", "v")} = ANY(${scopesParam}::text[])
+        AND v.caal_id_norm NOT IN (SELECT caal_id_norm FROM sel_dedup)
+    ),
+    export_set AS (
+      SELECT caal_id_norm FROM sel_dedup
+      UNION
+      SELECT caal_id_norm FROM visible_related
+    ),
+    edges_kept AS (
+      SELECT e.*
+      FROM edges e
+      WHERE e.to_norm IN (SELECT caal_id_norm FROM export_set)
+    )`
+    : `,
+    visible_related AS (SELECT NULL::text AS caal_id_norm WHERE false),
+    edges_kept AS (
+      SELECT NULL::bigint AS edge_id, NULL::text AS from_norm,
+             NULL::text AS to_norm, NULL::text AS relation_type_norm
+      WHERE false
+    )`;
+
+  return `
+    WITH sel_dedup AS (
+      SELECT DISTINCT v.caal_id_norm
+      FROM ${VIEWER_BASE_MV} v
+      ${whereSql}
+    )${relatedCtes}
+    SELECT
+      (SELECT COUNT(*) FROM sel_dedup)::integer            AS selected_record_count,
+      (SELECT COUNT(*) FROM visible_related)::integer      AS related_record_count,
+      (SELECT COUNT(DISTINCT edge_id) FROM edges_kept)::integer AS unique_relationship_count,
+      (SELECT COUNT(*) FROM edges_kept)::integer           AS membership_count,
+      (SELECT COUNT(DISTINCT (from_norm, relation_type_norm))
+         FROM edges_kept)::integer                         AS relation_folder_count
+  `;
+}
+
+router.get("/export/estimate", async (req, res) => {
+  const session = requireSession(req, res);
+  if (!session) return;
+  if (!requireExportCapability(req, res, session)) return;
+
+  const lang = viewerLangFromReq(req, session);
+  const includeRelated = String(req.query.includeRelated || "true") !== "false";
+  const centroidsOnly = String(req.query.centroidsOnly || "false") === "true";
+
+  const format = String(
+    req.query.format || ""
+  ).trim().toLowerCase();
+
+  const cap = exportLimitFor(format);
+
+  if (!cap) {
+    return res.status(400).json({
+      ok: false,
+      error: "invalid_export_format",
+      detail: "Choose csv, gpkg or kml."
+    });
+  }
+
+  try {
+    const filter = buildViewerWhereSql({
+      req,
+      session,
+      baseParamIndex: 1,
+      tableAlias: "v"
+    });
+
+    if (!filter.scopes.length || !filter.recordTypes.length) {
+      return res.json({
+        ok: true,
+        lang,
+        includeRelated,
+        selectedRecordCount: 0,
+        relatedRecordCount: 0,
+        totalUniqueRecordCount: 0,
+        uniqueRelationshipCount: 0,
+        selectedRelationshipMembershipCount: 0,
+        eligible: false,
+        eligibleWithoutRelated: false,
+        kmlMode: null,
+        projectedKmlNodeCount: 0,
+        limit: cap
+      });
+    }
+
+    // Visibility scopes for the related-record re-check ride as one
+    // extra parameter after everything the filter builder produced.
+    const values = filter.values.slice();
+    let scopesParam = null;
+    if (includeRelated) {
+      scopesParam = `$${values.length + 1}`;
+      values.push(filter.scopes);
+    }
+
+    const sql = buildExportEstimateSql({
+      whereSql: filter.whereSql,
+      scopesParam,
+      includeRelated
+    });
+
+    const result = await pool.query(sql, values);
+    const row = result.rows[0] || {};
+
+    const selected = Number(row.selected_record_count || 0);
+    const related = Number(row.related_record_count || 0);
+    const total = selected + related;
+    const membership = Number(row.membership_count || 0);
+    const relationFolders = Number(row.relation_folder_count || 0);
+
+    // Sidebar-node projection for structured KML:
+    // per selected record: its folder + "Primary" subfolder + placemark (3)
+    // per kept edge membership: relation entry + duplicate placemark (2)
+    // plus one node per distinct (record, relation-type) subfolder.
+    const withinCap = total > 0 && total <= cap;
+    const perRecordNodes = centroidsOnly ? 2 : 3;
+    const perEdgeNodes = centroidsOnly ? 1 : 2;
+    const projectedKmlNodeCount =
+      selected * perRecordNodes + membership * perEdgeNodes + relationFolders;
+ 
+    const nodeBudget = centroidsOnly
+      ? EXPORT_KML_NODE_BUDGET_CENTROIDS
+      : EXPORT_KML_NODE_BUDGET;
+    const kmlMode = !withinCap
+      ? null
+      : selected <= EXPORT_STRUCTURED_KML_MAX_SELECTED &&
+        projectedKmlNodeCount <= nodeBudget
+        ? "structured"
+        : "flat";
+
+    return res.json({
+      ok: true,
+      lang,
+      includeRelated,
+      selectedRecordCount: selected,
+      relatedRecordCount: related,
+      totalUniqueRecordCount: total,
+      uniqueRelationshipCount: Number(row.unique_relationship_count || 0),
+      selectedRelationshipMembershipCount: membership,
+      eligible: withinCap,
+      eligibleWithoutRelated:
+        selected > 0 && selected <= cap,
+      kmlMode,
+      projectedKmlNodeCount,
+      limit: cap
+    });
+  } catch (error) {
+    console.error("viewer export estimate failed", error);
+    return res.status(500).json({ ok: false, error: "estimate_failed" });
+  }
+});
+
+
+// EXPORT 
+// pinned to v7: v8.0.0 (July 2026) rewrote the API to classes; migrate via streamZip() helper once 8.x matures
+const archiver = require("archiver");
+
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+const { writeGeoPackage } = require("./viewerGeoPackage");
+const { buildKml } = require("./viewerKml");
+
+const EXPORT_LANG_SUFFIXES = {
+  en: "en", ru: "ru", zh: "zh", kk: "kk",
+  ky: "ky", tg: "tg", tk: "tk", uz: "uz"
+};
+const EXPORT_WKT_MAX_CHARS = 30000; // Excel cell limit is 32,767
+// Confirm this matches the key used by /cache-status for the base MV:
+const EXPORT_BASE_CACHE_KEY = "resource_viewer_base_cache";
+
+// ---------- CSV helpers ----------
+
+function csvCell(value) {
+  if (value === null || value === undefined) return "";
+  let s = String(value);
+  // Formula-injection guard: neutralise leading =, +, -, @, tab, CR
+  if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
+  if (/[",\r\n]/.test(s)) s = '"' + s.replace(/"/g, '""') + '"';
+  return s;
+}
+
+function csvFile(headerCells, rows) {
+  const lines = [headerCells.map(csvCell).join(",")];
+  for (const row of rows) lines.push(row.map(csvCell).join(","));
+  // BOM so Excel opens UTF-8 (Cyrillic/Chinese) correctly
+  return "\uFEFF" + lines.join("\r\n") + "\r\n";
+}
+
+// ---------- SQL builders ----------
+
+function exportCtesSql({ whereSql, scopesParam, includeRelated }) {
+  // Same selection semantics Stage 1 verified, kept in one place.
+  const related = includeRelated
+    ? `,
+    edges AS (
+      SELECT r.edge_id, r.relation_type, r.relation_type_norm,
+             r.relation_direction,
+             lower(btrim(r.returned_caal_id)) AS from_norm,
+             lower(btrim(r.related_caal_id))  AS to_norm
+      FROM ui.mv_resource_related_search r
+      JOIN sel_dedup s ON lower(btrim(r.returned_caal_id)) = s.caal_id_norm
+      WHERE r.related_caal_id IS NOT NULL
+    ),
+    visible_related AS (
+      SELECT DISTINCT v.caal_id_norm
+      FROM ${VIEWER_BASE_MV} v
+      JOIN (SELECT DISTINCT to_norm FROM edges) e ON v.caal_id_norm = e.to_norm
+      WHERE ${sourceScopeCaseSql("$1", "v")} = ANY(${scopesParam}::text[])
+        AND v.caal_id_norm NOT IN (SELECT caal_id_norm FROM sel_dedup)
+    ),
+    export_set AS (
+      SELECT caal_id_norm FROM sel_dedup
+      UNION
+      SELECT caal_id_norm FROM visible_related
+    ),
+    edges_kept AS (
+      SELECT e.* FROM edges e
+      WHERE e.to_norm IN (SELECT caal_id_norm FROM export_set)
+    )`
+    : `,
+    export_set AS (SELECT caal_id_norm FROM sel_dedup),
+    edges_kept AS (
+      SELECT NULL::bigint AS edge_id, NULL::text AS relation_type,
+             NULL::text AS relation_type_norm, NULL::text AS relation_direction,
+             NULL::text AS from_norm, NULL::text AS to_norm
+      WHERE false
+    )`;
+
+  return `
+    WITH sel_dedup AS (
+      SELECT DISTINCT v.caal_id_norm
+      FROM ${VIEWER_BASE_MV} v
+      ${whereSql}
+    )${related}`;
+}
+
+function exportRecordsSql(ctes, sfx) {
+  // One row per resource identity; localised value columns fall back
+  // lang -> en -> canonical/raw (matches viewer display behaviour).
+  return `${ctes}
+    , picked AS (
+      SELECT DISTINCT ON (v.caal_id_norm)
+        v.caal_id, v.caal_id_norm, v.record_type, v.dataset_label,
+        v.display_label,
+        COALESCE(v.filter_country_${sfx}, v.filter_country_en,
+                 v.filter_country_canonical, v.filter_country) AS country,
+        (SELECT string_agg(t, '; ')
+           FROM unnest(ARRAY[
+             COALESCE(v.list_monument_type1_${sfx}, v.list_monument_type1_en, v.list_monument_type1),
+             COALESCE(v.list_monument_type2_${sfx}, v.list_monument_type2_en, v.list_monument_type2),
+             COALESCE(v.list_monument_type3_${sfx}, v.list_monument_type3_en, v.list_monument_type3),
+             COALESCE(v.list_monument_type4_${sfx}, v.list_monument_type4_en, v.list_monument_type4),
+             COALESCE(v.list_monument_type5_${sfx}, v.list_monument_type5_en, v.list_monument_type5),
+             COALESCE(v.list_monument_type6_${sfx}, v.list_monument_type6_en, v.list_monument_type6)
+           ]) AS t WHERE t IS NOT NULL) AS monument_types,
+        array_to_string(v.filter_condition_levels, '; ')     AS condition_levels,
+        array_to_string(v.filter_deterioration_causes, '; ') AS deterioration_causes,
+        CASE
+          WHEN v.filter_risk_levels IS NULL THEN NULL
+          WHEN jsonb_typeof(v.filter_risk_levels) = 'array' THEN
+            (SELECT string_agg(elem, '; ')
+               FROM jsonb_array_elements_text(v.filter_risk_levels) AS t(elem))
+          WHEN jsonb_typeof(v.filter_risk_levels) = 'object' THEN
+            (SELECT string_agg(key || ': ' || value, '; ')
+               FROM jsonb_each_text(v.filter_risk_levels) AS t(key, value))
+          ELSE v.filter_risk_levels #>> '{}'
+        END                                                 AS risk_levels,
+        v.source_schema, v.source_table, v.source_row_id,
+        CASE WHEN v.centroid_4326 IS NOT NULL THEN ST_X(v.centroid_4326) END AS centroid_lon,
+        CASE WHEN v.centroid_4326 IS NOT NULL THEN ST_Y(v.centroid_4326) END AS centroid_lat,
+        wkt.txt      AS geometry_wkt,
+        wkt.truncated AS geometry_truncated,
+        CASE WHEN v.caal_id_norm IN (SELECT caal_id_norm FROM sel_dedup)
+             THEN 'selected' ELSE 'related' END AS export_role
+      FROM ${VIEWER_BASE_MV} v
+      JOIN export_set es ON es.caal_id_norm = v.caal_id_norm
+      CROSS JOIN LATERAL (
+        SELECT CASE
+                 WHEN v.geom_4326 IS NULL THEN NULL
+                 WHEN length(ST_AsText(v.geom_4326)) > ${EXPORT_WKT_MAX_CHARS} THEN NULL
+                 ELSE ST_AsText(v.geom_4326)
+               END AS txt,
+               (v.geom_4326 IS NOT NULL
+                AND length(ST_AsText(v.geom_4326)) > ${EXPORT_WKT_MAX_CHARS}) AS truncated
+        OFFSET 0
+      ) wkt
+      ORDER BY v.caal_id_norm, v.record_type
+    )
+    SELECT * FROM picked
+    ORDER BY export_role, record_type, caal_id`;
+}
+
+function exportRelationshipsSql(ctes, sfx) {
+  // One row per edge. When both perspectives were kept (both endpoints
+  // selected), the forward row wins; orientation is therefore stable.
+  return `${ctes}
+    , picked_edge AS (
+      SELECT DISTINCT ON (edge_id) *
+      FROM edges_kept
+      ORDER BY edge_id, (relation_direction = 'forward') DESC
+    )
+    SELECT
+      p.edge_id,
+      bf.caal_id       AS from_caal_id,
+      bf.display_label AS from_display_label,
+      bf.record_type   AS from_record_type,
+      COALESCE(lf.label_${sfx}, lf.label_en, p.relation_type) AS relationship,
+      bt.caal_id       AS to_caal_id,
+      bt.display_label AS to_display_label,
+      bt.record_type   AS to_record_type,
+      COALESCE(li.label_${sfx}, li.label_en)                  AS inverse_relationship,
+      CASE WHEN p.from_norm IN (SELECT caal_id_norm FROM sel_dedup)
+           THEN 'selected' ELSE 'related' END AS from_role,
+      CASE WHEN p.to_norm IN (SELECT caal_id_norm FROM sel_dedup)
+           THEN 'selected' ELSE 'related' END AS to_role
+    FROM picked_edge p
+    CROSS JOIN LATERAL (
+      SELECT caal_id, display_label, record_type FROM ${VIEWER_BASE_MV}
+      WHERE caal_id_norm = p.from_norm ORDER BY record_type LIMIT 1
+    ) bf
+    CROSS JOIN LATERAL (
+      SELECT caal_id, display_label, record_type FROM ${VIEWER_BASE_MV}
+      WHERE caal_id_norm = p.to_norm ORDER BY record_type LIMIT 1
+    ) bt
+    LEFT JOIN ui.relation_type_labels lf
+      ON lf.relation_type_norm = p.relation_type_norm
+     AND lf.relation_direction = p.relation_direction
+    LEFT JOIN ui.relation_type_labels li
+      ON li.relation_type_norm = p.relation_type_norm
+     AND li.relation_direction = CASE p.relation_direction
+                                   WHEN 'forward' THEN 'reverse'
+                                   ELSE 'forward' END
+    ORDER BY p.edge_id`;
+}
+
+function exportRecordsGpkgSql(ctes, sfx) {
+  return `${ctes}
+    , picked AS (
+      SELECT DISTINCT ON (v.caal_id_norm)
+        v.caal_id, v.caal_id_norm, v.record_type, v.dataset_label,
+        v.display_label,
+        COALESCE(v.filter_country_${sfx}, v.filter_country_en,
+                 v.filter_country_canonical, v.filter_country) AS country,
+        (SELECT string_agg(t, '; ')
+           FROM unnest(ARRAY[
+             COALESCE(v.list_monument_type1_${sfx}, v.list_monument_type1_en, v.list_monument_type1),
+             COALESCE(v.list_monument_type2_${sfx}, v.list_monument_type2_en, v.list_monument_type2),
+             COALESCE(v.list_monument_type3_${sfx}, v.list_monument_type3_en, v.list_monument_type3),
+             COALESCE(v.list_monument_type4_${sfx}, v.list_monument_type4_en, v.list_monument_type4),
+             COALESCE(v.list_monument_type5_${sfx}, v.list_monument_type5_en, v.list_monument_type5),
+             COALESCE(v.list_monument_type6_${sfx}, v.list_monument_type6_en, v.list_monument_type6)
+           ]) AS t WHERE t IS NOT NULL) AS monument_types,
+        array_to_string(v.filter_condition_levels, '; ')     AS condition_levels,
+        array_to_string(v.filter_deterioration_causes, '; ') AS deterioration_causes,
+        CASE
+          WHEN v.filter_risk_levels IS NULL THEN NULL
+          WHEN jsonb_typeof(v.filter_risk_levels) = 'array' THEN
+            (SELECT string_agg(elem, '; ')
+               FROM jsonb_array_elements_text(v.filter_risk_levels) AS t(elem))
+          WHEN jsonb_typeof(v.filter_risk_levels) = 'object' THEN
+            (SELECT string_agg(key || ': ' || value, '; ')
+               FROM jsonb_each_text(v.filter_risk_levels) AS t(key, value))
+          ELSE v.filter_risk_levels #>> '{}'
+        END                                                 AS risk_levels,
+        v.source_schema, v.source_table, v.source_row_id,
+        CASE WHEN v.centroid_4326 IS NOT NULL THEN ST_X(v.centroid_4326) END AS centroid_lon,
+        CASE WHEN v.centroid_4326 IS NOT NULL THEN ST_Y(v.centroid_4326) END AS centroid_lat,
+        ST_AsBinary(v.geom_4326)                            AS geom_wkb,
+        CASE WHEN v.geom_4326 IS NOT NULL THEN ST_XMin(v.geom_4326) END AS min_x,
+        CASE WHEN v.geom_4326 IS NOT NULL THEN ST_YMin(v.geom_4326) END AS min_y,
+        CASE WHEN v.geom_4326 IS NOT NULL THEN ST_XMax(v.geom_4326) END AS max_x,
+        CASE WHEN v.geom_4326 IS NOT NULL THEN ST_YMax(v.geom_4326) END AS max_y,
+        CASE WHEN v.caal_id_norm IN (SELECT caal_id_norm FROM sel_dedup)
+             THEN 'selected' ELSE 'related' END AS export_role
+      FROM ${VIEWER_BASE_MV} v
+      JOIN export_set es ON es.caal_id_norm = v.caal_id_norm
+      ORDER BY v.caal_id_norm, v.record_type
+    )
+    SELECT * FROM picked
+    ORDER BY export_role, record_type, caal_id`;
+}
+
+function exportRecordsKmlSql(ctes, sfx) {
+  return `${ctes}
+    , picked AS (
+      SELECT DISTINCT ON (v.caal_id_norm)
+        v.caal_id, v.caal_id_norm, v.record_type, v.dataset_label,
+        v.display_label,
+        COALESCE(v.filter_country_${sfx}, v.filter_country_en,
+                 v.filter_country_canonical, v.filter_country) AS country,
+        (SELECT string_agg(t, '; ')
+           FROM unnest(ARRAY[
+             COALESCE(v.list_monument_type1_${sfx}, v.list_monument_type1_en, v.list_monument_type1),
+             COALESCE(v.list_monument_type2_${sfx}, v.list_monument_type2_en, v.list_monument_type2),
+             COALESCE(v.list_monument_type3_${sfx}, v.list_monument_type3_en, v.list_monument_type3),
+             COALESCE(v.list_monument_type4_${sfx}, v.list_monument_type4_en, v.list_monument_type4),
+             COALESCE(v.list_monument_type5_${sfx}, v.list_monument_type5_en, v.list_monument_type5),
+             COALESCE(v.list_monument_type6_${sfx}, v.list_monument_type6_en, v.list_monument_type6)
+           ]) AS t WHERE t IS NOT NULL) AS monument_types,
+        array_to_string(v.filter_condition_levels, '; ')     AS condition_levels,
+        CASE
+          WHEN v.filter_risk_levels IS NULL THEN NULL
+          WHEN jsonb_typeof(v.filter_risk_levels) = 'object' THEN
+            (SELECT string_agg(key || ': ' || value, '; ')
+               FROM jsonb_each_text(v.filter_risk_levels) AS t(key, value))
+          WHEN jsonb_typeof(v.filter_risk_levels) = 'array' THEN
+            (SELECT string_agg(elem, '; ')
+               FROM jsonb_array_elements_text(v.filter_risk_levels) AS t(elem))
+          ELSE v.filter_risk_levels #>> '{}'
+        END                                                 AS risk_levels,
+        ST_AsGeoJSON(v.geom_4326)                           AS geom_geojson,
+        CASE WHEN v.centroid_4326 IS NOT NULL THEN ST_X(v.centroid_4326) END AS centroid_lon,
+        CASE WHEN v.centroid_4326 IS NOT NULL THEN ST_Y(v.centroid_4326) END AS centroid_lat,
+        CASE WHEN v.caal_id_norm IN (SELECT caal_id_norm FROM sel_dedup)
+             THEN 'selected' ELSE 'related' END AS export_role
+      FROM ${VIEWER_BASE_MV} v
+      JOIN export_set es ON es.caal_id_norm = v.caal_id_norm
+      ORDER BY v.caal_id_norm, v.record_type
+    )
+    SELECT * FROM picked
+    ORDER BY export_role, record_type, caal_id`;
+}
+
+// ---------- Route ----------
+
+router.get("/export", async (req, res) => {
+  const session = requireSession(req, res);
+  if (!session) return;
+  if (!requireExportCapability(req, res, session)) return;
+
+  const startedMs = Date.now();
+  const lang = viewerLangFromReq(req, session);
+  const sfx = EXPORT_LANG_SUFFIXES[lang] || "en";
+  const includeRelated = String(req.query.includeRelated || "true") !== "false";
+  const centroidsOnly = String(req.query.centroidsOnly || "false") === "true";
+  const relationshipLines = String(req.query.relationshipLines || "false") === "true";
+  const format = String(req.query.format || "csv").toLowerCase();
+
+  if (format !== "csv" && format !== "gpkg" && format !== "kml") {
+    return res.status(400).json({
+      ok: false, error: "format_not_available",
+      detail: "csv, gpkg and kml are available"
+    });
+  }
+
+  try {
+    const filter = buildViewerWhereSql({
+      req, session, baseParamIndex: 1, tableAlias: "v"
+    });
+    if (!filter.scopes.length || !filter.recordTypes.length) {
+      return res.status(400).json({ ok: false, error: "empty_selection" });
+    }
+
+    const values = filter.values.slice();
+    let scopesParam = null;
+    if (includeRelated) {
+      scopesParam = `$${values.length + 1}`;
+      values.push(filter.scopes);
+    }
+
+    // 1. Enforce the cap server-side with the verified estimate
+    const estimateSql = buildExportEstimateSql({
+      whereSql: filter.whereSql, scopesParam, includeRelated
+    });
+    const est = (await pool.query(estimateSql, values)).rows[0] || {};
+    const selected = Number(est.selected_record_count || 0);
+    const total = selected + Number(est.related_record_count || 0);
+    if (!selected) {
+      return res.status(400).json({ ok: false, error: "empty_selection" });
+    }
+    const cap = exportLimitFor(format);
+    if (total > cap) {
+      return res.status(413).json({
+        ok: false, error: "over_limit",
+        totalUniqueRecordCount: total, limit: cap,
+        detail: "Narrow the selection, or untick related records"
+      });
+    }
+
+    if (format === "gpkg") {
+      const ctes = exportCtesSql({
+        whereSql: filter.whereSql, scopesParam, includeRelated
+      });
+      const recordRows =
+        (await pool.query(exportRecordsGpkgSql(ctes, sfx), values)).rows;
+      const relationshipRows = includeRelated
+        ? (await pool.query(exportRelationshipsSql(ctes, sfx), values)).rows
+        : [];
+ 
+      let refreshedAt = null;
+      try {
+        const cache = await pool.query(
+          `SELECT COALESCE(checked_at, refreshed_at) AS at
+           FROM ui.app_cache_status WHERE cache_key = $1`,
+          [EXPORT_BASE_CACHE_KEY]
+        );
+        refreshedAt = cache.rows[0] ? cache.rows[0].at : null;
+      } catch (e) { /* non-fatal */ }
+ 
+      const infoRows = [
+        { key: "generated_at", value: new Date().toISOString() },
+        { key: "language", value: lang },
+        { key: "include_related", value: String(includeRelated) },
+        { key: "selected_record_count", value: String(selected) },
+        { key: "related_record_count",
+          value: String(Number(est.related_record_count || 0)) },
+        { key: "relationship_count", value: String(relationshipRows.length) },
+        { key: "record_limit", value: String(exportLimitFor(format)) },
+        { key: "data_refreshed_at",
+          value: refreshedAt ? new Date(refreshedAt).toISOString() : "unknown" },
+        { key: "coordinate_reference_system", value: "EPSG:4326 (WGS84 lon/lat)" },
+        { key: "geometry_note",
+          value: "Full-resolution source geometry; no simplification applied" },
+        { key: "filters", value: req.originalUrl.split("?")[1] || "" },
+        { key: "source", value: "CAAL Viewer export" }
+      ];
+ 
+      const tmpPath = path.join(
+        os.tmpdir(),
+        `caal_export_${Date.now()}_${Math.random().toString(36).slice(2)}.gpkg`
+      );
+ 
+      try {
+        writeGeoPackage({
+          filePath: tmpPath, recordRows, relationshipRows, infoRows
+        });
+      } catch (buildError) {
+        fs.rm(tmpPath, { force: true }, () => {});
+        throw buildError;
+      }
+ 
+      const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "");
+      const filename = `caal_export_${lang}_${stamp}.gpkg`;
+ 
+      console.log(
+        `[viewer export] gpkg lang=${lang} related=${includeRelated} ` +
+        `records=${recordRows.length} edges=${relationshipRows.length} ` +
+        `ms=${Date.now() - startedMs}`
+      );
+ 
+      return res.download(tmpPath, filename, downloadError => {
+        fs.rm(tmpPath, { force: true }, () => {});
+        if (downloadError) {
+          console.error("viewer export gpkg stream failed", downloadError);
+        }
+      });
+    }
+
+    if (format === "kml") {
+      const ctes = exportCtesSql({
+        whereSql: filter.whereSql, scopesParam, includeRelated
+      });
+      const recordRows =
+        (await pool.query(exportRecordsKmlSql(ctes, sfx), values)).rows;
+      const relationshipRows = includeRelated
+        ? (await pool.query(exportRelationshipsSql(ctes, sfx), values)).rows
+        : [];
+ 
+      // Recompute mode with the same rule the estimate used, honouring centroidsOnly.
+      const membership = Number(est.membership_count || 0);
+      const relationFolders = Number(est.relation_folder_count || 0);
+      const perRecordNodes = centroidsOnly ? 2 : 3;
+      const perEdgeNodes = centroidsOnly ? 1 : 2;
+      const projectedNodes =
+        selected * perRecordNodes + membership * perEdgeNodes + relationFolders;
+      const nodeBudget = centroidsOnly ? 8000 : EXPORT_KML_NODE_BUDGET;
+      const mode = (selected <= EXPORT_STRUCTURED_KML_MAX_SELECTED &&
+                    projectedNodes <= nodeBudget) ? "structured" : "flat";
+ 
+      let refreshedAt = null;
+      try {
+        const cache = await pool.query(
+          `SELECT COALESCE(checked_at, refreshed_at) AS at
+           FROM ui.app_cache_status WHERE cache_key = $1`,
+          [EXPORT_BASE_CACHE_KEY]
+        );
+        refreshedAt = cache.rows[0] ? cache.rows[0].at : null;
+      } catch (e) { /* non-fatal */ }
+ 
+      const kml = buildKml({
+        recordRows,
+        relationshipRows,
+        mode,
+        options: { centroidsOnly, relationshipLines },
+        meta: {
+          lang,
+          selected,
+          related: Number(est.related_record_count || 0),
+          refreshedAt: refreshedAt ? new Date(refreshedAt).toISOString() : null
+        }
+      });
+ 
+      const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "");
+      const filename = `caal_export_${lang}_${stamp}.kml`;
+ 
+      console.log(
+        `[viewer export] kml lang=${lang} mode=${mode} centroids=${centroidsOnly} ` +
+        `lines=${relationshipLines} records=${recordRows.length} ` +
+        `edges=${relationshipRows.length} ms=${Date.now() - startedMs}`
+      );
+ 
+      res.setHeader("Content-Type", "application/vnd.google-earth.kml+xml");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+      return res.send(kml);
+    }
+
+    // 2. Fetch rows (bounded by the cap, so in-memory is fine)
+    const ctes = exportCtesSql({
+      whereSql: filter.whereSql, scopesParam, includeRelated
+    });
+    const records = (await pool.query(exportRecordsSql(ctes, sfx), values)).rows;
+    const relationships = includeRelated
+      ? (await pool.query(exportRelationshipsSql(ctes, sfx), values)).rows
+      : [];
+
+    // 3. Data-currency stamp for export_information
+    let refreshedAt = null;
+    try {
+      const cache = await pool.query(
+        `SELECT COALESCE(checked_at, refreshed_at) AS at
+         FROM ui.app_cache_status WHERE cache_key = $1`,
+        [EXPORT_BASE_CACHE_KEY]
+      );
+      refreshedAt = cache.rows[0] ? cache.rows[0].at : null;
+    } catch (e) { /* non-fatal */ }
+
+    // 4. Compose the three CSVs
+    const recordsCsv = csvFile(
+      ["caal_id","export_role","record_type","dataset_label","display_label",
+       "country","monument_types","condition_levels","deterioration_causes",
+       "risk_levels","centroid_lon","centroid_lat","geometry_wkt",
+       "geometry_truncated","source_schema","source_table","source_row_id"],
+      records.map(r => [
+        r.caal_id, r.export_role, r.record_type, r.dataset_label,
+        r.display_label, r.country, r.monument_types, r.condition_levels,
+        r.deterioration_causes, r.risk_levels, r.centroid_lon, r.centroid_lat,
+        r.geometry_wkt, r.geometry_truncated, r.source_schema,
+        r.source_table, r.source_row_id
+      ])
+    );
+
+    const relationshipsCsv = csvFile(
+      ["edge_id","from_caal_id","from_display_label","from_record_type",
+       "from_role","relationship","to_caal_id","to_display_label",
+       "to_record_type","to_role","inverse_relationship"],
+      relationships.map(r => [
+        r.edge_id, r.from_caal_id, r.from_display_label, r.from_record_type,
+        r.from_role, r.relationship, r.to_caal_id, r.to_display_label,
+        r.to_record_type, r.to_role, r.inverse_relationship
+      ])
+    );
+
+    const infoCsv = csvFile(
+      ["key", "value"],
+      [
+        ["generated_at", new Date().toISOString()],
+        ["language", lang],
+        ["include_related", String(includeRelated)],
+        ["selected_record_count", String(selected)],
+        ["related_record_count", String(Number(est.related_record_count || 0))],
+        ["relationship_count", String(relationships.length)],
+        ["record_limit", String(exportLimitFor(format))],
+        ["data_refreshed_at", refreshedAt ? new Date(refreshedAt).toISOString() : "unknown"],
+        ["coordinate_reference_system", "EPSG:4326 (WGS84 lon/lat)"],
+        ["geometry_note",
+         `geometry_wkt omitted and geometry_truncated=true when WKT exceeds ${EXPORT_WKT_MAX_CHARS} chars; use centroid or a GIS format for full geometry`],
+        ["filters", req.originalUrl.split("?")[1] || ""],
+        ["source", "CAAL Viewer export"]
+      ]
+    );
+
+    // 5. Stream the zip
+    const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "");
+    const filename = `caal_export_${lang}_${stamp}.zip`;
+    res.setHeader("Content-Type", "application/zip");
+    res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+
+    const zip = archiver("zip", { zlib: { level: 6 } });
+    zip.on("error", err => { throw err; });
+    zip.pipe(res);
+    zip.append(recordsCsv, { name: "records.csv" });
+    if (includeRelated) zip.append(relationshipsCsv, { name: "relationships.csv" });
+    zip.append(infoCsv, { name: "export_information.csv" });
+    await zip.finalize();
+
+    console.log(
+      `[viewer export] csv lang=${lang} related=${includeRelated} ` +
+      `records=${records.length} edges=${relationships.length} ` +
+      `ms=${Date.now() - startedMs}`
+    );
+  } catch (error) {
+    console.error("viewer export failed", error);
+    if (!res.headersSent) {
+      res.status(500).json({ ok: false, error: "export_failed" });
+    } else {
+      res.end();
+    }
+  }
+});
+
+
+
 // cache status bar read endpoint
 router.get("/cache-status", async (req, res) => {
   const session = requireSession(req, res);
@@ -1673,22 +2467,38 @@ router.get("/map", async (req, res) => {
   const session = requireSession(req, res);
   if (!session) return;
 
-  const requestedLayers = requestedViewerLayerTypes(req);
-  const lang = viewerLangFromReq(req, session);
+  const requestedLayers =
+    requestedViewerLayerTypes(req);
+
+  const lang =
+    viewerLangFromReq(req, session);
+
+  const rsDisplayZoomBand =
+    viewerRsDisplayZoomBand(req.query.zoom);
 
   try {
     const layers = {};
 
     for (const recordType of requestedLayers) {
-      if (VIEWER_REFERENCE_LAYERS.has(recordType)) {
-        layers[recordType] = await loadReferenceLayer(recordType, req);
+      if (
+        VIEWER_REFERENCE_LAYERS.has(recordType)
+      ) {
+        layers[recordType] =
+          await loadReferenceLayer(
+            recordType,
+            req
+          );
+
         continue;
       }
 
-      const mvName = VIEWER_LAYER_MVS[recordType];
+      const mvName =
+        VIEWER_LAYER_MVS[recordType];
 
       if (!mvName) {
-        layers[recordType] = emptyFeatureCollection();
+        layers[recordType] =
+          emptyFeatureCollection();
+
         continue;
       }
 
@@ -1700,21 +2510,127 @@ router.get("/map", async (req, res) => {
       });
 
       if (!filter.scopes.length) {
-        layers[recordType] = emptyFeatureCollection();
+        layers[recordType] =
+          emptyFeatureCollection();
+
         continue;
       }
 
-      /*
-        Force this loop query to only its own layer.
-        Even if req.query.layers contains several types, each layer MV only contains
-        one type, but this keeps filtering explicit.
-      */
-      const forcedRecordTypeParam = filter.values.length + 1;
-      const simplifyParam = filter.values.length + 2;
+      const useRsDisplayGeometry =
+        rsDisplayZoomBand !== null &&
+        VIEWER_RS_RECORD_TYPES.has(
+          recordType
+        );
 
-      const simplifyTolerance = mapSimplifyToleranceForZoom(req.query.zoom);
+      const forcedRecordTypeParam =
+        filter.values.length + 1;
 
-      const surveyExtraSelectSql = surveyMapExtraSelectSql(recordType);
+      const surveyExtraSelectSql =
+        surveyMapExtraSelectSql(recordType);
+
+      let displayJoinSql = "";
+      let geometrySelectSql = "";
+      let queryValues = [];
+
+      if (useRsDisplayGeometry) {
+        const displayZoomBandParam =
+          filter.values.length + 2;
+
+        displayJoinSql = `
+          LEFT JOIN ${VIEWER_RS_DISPLAY_MV} d
+            ON  d.source_schema =
+                v.source_schema
+            AND d.source_table =
+                v.source_table
+            AND d.source_row_id =
+                v.source_row_id
+            AND d.record_type =
+                v.record_type
+            AND d.zoom_band =
+                $${displayZoomBandParam}::integer
+        `;
+
+        /*
+          The display MV has already been simplified,
+          buffered and repaired. Do not simplify it again.
+        */
+        geometrySelectSql = `
+          CASE
+            WHEN d.display_geom_4326
+                 IS NOT NULL
+            THEN ST_AsGeoJSON(
+              d.display_geom_4326,
+              6
+            )::json
+
+            ELSE ST_AsGeoJSON(
+              v.geom_4326,
+              6
+            )::json
+          END AS geometry,
+
+          (
+            d.display_geom_4326 IS NOT NULL
+          ) AS is_display_geometry,
+
+          d.zoom_band AS display_zoom_band
+        `;
+
+        queryValues = [
+          ...filter.values,
+          recordType,
+          rsDisplayZoomBand
+        ];
+      } else {
+        const simplifyParam =
+          filter.values.length + 2;
+
+        const simplifyTolerance =
+          mapSimplifyToleranceForZoom(
+            req.query.zoom
+          );
+
+        geometrySelectSql = `
+          CASE
+            WHEN
+              $${simplifyParam}::double precision
+                > 0
+
+              AND GeometryType(
+                v.geom_4326
+              ) IN (
+                'MULTIPOLYGON',
+                'POLYGON',
+                'MULTILINESTRING',
+                'LINESTRING'
+              )
+
+            THEN ST_AsGeoJSON(
+              ST_SimplifyPreserveTopology(
+                v.geom_4326,
+                $${simplifyParam}
+                  ::double precision
+              ),
+              6
+            )::json
+
+            ELSE ST_AsGeoJSON(
+              v.geom_4326,
+              6
+            )::json
+          END AS geometry,
+
+          false AS is_display_geometry,
+
+          NULL::integer AS display_zoom_band
+        `;
+
+        queryValues = [
+          ...filter.values,
+          recordType,
+          simplifyTolerance
+        ];
+      }
 
       const result = await pool.query(
         `
@@ -1726,45 +2642,58 @@ router.get("/map", async (req, res) => {
           v.source_row_id,
           v.caal_id,
           v.display_label,
-          ${viewerMonumentTypePathDisplaySql("b", lang)} AS monument_type_path,
+
+          ${
+            viewerMonumentTypePathDisplaySql(
+              "b",
+              lang
+            )
+          } AS monument_type_path,
 
           ${surveyExtraSelectSql},
 
-          ${sourceScopeCaseSql("$1", "v")} AS source_scope,
-          ${storageScopeCaseSql("v")} AS storage_scope,
-          ${isEditableSql("$1", "v")} AS is_editable,
-          CASE
-            WHEN $${simplifyParam}::double precision > 0
-              AND GeometryType(v.geom_4326) IN ('MULTIPOLYGON', 'POLYGON', 'MULTILINESTRING', 'LINESTRING')
-            THEN ST_AsGeoJSON(
-              ST_SimplifyPreserveTopology(
-                v.geom_4326,
-                $${simplifyParam}::double precision
-              )
-            )::json
-            ELSE ST_AsGeoJSON(v.geom_4326)::json
-          END AS geometry
+          ${
+            sourceScopeCaseSql("$1", "v")
+          } AS source_scope,
+
+          ${
+            storageScopeCaseSql("v")
+          } AS storage_scope,
+
+          ${
+            isEditableSql("$1", "v")
+          } AS is_editable,
+
+          ${geometrySelectSql}
+
         FROM ${sqlIdentFromSafeMv(mvName)} v
+
         LEFT JOIN ${VIEWER_BASE_MV} b
-          ON  b.source_schema = v.source_schema
-          AND b.source_table  = v.source_table
-          AND b.source_row_id = v.source_row_id
-          AND b.record_type   = v.record_type
+          ON  b.source_schema =
+              v.source_schema
+          AND b.source_table =
+              v.source_table
+          AND b.source_row_id =
+              v.source_row_id
+          AND b.record_type =
+              v.record_type
+
+        ${displayJoinSql}
+
         ${filter.whereSql}
-          AND v.record_type = $${forcedRecordTypeParam}
+          AND v.record_type =
+              $${forcedRecordTypeParam}
+
         ORDER BY
           v.display_label NULLS LAST,
           v.caal_id
         `,
-        [
-          ...filter.values,
-          recordType,
-          simplifyTolerance
-        ]
+        queryValues
       );
 
       layers[recordType] = {
         type: "FeatureCollection",
+
         features: result.rows
           .filter((row) => row.geometry)
           .map(buildMapFeature)
@@ -1773,14 +2702,20 @@ router.get("/map", async (req, res) => {
 
     return res.json({
       ok: true,
+      rs_display_zoom_band:
+        rsDisplayZoomBand,
       layers
     });
   } catch (error) {
-    console.error("Resource viewer map failed:", error);
+    console.error(
+      "Resource viewer map failed:",
+      error
+    );
 
     return res.status(500).json({
       ok: false,
-      error: "Failed to load viewer map layers",
+      error:
+        "Failed to load viewer map layers",
       detail: error.message
     });
   }

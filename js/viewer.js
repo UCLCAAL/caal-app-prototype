@@ -72,6 +72,15 @@ const viewerNextBtn = document.getElementById("viewerNextBtn");
 const viewerPageInfo = document.getElementById("viewerPageInfo");
 const showViewerResultsOnMapBtn = document.getElementById("showViewerResultsOnMapBtn");
 
+const viewerResultsSummary =
+  document.getElementById("viewerResultsSummary");
+
+const downloadViewerResultsBtn =
+  document.getElementById("downloadViewerResultsBtn");
+
+const viewerResultsDownloadMenu =
+  document.getElementById("viewerResultsDownloadMenu");
+
 const viewerActiveFilterStrip = document.getElementById("viewerActiveFilterStrip");
 const viewerActiveFilterChips = document.getElementById("viewerActiveFilterChips");
 
@@ -370,6 +379,8 @@ const VIEWER_LAYER_IDS = {
 
   rs3_line: {
     source: "viewer-rs3-line",
+    displayFill: "viewer-rs3-line-display-fill",
+    displayOutline: "viewer-rs3-line-display-outline",
     casing: "viewer-rs3-line-casing",
     line: "viewer-rs3-line-line"
   },
@@ -511,13 +522,13 @@ const VIEWER_GROUP_ZOOM_MODES = {
   },
 
   vernacular: {
-    clusterMaxZoom: 9,
-    geometryMinZoom: 9
+    clusterMaxZoom: 7,
+    geometryMinZoom: 7
   },
 
   remote_sensing: {
-    clusterMaxZoom: 8,
-    geometryMinZoom: 10
+    clusterMaxZoom: 7,
+    geometryMinZoom: 7
   }
 };
 
@@ -4497,6 +4508,7 @@ async function loadViewerRecords() {
   renderViewerResults();
   renderViewerActiveFilterChips();
   updateShowResultsOnMapButton();
+  updateViewerResultsExportButtonState();
 
   return viewerListRecords;
 }
@@ -8710,6 +8722,60 @@ function ensureViewerStyleLayers(recordType) {
 
   // Resource lines
   if (recordType === "rs3_line") {
+    /*
+      Zoom bands 8-10 return the display-only line corridor as a
+      MultiPolygon. Render that polygon immediately after clusters stop.
+    */
+    if (
+      ids.displayFill &&
+      !viewerMap.getLayer(ids.displayFill)
+    ) {
+      viewerMap.addLayer({
+        id: ids.displayFill,
+        type: "fill",
+        source: ids.source,
+        filter: [
+          "all",
+          VIEWER_POLYGON_GEOMETRY_FILTER,
+          ["==", ["get", "display_geometry"], true]
+        ],
+        paint: {
+          "fill-color": VIEWER_COLOURS.rs3_line,
+          "fill-opacity": 0.82
+        }
+      });
+    }
+
+    if (
+      ids.displayOutline &&
+      !viewerMap.getLayer(ids.displayOutline)
+    ) {
+      viewerMap.addLayer({
+        id: ids.displayOutline,
+        type: "line",
+        source: ids.source,
+        filter: [
+          "all",
+          VIEWER_POLYGON_GEOMETRY_FILTER,
+          ["==", ["get", "display_geometry"], true]
+        ],
+        paint: {
+          "line-color": "#ffffff",
+          "line-opacity": 0.9,
+          "line-width": [
+            "interpolate",
+            ["linear"],
+            ["zoom"],
+            8, 1.4,
+            10, 1.1
+          ]
+        }
+      });
+    }
+
+    /*
+      Zoom 10+ returns the authoritative MultiLineString geometry.
+    */
     if (
       ids.casing &&
       !viewerMap.getLayer(ids.casing)
@@ -8718,7 +8784,20 @@ function ensureViewerStyleLayers(recordType) {
         id: ids.casing,
         type: "line",
         source: ids.source,
-        filter: VIEWER_LINE_GEOMETRY_FILTER,
+
+        /*
+          The white casing remains around the true line at the first
+          detailed zoom levels, fades between zoom 11 and 12, and is
+          not rendered at zoom 12 or above.
+        */
+        maxzoom: 12,
+
+        filter: [
+          "all",
+          VIEWER_LINE_GEOMETRY_FILTER,
+          ["!=", ["get", "display_geometry"], true]
+        ],
+
         paint: {
           "line-color": "#ffffff",
 
@@ -8726,20 +8805,15 @@ function ensureViewerStyleLayers(recordType) {
             "interpolate",
             ["linear"],
             ["zoom"],
+            10, 0.88,
             11, 0.88,
-            13, 0.6,
-            15, 0.2,
-            16, 0
+            12, 0
           ],
 
-          "line-width": [
-            "interpolate",
-            ["linear"],
-            ["zoom"],
-            11, 5,
-            13, 5.5,
-            16, 6.5
-          ]
+          /*
+            Keep your current casing width here.
+          */
+          "line-width": 4
         }
       });
     }
@@ -8749,17 +8823,14 @@ function ensureViewerStyleLayers(recordType) {
         id: ids.line,
         type: "line",
         source: ids.source,
-        filter: VIEWER_LINE_GEOMETRY_FILTER,
+        filter: [
+          "all",
+          VIEWER_LINE_GEOMETRY_FILTER,
+          ["!=", ["get", "display_geometry"], true]
+        ],
         paint: {
           "line-color": VIEWER_COLOURS.rs3_line,
-          "line-width": [
-            "interpolate",
-            ["linear"],
-            ["zoom"],
-            4, 1,
-            8, 1.6,
-            12, 2.4
-          ],
+          "line-width": 2,
           "line-opacity": 0.82
         }
       });
@@ -8767,7 +8838,7 @@ function ensureViewerStyleLayers(recordType) {
 
     bindViewerLayerEvents(
       recordType,
-      [ids.casing, ids.line].filter(Boolean)
+      [ids.displayFill, ids.line].filter(Boolean)
     );
     return;
   }
@@ -8945,11 +9016,13 @@ function bringViewerLayersToFront() {
     "viewer-monument-fill",
     "viewer-rs3-poly-fill",
     "viewer-rs3-group-fill",
+    "viewer-rs3-line-display-fill",
     "viewer-vernacular-fill",
 
     // White RS geometry casings
     "viewer-rs3-poly-halo",
     "viewer-rs3-group-halo",
+    "viewer-rs3-line-display-outline",
     "viewer-rs3-line-casing",
 
     // Normal resource outlines
@@ -10790,13 +10863,43 @@ function downloadViewerMapImage() {
       const symbolX = legendX + legendPadding + symbolRadius;
       const textX = symbolX + symbolRadius + symbolGap;
 
-      ctx.beginPath();
-      ctx.arc(symbolX, y, symbolRadius, 0, Math.PI * 2);
-      ctx.fillStyle = item.color;
-      ctx.fill();
-      ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
-      ctx.lineWidth = scaled(2);
-      ctx.stroke();
+      if (item.type === "line") {
+        ctx.beginPath();
+        ctx.moveTo(symbolX - symbolRadius, y);
+        ctx.lineTo(symbolX + symbolRadius, y);
+        ctx.strokeStyle = item.color;
+        ctx.lineWidth = scaled(4);
+        ctx.stroke();
+      } else if (item.type === "fill") {
+        const symbolSize = symbolRadius * 1.7;
+
+        ctx.fillStyle = item.color;
+        ctx.globalAlpha = 0.28;
+        ctx.fillRect(
+          symbolX - symbolSize / 2,
+          y - symbolSize / 2,
+          symbolSize,
+          symbolSize
+        );
+
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = item.color;
+        ctx.lineWidth = scaled(2);
+        ctx.strokeRect(
+          symbolX - symbolSize / 2,
+          y - symbolSize / 2,
+          symbolSize,
+          symbolSize
+        );
+      } else {
+        ctx.beginPath();
+        ctx.arc(symbolX, y, symbolRadius, 0, Math.PI * 2);
+        ctx.fillStyle = item.color;
+        ctx.fill();
+        ctx.strokeStyle = "rgba(255, 255, 255, 0.95)";
+        ctx.lineWidth = scaled(2);
+        ctx.stroke();
+      }
 
       ctx.fillStyle = "#263238";
       ctx.font = `${legendTextSize}px Arial, sans-serif`;
@@ -10898,62 +11001,1346 @@ function downloadViewerMapImage() {
   link.click();
 }
 
+
+// EXPORT MENU
+//
+// Flow:
+//   Download map            (unchanged, immediate PNG)
+//   ----------------------
+//   ( ) CSV   ( ) GPKG   ( ) KML     <- pick one (radio-like)
+//   [ ] Include related records      <- all formats
+//   [ ] Relationship lines           <- KML + related only
+//   [ ] Centroids only               <- KML only
+//   <estimate line>
+//   [ Download ]                     <- enabled once eligible
+// ============================================================
+
+const VIEWER_EXPORT_FORMATS = [
+  { id: "csv",  labelKey: "export_csv",  fallback: "CSV",  enabled: true },
+  { id: "gpkg", labelKey: "export_gpkg", fallback: "GPKG", enabled: true },
+  { id: "kml",  labelKey: "export_kml",  fallback: "KML",  enabled: true }
+];
+
+const viewerExportMenuState = {
+  open: false,
+  format: null,          // "csv" | "gpkg" | "kml" | null
+  includeRelated: true,
+  relationshipLines: false,
+  centroidsOnly: false,
+  estimating: false,
+  estimate: null,
+  estimateError: false
+};
+
+// --- capability: does this user get the data-download section? 
+// Falls back to false if permissions can't be read.
+function viewerCanExportData() {
+  try {
+    const perms =
+      (window.appSession && window.appSession.permissions) ||
+      (window.viewerSession && window.viewerSession.permissions) ||
+      null;
+    return Boolean(perms && perms.can_export_data);
+  } catch (e) {
+    return false;
+  }
+}
+
+function buildViewerExportParams({
+  withFormat = true
+} = {}) {
+  const params = buildViewerQueryParams({
+    includePaging: false,
+    includeMapBbox: true
+  });
+
+  /*
+    Map export primary records must satisfy both:
+    1. the current Results layer selection; and
+    2. the current Map options Display Layers.
+
+    Context layers are excluded.
+    Related records may still come from other resource types.
+  */
+  const resultTypes = new Set(
+    getSelectedResourceTypes()
+  );
+
+  const visibleMapTypes = getVisibleMapLayerTypes()
+    .filter((type) =>
+      VIEWER_RECORD_TYPES.includes(type)
+    )
+    .filter((type) =>
+      resultTypes.has(type)
+    );
+
+  /*
+    "__none__" is intentionally invalid. It prevents the backend
+    from treating an empty recordTypes value as "all types".
+  */
+  params.set(
+    "recordTypes",
+    visibleMapTypes.length
+      ? visibleMapTypes.join(",")
+      : "__none__"
+  );
+
+  params.set(
+    "includeRelated",
+    viewerExportMenuState.includeRelated
+      ? "true"
+      : "false"
+  );
+
+  params.set(
+    "centroidsOnly",
+    viewerExportMenuState.centroidsOnly
+      ? "true"
+      : "false"
+  );
+
+  params.set(
+    "relationshipLines",
+    viewerExportMenuState.relationshipLines
+      ? "true"
+      : "false"
+  );
+
+  if (
+    withFormat &&
+    viewerExportMenuState.format
+  ) {
+    params.set(
+      "format",
+      viewerExportMenuState.format
+    );
+  }
+
+  return params;
+}
+ 
+async function refreshViewerExportEstimate(menu) {
+  viewerExportMenuState.estimating = true;
+  viewerExportMenuState.estimateError = false;
+  renderViewerExportMenu(menu);
+  try {
+    const params = buildViewerExportParams({ withFormat: true });
+    const response = await fetch(`/api/viewer/export/estimate?${params.toString()}`, {
+      method: "GET", credentials: "include"
+    });
+    if (!response.ok) throw new Error(`estimate ${response.status}`);
+    viewerExportMenuState.estimate = await response.json();
+  } catch (err) {
+    console.error("viewer export estimate failed", err);
+    viewerExportMenuState.estimate = null;
+    viewerExportMenuState.estimateError = true;
+  } finally {
+    viewerExportMenuState.estimating = false;
+    renderViewerExportMenu(menu);
+  }
+}
+ 
+function viewerExportEligible() {
+  const est = viewerExportMenuState.estimate;
+  return Boolean(
+    viewerExportMenuState.format &&
+    !viewerExportMenuState.estimating &&
+    est && est.ok && est.eligible && est.selectedRecordCount
+  );
+}
+ 
+function viewerExportEstimateLine() {
+  const st = viewerExportMenuState;
+  if (!st.format) return t("export_pick_format", "Choose a format above");
+  if (st.estimating) return t("export_estimating", "Estimating\u2026");
+  if (st.estimateError) return t("export_estimate_failed", "Could not estimate \u2014 try again");
+  const est = st.estimate;
+  if (!est || !est.ok) return "";
+  if (!est.selectedRecordCount) return t("export_empty", "No records in the current view/filters");
+  if (!est.eligible) {
+    return t("export_over_limit",
+      `Too many records (${est.totalUniqueRecordCount} of ${est.limit}). ` +
+      `Zoom in or add filters` +
+      (st.includeRelated ? `, or untick related records` : ``) +
+      (st.format === "kml" && !st.centroidsOnly ? `, or tick centroids only` : ``) + `.`);
+  }
+  const related = st.includeRelated
+    ? ` + ${est.relatedRecordCount} ${t("export_related_short", "related")}` : "";
+  const modeNote = (st.format === "kml" && est.kmlMode) ? ` \u2014 ${est.kmlMode}` : "";
+  return `${est.selectedRecordCount} ${t("export_records_short", "records")}${related}${modeNote}`;
+}
+ 
+function startViewerExportDownload() {
+  if (!viewerExportEligible()) return;
+  window.location.href = `/api/viewer/export?${buildViewerExportParams().toString()}`;
+}
+ 
+function renderViewerExportMenu(menu) {
+  if (!menu) return;
+  const st = viewerExportMenuState;
+  const formatChosen = Boolean(st.format);
+  const isKml = st.format === "kml";
+
+  const kmlArchiveWarning =
+    menu.querySelector(".export-kml-warning");
+
+  if (kmlArchiveWarning) {
+    kmlArchiveWarning.hidden = !isKml;
+  }
+ 
+  menu.querySelectorAll("[data-export-format]").forEach(btn => {
+    const id = btn.getAttribute("data-export-format");
+    btn.classList.toggle("is-selected", st.format === id);
+    btn.setAttribute("aria-pressed", String(st.format === id));
+  });
+ 
+  const setCheckbox = (sel, { checked, enabled }) => {
+    const wrap = menu.querySelector(sel);
+    if (!wrap) return;
+    const input = wrap.querySelector("input");
+    input.checked = checked;
+    input.disabled = !enabled;
+    wrap.classList.toggle("is-disabled", !enabled);
+  };
+  setCheckbox(".export-opt-related", { checked: st.includeRelated, enabled: formatChosen });
+  setCheckbox(".export-opt-lines", {
+    checked: st.relationshipLines && isKml && st.includeRelated,
+    enabled: isKml && st.includeRelated
+  });
+  setCheckbox(".export-opt-centroids", { checked: st.centroidsOnly && isKml, enabled: isKml });
+ 
+  const line = menu.querySelector(".map-download-menu-estimate");
+  if (line) line.textContent = viewerExportEstimateLine();
+ 
+  const go = menu.querySelector(".map-download-menu-go");
+  if (go) go.disabled = !viewerExportEligible();
+}
+ 
 function addMapDownloadControl() {
   if (!viewerMap) return;
-
+  const canExport = viewerCanExportData();
+ 
   class MapDownloadControl {
     onAdd(mapInstance) {
       this._map = mapInstance;
-
       const container = document.createElement("div");
       container.className = "maplibregl-ctrl map-custom-control map-download-map-control";
+ 
+      const menu = document.createElement("div");
+      menu.className = "map-download-menu";
+ 
+      // --- Download map image (always available) ---
+      const mapItem = document.createElement("button");
+      mapItem.type = "button";
+      mapItem.className = "map-download-menu-item";
+      mapItem.innerHTML =
+        `${iconMapImageDownload()}<span>${t("download_map_image", "Download map image")}</span>`;
+      mapItem.addEventListener("click", () => { close(); downloadViewerMapImage(); });
+      menu.appendChild(mapItem);
+ 
+      // --- Data-download section (only if permitted) ---
+      if (canExport) {
+        const divider = document.createElement("div");
+        divider.className = "map-download-menu-divider";
+        menu.appendChild(divider);
+ 
+        const header = document.createElement("div");
+        header.className = "map-download-menu-header";
+        header.textContent = t("export_data_header", "Download data");
+        menu.appendChild(header);
+ 
+        const formatRow = document.createElement("div");
+        formatRow.className = "export-format-row";
+        for (const format of VIEWER_EXPORT_FORMATS) {
+          const b = document.createElement("button");
+          b.type = "button";
+          b.setAttribute("data-export-format", format.id);
+          b.textContent = t(format.labelKey, format.fallback);
+          b.addEventListener("click", () => {
+            viewerExportMenuState.format = format.id;
+            viewerExportMenuState.estimate = null;
+            viewerExportMenuState.estimateError = false;
 
+            if (format.id !== "kml") {
+              viewerExportMenuState.centroidsOnly = false;
+              viewerExportMenuState.relationshipLines = false;
+            }
+
+            refreshViewerExportEstimate(menu);
+          });
+          formatRow.appendChild(b);
+        }
+        menu.appendChild(formatRow);
+
+        const kmlArchiveWarning =
+          document.createElement("div");
+
+        kmlArchiveWarning.className =
+          "export-kml-warning";
+
+        kmlArchiveWarning.hidden = true;
+
+        kmlArchiveWarning.textContent = t(
+          "export_kml_archive_warning",
+          "Archive records are not included in KML files."
+        );
+
+        menu.appendChild(kmlArchiveWarning);
+
+        const mkOpt = (cls, labelKey, fallback, onChange) => {
+          const label = document.createElement("label");
+          label.className = `export-opt ${cls}`;
+          const input = document.createElement("input");
+          input.type = "checkbox";
+          input.addEventListener("change", () => onChange(input.checked));
+          const span = document.createElement("span");
+          span.textContent = t(labelKey, fallback);
+          label.appendChild(input); label.appendChild(span);
+          return label;
+        };
+        menu.appendChild(mkOpt("export-opt-related", "export_include_related",
+          "Include related records", v => {
+            viewerExportMenuState.includeRelated = v;
+            if (!v) viewerExportMenuState.relationshipLines = false;
+            refreshViewerExportEstimate(menu);
+          }));
+        menu.appendChild(mkOpt("export-opt-lines", "export_relationship_lines",
+          "Relationship lines", v => {
+            viewerExportMenuState.relationshipLines = v;
+            renderViewerExportMenu(menu);
+          }));
+        menu.appendChild(mkOpt("export-opt-centroids", "export_centroids_only",
+          "Centroids only", v => {
+            viewerExportMenuState.centroidsOnly = v;
+            refreshViewerExportEstimate(menu);
+          }));
+ 
+        const estimateLine = document.createElement("div");
+        estimateLine.className = "map-download-menu-estimate";
+        menu.appendChild(estimateLine);
+ 
+        const go = document.createElement("button");
+        go.type = "button";
+        go.className = "map-download-menu-go";
+        go.textContent = t("export_download", "Download");
+        go.disabled = true;
+        go.addEventListener("click", () => { startViewerExportDownload(); close(); });
+        menu.appendChild(go);
+      }
+ 
+      const open = () => {
+        viewerExportMenuState.open = true;
+        menu.classList.add("is-open");
+
+        renderViewerExportMenu(menu);
+
+        if (
+          canExport &&
+          viewerExportMenuState.format
+        ) {
+          refreshViewerExportEstimate(menu);
+        }
+      };
+      const close = () => {
+        viewerExportMenuState.open = false;
+        menu.classList.remove("is-open");
+      };
+ 
       const button = createMapIconButton({
         id: "downloadMapBtn",
         title: t("download_map", "Download map"),
         className: "map-download-map-toggle",
         html: `
           <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18">
-            <path
-              d="M12 4a1 1 0 0 1 1 1v8.1l2.8-2.8a1 1 0 0 1 1.4 1.4l-4.5 4.5a1 1 0 0 1-1.4 0l-4.5-4.5a1 1 0 1 1 1.4-1.4L11 13.1V5a1 1 0 0 1 1-1Z"
-              fill="currentColor"
-            />
-            <path
-              d="M5 18a1 1 0 0 1 1-1h1.5a1 1 0 1 1 0 2H6v1h12v-1h-1.5a1 1 0 1 1 0-2H18a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-2Z"
-              fill="currentColor"
-            />
-          </svg>
-        `,
-        onClick: () => {
-          console.log("Viewer download button clicked");
-          console.log(
-            "preserveDrawingBuffer:",
-            window.viewerMap?.painter?.context?.gl?.getContextAttributes?.().preserveDrawingBuffer
-          );
-
-          downloadViewerMapImage();
-        }
+            <path d="M12 4a1 1 0 0 1 1 1v8.1l2.8-2.8a1 1 0 0 1 1.4 1.4l-4.5 4.5a1 1 0 0 1-1.4 0l-4.5-4.5a1 1 0 1 1 1.4-1.4L11 13.1V5a1 1 0 0 1 1-1Z" fill="currentColor"/>
+            <path d="M5 18a1 1 0 0 1 1-1h1.5a1 1 0 1 1 0 2H6v1h12v-1h-1.5a1 1 0 1 1 0-2H18a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-2Z" fill="currentColor"/>
+          </svg>`,
+        onClick: () => (viewerExportMenuState.open ? close() : open())
       });
-
+ 
       container.appendChild(button);
+      container.appendChild(menu);
+
       downloadMapBtn = button;
+
+      this._outsideClick = (event) => {
+        if (
+          viewerExportMenuState.open &&
+          !container.contains(event.target)
+        ) {
+          close();
+        }
+      };
+
+      this._escKey = (event) => {
+        if (event.key === "Escape") {
+          close();
+        }
+      };
+
+      document.addEventListener(
+        "click",
+        this._outsideClick,
+        true
+      );
+
+      document.addEventListener(
+        "keydown",
+        this._escKey
+      );
+
+      this._onMapMove = () => {
+        if (
+          viewerExportMenuState.open &&
+          canExport &&
+          viewerExportMenuState.format
+        ) {
+          refreshViewerExportEstimate(menu);
+        }
+      };
+
+      mapInstance.on(
+        "moveend",
+        this._onMapMove
+      );
 
       this._container = container;
       return container;
     }
-
     onRemove() {
-      if (this._container?.parentNode) {
-        this._container.parentNode.removeChild(this._container);
-      }
-
+      document.removeEventListener("click", this._outsideClick, true);
+      document.removeEventListener("keydown", this._escKey);
+      if (this._container?.parentNode) this._container.parentNode.removeChild(this._container);
+      if (this._map && this._onMapMove) this._map.off("moveend", this._onMapMove);
       downloadMapBtn = null;
       this._map = undefined;
     }
   }
-
+ 
   viewerMap.addControl(new MapDownloadControl(), "top-right");
 }
+// END OF EXPORT
+
+// ========================================================
+// RESULTS EXPORT MENU
+//
+// This export is based on the exact same query as the
+// Current results count:
+//
+// buildViewerQueryParams({
+//   includePaging: false,
+//   includeMapBbox: false
+// })
+//
+// Export layer chips may narrow that query, but cannot
+// add types excluded from the left-hand Layers selection.
+// ========================================================
+
+const viewerResultsExportMenuState = {
+  open: false,
+  format: null,
+  includeRelated: true,
+  relationshipLines: false,
+  centroidsOnly: false,
+  estimating: false,
+  estimate: null,
+  estimateError: false,
+  recordTypes: new Set()
+};
+
+let viewerResultsExportEstimateSequence = 0;
+
+function currentViewerResultsLayerTypes() {
+  return getSelectedResourceTypes()
+    .filter((type) =>
+      VIEWER_RECORD_TYPES.includes(type)
+    );
+}
+
+function resetViewerResultsExportLayerSelection() {
+  viewerResultsExportMenuState.recordTypes =
+    new Set(currentViewerResultsLayerTypes());
+}
+
+function buildViewerResultsExportParams({
+  withFormat = true
+} = {}) {
+  /*
+    This is exactly the Results query builder, without paging.
+    It retains:
+    - text and CAAL ID search
+    - left-hand Layers
+    - scopes
+    - advanced filters
+    - drawn spatial polygon
+    - explicitly activated Map extent
+
+    It does not add the live viewport.
+  */
+  const params = buildViewerQueryParams({
+    includePaging: false,
+    includeMapBbox: false
+  });
+
+  const selectedExportTypes =
+    VIEWER_RECORD_TYPES.filter((type) =>
+      viewerResultsExportMenuState.recordTypes.has(type)
+    );
+
+  /*
+    Overwrite only recordTypes. Everything else remains
+    exactly as assembled for the Current results query.
+  */
+  params.set(
+    "recordTypes",
+    selectedExportTypes.length
+      ? selectedExportTypes.join(",")
+      : "__none__"
+  );
+
+  params.set(
+    "includeRelated",
+    viewerResultsExportMenuState.includeRelated
+      ? "true"
+      : "false"
+  );
+
+  params.set(
+    "centroidsOnly",
+    viewerResultsExportMenuState.centroidsOnly
+      ? "true"
+      : "false"
+  );
+
+  params.set(
+    "relationshipLines",
+    viewerResultsExportMenuState.relationshipLines
+      ? "true"
+      : "false"
+  );
+
+  if (
+    withFormat &&
+    viewerResultsExportMenuState.format
+  ) {
+    params.set(
+      "format",
+      viewerResultsExportMenuState.format
+    );
+  }
+
+  return params;
+}
+
+function viewerResultsExportEligible() {
+  const state = viewerResultsExportMenuState;
+  const estimate = state.estimate;
+
+  return Boolean(
+    state.recordTypes.size > 0 &&
+    state.format &&
+    !state.estimating &&
+    estimate &&
+    estimate.ok &&
+    estimate.eligible &&
+    estimate.selectedRecordCount
+  );
+}
+
+function viewerResultsExportEstimateLine() {
+  const state = viewerResultsExportMenuState;
+
+  if (!state.recordTypes.size) {
+    return t(
+      "export_select_layer",
+      "Select at least one layer."
+    );
+  }
+
+  if (!state.format) {
+    return t(
+      "export_pick_format",
+      "Choose a format above."
+    );
+  }
+
+  if (state.estimating) {
+    return t(
+      "export_estimating",
+      "Estimating..."
+    );
+  }
+
+  if (state.estimateError) {
+    return t(
+      "export_estimate_failed",
+      "Could not estimate. Try again."
+    );
+  }
+
+  const estimate = state.estimate;
+
+  if (!estimate || !estimate.ok) {
+    return "";
+  }
+
+  if (!estimate.selectedRecordCount) {
+    return t(
+      "export_empty_results",
+      "No records in the selected result layers."
+    );
+  }
+
+  if (!estimate.eligible) {
+    let message =
+      `${t("export_too_many_records", "Too many records")} ` +
+      `(${formatCount(estimate.totalUniqueRecordCount)} ` +
+      `${t("of", "of")} ${formatCount(estimate.limit)}). ` +
+      `${t(
+        "export_narrow_results_or_layers",
+        "Add filters or untick result layers"
+      )}`;
+
+    if (state.includeRelated) {
+      message +=
+        `, ${t(
+          "export_or_exclude_related",
+          "or untick related records"
+        )}`;
+    }
+
+    return `${message}.`;
+  }
+
+  const relatedText =
+    state.includeRelated &&
+    Number(estimate.relatedRecordCount || 0) > 0
+      ? ` + ${formatCount(estimate.relatedRecordCount)} ` +
+        t("export_related_short", "related")
+      : "";
+
+  const modeText =
+    state.format === "kml" &&
+    estimate.kmlMode
+      ? ` (${estimate.kmlMode})`
+      : "";
+
+  return (
+    `${formatCount(estimate.selectedRecordCount)} ` +
+    `${t("export_records_short", "records")}` +
+    `${relatedText}${modeText}`
+  );
+}
+
+function renderViewerResultsExportLayerChips() {
+  const grid =
+    viewerResultsDownloadMenu
+      ?.querySelector("[data-results-export-layers]");
+
+  if (!grid) return;
+
+  const activeResultTypes =
+    new Set(currentViewerResultsLayerTypes());
+
+  /*
+    A changed search can remove a type while the menu is open.
+    Retain only types still belonging to the Results query.
+  */
+  viewerResultsExportMenuState.recordTypes =
+    new Set(
+      Array.from(
+        viewerResultsExportMenuState.recordTypes
+      ).filter((type) =>
+        activeResultTypes.has(type)
+      )
+    );
+
+  grid.innerHTML = VIEWER_RECORD_TYPES
+    .map((recordType) => {
+      const available =
+        activeResultTypes.has(recordType);
+
+      const checked =
+        available &&
+        viewerResultsExportMenuState
+          .recordTypes
+          .has(recordType);
+
+      const count = Number(
+        viewerRecordTypeCounts?.[recordType] || 0
+      );
+
+      const title = available
+        ? `${viewerLayerLabel(recordType)}: ${formatCount(count)}`
+        : t(
+            "export_layer_not_in_results",
+            "This layer is not included in the current results."
+          );
+
+      return `
+        <label
+          class="
+            viewer-layer-check
+            export-layer-chip
+            ${available ? "" : "is-disabled"}
+          "
+          title="${escapeHtml(title)}"
+        >
+          <input
+            type="checkbox"
+            data-results-export-layer="${escapeHtml(recordType)}"
+            ${checked ? "checked" : ""}
+            ${available ? "" : "disabled"}
+          >
+
+          <span
+            class="${viewerLayerIconClass(recordType)}"
+            aria-hidden="true"
+          >
+            ${viewerLayerIcon(recordType)}
+          </span>
+
+          <span class="export-layer-chip-label">
+            ${escapeHtml(viewerLayerShortLabel(recordType))}
+          </span>
+
+          <span class="export-layer-chip-count">
+            ${formatCount(count)}
+          </span>
+        </label>
+      `;
+    })
+    .join("");
+
+  grid
+    .querySelectorAll(
+      "[data-results-export-layer]"
+    )
+    .forEach((input) => {
+      input.addEventListener("change", () => {
+        const recordType =
+          input.dataset.resultsExportLayer;
+
+        if (!recordType) return;
+
+        if (input.checked) {
+          viewerResultsExportMenuState
+            .recordTypes
+            .add(recordType);
+        } else {
+          viewerResultsExportMenuState
+            .recordTypes
+            .delete(recordType);
+        }
+
+        viewerResultsExportMenuState.estimate = null;
+        viewerResultsExportMenuState.estimateError = false;
+
+        if (
+          viewerResultsExportMenuState.format &&
+          viewerResultsExportMenuState.recordTypes.size
+        ) {
+          refreshViewerResultsExportEstimate();
+        } else {
+          renderViewerResultsExportMenu();
+        }
+      });
+    });
+}
+
+function renderViewerResultsExportMenu() {
+  if (!viewerResultsDownloadMenu) return;
+
+  const state = viewerResultsExportMenuState;
+  const formatChosen = Boolean(state.format);
+  const isKml = state.format === "kml";
+
+  const kmlArchiveWarning =
+    viewerResultsDownloadMenu.querySelector(
+      ".export-kml-warning"
+    );
+
+  if (kmlArchiveWarning) {
+    kmlArchiveWarning.hidden = !isKml;
+  }
+
+  renderViewerResultsExportLayerChips();
+
+  viewerResultsDownloadMenu
+    .querySelectorAll(
+      "[data-results-export-format]"
+    )
+    .forEach((button) => {
+      const format =
+        button.dataset.resultsExportFormat;
+
+      const selected =
+        state.format === format;
+
+      button.classList.toggle(
+        "is-selected",
+        selected
+      );
+
+      button.setAttribute(
+        "aria-pressed",
+        String(selected)
+      );
+    });
+
+  const setCheckbox = (
+    selector,
+    {
+      checked,
+      enabled
+    }
+  ) => {
+    const wrapper =
+      viewerResultsDownloadMenu
+        .querySelector(selector);
+
+    const input =
+      wrapper?.querySelector("input");
+
+    if (!wrapper || !input) return;
+
+    input.checked = checked;
+    input.disabled = !enabled;
+
+    wrapper.classList.toggle(
+      "is-disabled",
+      !enabled
+    );
+  };
+
+  setCheckbox(
+    ".results-export-opt-related",
+    {
+      checked: state.includeRelated,
+      enabled: formatChosen
+    }
+  );
+
+  setCheckbox(
+    ".results-export-opt-lines",
+    {
+      checked:
+        state.relationshipLines &&
+        isKml &&
+        state.includeRelated,
+
+      enabled:
+        isKml &&
+        state.includeRelated
+    }
+  );
+
+  setCheckbox(
+    ".results-export-opt-centroids",
+    {
+      checked:
+        state.centroidsOnly &&
+        isKml,
+
+      enabled: isKml
+    }
+  );
+
+  const estimateLine =
+    viewerResultsDownloadMenu
+      .querySelector(
+        ".map-download-menu-estimate"
+      );
+
+  if (estimateLine) {
+    estimateLine.textContent =
+      viewerResultsExportEstimateLine();
+  }
+
+  const downloadButton =
+    viewerResultsDownloadMenu
+      .querySelector(
+        ".map-download-menu-go"
+      );
+
+  if (downloadButton) {
+    downloadButton.disabled =
+      !viewerResultsExportEligible();
+  }
+}
+
+async function refreshViewerResultsExportEstimate() {
+  const state = viewerResultsExportMenuState;
+
+  if (
+    !state.format ||
+    !state.recordTypes.size
+  ) {
+    state.estimating = false;
+    state.estimate = null;
+    state.estimateError = false;
+
+    renderViewerResultsExportMenu();
+    return;
+  }
+
+  const requestSequence =
+    ++viewerResultsExportEstimateSequence;
+
+  state.estimating = true;
+  state.estimateError = false;
+
+  renderViewerResultsExportMenu();
+
+  try {
+    const params =
+      buildViewerResultsExportParams({
+        withFormat: true
+      });
+
+    const response = await fetch(
+      `/api/viewer/export/estimate?${params.toString()}`,
+      {
+        method: "GET",
+        credentials: "include"
+      }
+    );
+
+    const data = await response.json();
+
+    if (
+      requestSequence !==
+      viewerResultsExportEstimateSequence
+    ) {
+      return;
+    }
+
+    if (!response.ok || !data.ok) {
+      throw new Error(
+        data.error ||
+        `Estimate failed: ${response.status}`
+      );
+    }
+
+    state.estimate = data;
+  } catch (error) {
+    if (
+      requestSequence !==
+      viewerResultsExportEstimateSequence
+    ) {
+      return;
+    }
+
+    console.error(
+      "Viewer results export estimate failed:",
+      error
+    );
+
+    state.estimate = null;
+    state.estimateError = true;
+  } finally {
+    if (
+      requestSequence ===
+      viewerResultsExportEstimateSequence
+    ) {
+      state.estimating = false;
+      renderViewerResultsExportMenu();
+    }
+  }
+}
+
+function startViewerResultsExportDownload() {
+  if (!viewerResultsExportEligible()) {
+    return;
+  }
+
+  window.location.href =
+    `/api/viewer/export?` +
+    buildViewerResultsExportParams()
+      .toString();
+}
+
+function buildViewerResultsExportMenu() {
+  if (!viewerResultsDownloadMenu) return;
+
+  viewerResultsDownloadMenu.innerHTML = `
+    <div class="map-download-menu-header">
+      ${escapeHtml(
+        t(
+          "download_results",
+          "Download results"
+        )
+      )}
+    </div>
+
+    <div class="results-download-menu-help">
+      ${escapeHtml(
+        t(
+          "export_results_help",
+          "Export the current filtered result set."
+        )
+      )}
+    </div>
+
+    <div class="map-download-menu-divider"></div>
+
+    <div class="map-download-menu-header">
+      ${escapeHtml(
+        t("viewer_layers", "Layers")
+      )}
+    </div>
+
+    <div
+      class="export-layer-chip-grid"
+      data-results-export-layers
+    ></div>
+
+    <div class="results-download-menu-help">
+      ${escapeHtml(
+        t(
+          "export_layers_narrow_help",
+          "Untick layers to narrow this download. Related records may still come from unticked layers."
+        )
+      )}
+    </div>
+
+    <div class="map-download-menu-divider"></div>
+
+    <div class="map-download-menu-header">
+      ${escapeHtml(
+        t(
+          "export_data_header",
+          "Download data"
+        )
+      )}
+    </div>
+
+    <div class="export-format-row">
+      ${VIEWER_EXPORT_FORMATS
+        .map((format) => `
+          <button
+            type="button"
+            data-results-export-format="${format.id}"
+            aria-pressed="false"
+          >
+            ${escapeHtml(
+              t(
+                format.labelKey,
+                format.fallback
+              )
+            )}
+          </button>
+        `)
+        .join("")}
+    </div>
+
+    <div class="export-kml-warning" hidden>
+      ${escapeHtml(
+        t(
+          "export_kml_archive_warning",
+          "Archive records are not included in KML files."
+        )
+      )}
+    </div>
+
+    <label
+      class="export-opt results-export-opt-related"
+    >
+      <input type="checkbox">
+
+      <span>
+        ${escapeHtml(
+          t(
+            "export_include_related",
+            "Include related records"
+          )
+        )}
+      </span>
+    </label>
+
+    <label
+      class="export-opt results-export-opt-lines"
+    >
+      <input type="checkbox">
+
+      <span>
+        ${escapeHtml(
+          t(
+            "export_relationship_lines",
+            "Relationship lines"
+          )
+        )}
+      </span>
+    </label>
+
+    <label
+      class="export-opt results-export-opt-centroids"
+    >
+      <input type="checkbox">
+
+      <span>
+        ${escapeHtml(
+          t(
+            "export_centroids_only",
+            "Centroids only"
+          )
+        )}
+      </span>
+    </label>
+
+    <div
+      class="map-download-menu-estimate"
+      aria-live="polite"
+    ></div>
+
+    <button
+      type="button"
+      class="map-download-menu-go"
+      disabled
+    >
+      ${escapeHtml(
+        t(
+          "export_download",
+          "Download"
+        )
+      )}
+    </button>
+  `;
+
+  viewerResultsDownloadMenu
+    .querySelectorAll(
+      "[data-results-export-format]"
+    )
+    .forEach((button) => {
+      button.addEventListener("click", () => {
+        const format =
+          button.dataset.resultsExportFormat;
+
+        if (!format) return;
+
+        viewerResultsExportMenuState.format =
+          format;
+
+        viewerResultsExportMenuState.estimate =
+          null;
+
+        viewerResultsExportMenuState.estimateError =
+          false;
+
+        if (format !== "kml") {
+          viewerResultsExportMenuState.centroidsOnly =
+            false;
+
+          viewerResultsExportMenuState.relationshipLines =
+            false;
+        }
+
+        refreshViewerResultsExportEstimate();
+      });
+    });
+
+  viewerResultsDownloadMenu
+    .querySelector(
+      ".results-export-opt-related input"
+    )
+    ?.addEventListener("change", (event) => {
+      const checked =
+        event.currentTarget.checked;
+
+      viewerResultsExportMenuState.includeRelated =
+        checked;
+
+      if (!checked) {
+        viewerResultsExportMenuState.relationshipLines =
+          false;
+      }
+
+      refreshViewerResultsExportEstimate();
+    });
+
+  viewerResultsDownloadMenu
+    .querySelector(
+      ".results-export-opt-lines input"
+    )
+    ?.addEventListener("change", (event) => {
+      viewerResultsExportMenuState.relationshipLines =
+        event.currentTarget.checked;
+
+      renderViewerResultsExportMenu();
+    });
+
+  viewerResultsDownloadMenu
+    .querySelector(
+      ".results-export-opt-centroids input"
+    )
+    ?.addEventListener("change", (event) => {
+      viewerResultsExportMenuState.centroidsOnly =
+        event.currentTarget.checked;
+
+      refreshViewerResultsExportEstimate();
+    });
+
+  viewerResultsDownloadMenu
+    .querySelector(
+      ".map-download-menu-go"
+    )
+    ?.addEventListener("click", () => {
+      startViewerResultsExportDownload();
+      closeViewerResultsExportMenu();
+    });
+}
+
+function openViewerResultsExportMenu() {
+  if (
+    !viewerResultsDownloadMenu ||
+    !downloadViewerResultsBtn
+  ) {
+    return;
+  }
+
+  resetViewerResultsExportLayerSelection();
+
+  viewerResultsExportMenuState.open = true;
+  viewerResultsExportMenuState.estimate = null;
+  viewerResultsExportMenuState.estimateError = false;
+
+  viewerResultsDownloadMenu.classList.add(
+    "is-open"
+  );
+
+  viewerResultsDownloadMenu.setAttribute(
+    "aria-hidden",
+    "false"
+  );
+
+  downloadViewerResultsBtn.setAttribute(
+    "aria-expanded",
+    "true"
+  );
+
+  renderViewerResultsExportMenu();
+
+  if (viewerResultsExportMenuState.format) {
+    refreshViewerResultsExportEstimate();
+  }
+}
+
+function closeViewerResultsExportMenu() {
+  viewerResultsExportMenuState.open = false;
+  viewerResultsExportMenuState.estimating = false;
+
+  /*
+    Invalidate any estimate request that is still in flight.
+  */
+  viewerResultsExportEstimateSequence += 1;
+
+  viewerResultsDownloadMenu
+    ?.classList
+    .remove("is-open");
+
+  viewerResultsDownloadMenu
+    ?.setAttribute(
+      "aria-hidden",
+      "true"
+    );
+
+  downloadViewerResultsBtn
+    ?.setAttribute(
+      "aria-expanded",
+      "false"
+    );
+}
+
+function updateViewerResultsExportButtonState() {
+  if (!downloadViewerResultsBtn) return;
+
+  const canExport =
+    viewerCanExportData();
+
+  downloadViewerResultsBtn.hidden =
+    !canExport;
+
+  downloadViewerResultsBtn.disabled =
+    !canExport ||
+    viewerTotalCount <= 0;
+
+  if (
+    downloadViewerResultsBtn.disabled &&
+    viewerResultsExportMenuState.open
+  ) {
+    closeViewerResultsExportMenu();
+  }
+}
+
+function wireViewerResultsExportMenu() {
+  if (
+    !downloadViewerResultsBtn ||
+    !viewerResultsDownloadMenu ||
+    !viewerResultsSummary
+  ) {
+    return;
+  }
+
+  if (
+    downloadViewerResultsBtn.dataset
+      .resultsExportWired === "true"
+  ) {
+    return;
+  }
+
+  downloadViewerResultsBtn.dataset
+    .resultsExportWired = "true";
+
+  updateViewerResultsExportButtonState();
+
+  if (!viewerCanExportData()) {
+    return;
+  }
+
+  buildViewerResultsExportMenu();
+
+  downloadViewerResultsBtn
+    .addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      if (viewerResultsExportMenuState.open) {
+        closeViewerResultsExportMenu();
+      } else {
+        openViewerResultsExportMenu();
+      }
+    });
+
+  document.addEventListener(
+    "click",
+    (event) => {
+      if (
+        viewerResultsExportMenuState.open &&
+        !viewerResultsSummary.contains(
+          event.target
+        )
+      ) {
+        closeViewerResultsExportMenu();
+      }
+    },
+    true
+  );
+
+  document.addEventListener(
+    "keydown",
+    (event) => {
+      if (
+        event.key === "Escape" &&
+        viewerResultsExportMenuState.open
+      ) {
+        closeViewerResultsExportMenu();
+        downloadViewerResultsBtn.focus();
+      }
+    }
+  );
+}
+
+// end of results export menu
 
 function toggleMapOptionsPanel() {
   if (!mapOptionsPanel) return;
@@ -11202,7 +12589,12 @@ function viewerCentroidGroupHasFeatures(groupKey) {
 }
 
 function viewerLegendShouldShowLayer(recordType) {
-  return viewerLayerIsVisible(recordType) && viewerMapLayerHasFeatures(recordType);
+  /*
+    A map key describes active map layers, not only features already
+    returned for the current viewport. This keeps the key populated during
+    the cluster-to-geometry handover and while the geometry request loads.
+  */
+  return viewerLayerIsVisible(recordType);
 }
 
 function viewerHasClusterGroupVisible(groupKey) {
@@ -11227,42 +12619,118 @@ function viewerLegendSymbolRow({
 
 function getCurrentViewerMapLegendItems() {
   const items = [];
-  const mode = getViewerMapMode();
+
+  const monumentMode =
+    viewerGroupMapMode("monuments");
+
+  const remoteSensingMode =
+    viewerGroupMapMode("remote_sensing");
+
+  const vernacularMode =
+    viewerGroupMapMode("vernacular");
 
   if (
-    mode === "clusters" ||
-    mode === "mixed"
+    monumentMode === "clusters" &&
+    viewerCentroidGroupHasFeatures("monuments")
   ) {
-    if (viewerCentroidGroupHasFeatures("monuments")) {
+    items.push({
+      label: t("viewer_monument_clusters", "Monument clusters"),
+      color: VIEWER_COLOURS.monument,
+      type: "circle"
+    });
+  }
+
+  if (
+    remoteSensingMode === "clusters" &&
+    viewerCentroidGroupHasFeatures("remote_sensing")
+  ) {
+    items.push({
+      label: t("viewer_remote_sensing_clusters", "Remote sensing clusters"),
+      color: "#374151",
+      type: "circle"
+    });
+  }
+
+  if (
+    vernacularMode === "clusters" &&
+    viewerCentroidGroupHasFeatures("vernacular")
+  ) {
+    items.push({
+      label: t("viewer_vernacular_clusters", "Vernacular clusters"),
+      color: VIEWER_COLOURS.vernacular,
+      type: "circle"
+    });
+  }
+
+  if (
+    monumentMode === "geometry" &&
+    viewerLegendShouldShowLayer("monument")
+  ) {
+    items.push({
+      label: t("viewer_layer_monument", "Monuments"),
+      color: VIEWER_COLOURS.monument,
+      type: "fill"
+    });
+  }
+
+  if (remoteSensingMode === "geometry") {
+    if (viewerLegendShouldShowLayer("rs3_poly")) {
       items.push({
-        label: t("viewer_monument_clusters", "Monument clusters"),
-        color: VIEWER_COLOURS.monument,
-        type: "circle"
+        label: t("viewer_layer_rs3_poly", "RS3 polygons"),
+        color: VIEWER_COLOURS.rs3_poly,
+        type: "fill"
       });
     }
 
-    if (viewerCentroidGroupHasFeatures("remote_sensing")) {
+    if (viewerLegendShouldShowLayer("rs3_line")) {
       items.push({
-        label: t("viewer_remote_sensing_clusters", "Remote sensing clusters"),
-        color: "#374151",
-        type: "circle"
+        label: t("viewer_layer_rs3_line", "RS3 lines"),
+        color: VIEWER_COLOURS.rs3_line,
+        type: "line"
       });
     }
 
-    if (viewerCentroidGroupHasFeatures("vernacular")) {
+    if (viewerLegendShouldShowLayer("rs3_group")) {
       items.push({
-        label: t("viewer_vernacular_clusters", "Vernacular clusters"),
-        color: VIEWER_COLOURS.vernacular,
-        type: "circle"
+        label: t("viewer_layer_rs3_group", "RS3 groups"),
+        color: VIEWER_COLOURS.rs3_group,
+        type: "fill"
       });
     }
   }
 
-  if (viewerMapLayers?.institution?.features?.length) {
+  if (viewerLegendShouldShowLayer("institution")) {
     items.push({
       label: t("viewer_layer_institution", "Institutions"),
       color: VIEWER_COLOURS.institution,
       type: "circle"
+    });
+  }
+
+  if (
+    vernacularMode === "geometry" &&
+    viewerLegendShouldShowLayer("vernacular")
+  ) {
+    items.push({
+      label: t("viewer_layer_vernacular", "Vernacular"),
+      color: VIEWER_COLOURS.vernacular,
+      type: "fill"
+    });
+  }
+
+  if (viewerLegendShouldShowLayer("dataset")) {
+    items.push({
+      label: t("viewer_layer_dataset", "Datasets"),
+      color: VIEWER_COLOURS.dataset,
+      type: "fill"
+    });
+  }
+
+  if (viewerLegendShouldShowLayer("cartography")) {
+    items.push({
+      label: t("viewer_layer_cartography", "Cartography"),
+      color: VIEWER_COLOURS.cartography,
+      type: "fill"
     });
   }
 
@@ -11768,6 +13236,7 @@ async function applyMapViewFilterFromCurrentMap() {
 // WIRING
 // --------------------------------------------------------
 function wireViewerEvents() {
+  wireViewerResultsExportMenu();
   if (viewerSearch) {
     viewerSearch.addEventListener("input", scheduleViewerReload);
   }
