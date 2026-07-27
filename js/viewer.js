@@ -7573,8 +7573,8 @@ async function loadViewerMap() {
   if (!geometryLayers.length) {
     viewerMapLayers = {};
 
-    drawViewerMapLayers({});
     updateViewerMapModeVisibility();
+    renderViewerMapLabels();
     updateMapStatusLine();
     renderViewerLegend();
 
@@ -12659,12 +12659,10 @@ function viewerCentroidGroupHasFeatures(groupKey) {
 }
 
 function viewerLegendShouldShowLayer(recordType) {
-  /*
-    A map key describes active map layers, not only features already
-    returned for the current viewport. This keeps the key populated during
-    the cluster-to-geometry handover and while the geometry request loads.
-  */
-  return viewerLayerIsVisible(recordType);
+  return (
+    viewerLayerIsVisible(recordType) &&
+    viewerMapLayerHasFeatures(recordType)
+  );
 }
 
 function viewerHasClusterGroupVisible(groupKey) {
@@ -13468,6 +13466,7 @@ function wireViewerEvents() {
 
       try {
         await loadViewerMap();
+        renderViewerLegend();
       } catch (error) {
         console.error("Admin boundary layer reload failed:", error);
       }
