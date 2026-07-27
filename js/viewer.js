@@ -2536,6 +2536,8 @@ let viewerPopup = null;
 let viewerLegendEl = null;
 let viewerLegendCollapsed = true;
 
+let viewerHiddenLayerNoticeTimer = null;
+
 function viewerCanNavigateAway() {
   // Future editing support: when an edit session is active with unsaved
   // changes, return false here (and prompt the user) instead.
@@ -3347,6 +3349,81 @@ function decorateViewerLayerFilterIcons() {
     ?.classList.add("icons-ready");
 }
 
+function updateViewerDisplayLayerAvailability() {
+  VIEWER_RECORD_TYPES.forEach((recordType) => {
+    const resultsInput =
+      VIEWER_LAYER_INPUTS[recordType];
+
+    const mapInput =
+      VIEWER_MAP_LAYER_INPUTS[recordType];
+
+    /*
+      Archive currently has no map-display checkbox.
+    */
+    if (!resultsInput || !mapInput) {
+      return;
+    }
+
+    const availableInResults =
+      resultsInput.checked === true;
+
+    const label =
+      mapInput.closest("label");
+
+    const unavailableMessage = t(
+      "viewer_display_layer_not_in_results",
+      "This layer is excluded from the current results. Turn it on in the Layers panel before displaying it on the map."
+    );
+
+    if (!availableInResults) {
+      /*
+        An excluded Results layer must not remain displayed.
+      */
+      mapInput.checked = false;
+      mapInput.disabled = true;
+
+      label?.classList.add(
+        "viewer-map-layer-unavailable"
+      );
+
+      if (label) {
+        label.title = unavailableMessage;
+      }
+
+      mapInput.setAttribute(
+        "aria-disabled",
+        "true"
+      );
+
+      mapInput.setAttribute(
+        "aria-label",
+        `${viewerLayerLabel(recordType)}. ${unavailableMessage}`
+      );
+
+      return;
+    }
+
+    mapInput.disabled = false;
+
+    label?.classList.remove(
+      "viewer-map-layer-unavailable"
+    );
+
+    if (label) {
+      label.removeAttribute("title");
+    }
+
+    mapInput.removeAttribute(
+      "aria-disabled"
+    );
+
+    mapInput.setAttribute(
+      "aria-label",
+      viewerLayerLabel(recordType)
+    );
+  });
+}
+
 function resetViewerLayerSelectionsToDefault() {
   VIEWER_RECORD_TYPES.forEach((type) => {
     const filterInput = VIEWER_LAYER_INPUTS[type];
@@ -3380,6 +3457,7 @@ function resetViewerLayerSelectionsToDefault() {
   if (borderStyleOptions && showCentralAsiaBordersCheckbox) {
     borderStyleOptions.hidden = !showCentralAsiaBordersCheckbox.checked;
   }
+  updateViewerDisplayLayerAvailability();
 }
 
 function viewerLookupOptions(name) {
@@ -4945,14 +5023,7 @@ function renderViewerResults() {
 
           if (!fullRecord?.geometry) return;
 
-          fitViewerMapToGeometry(fullRecord.geometry, {
-            padding: 90,
-            maxZoom: 16,
-            pointZoom: 13,
-            duration: 700
-          });
-
-          drawViewerSelectedHighlight(fullRecord);
+          zoomViewerRecordOnMap(fullRecord);
         } catch (error) {
           console.error("Viewer result zoom failed:", error);
           setViewerStatus(error.message || "Could not zoom to record", {
@@ -5100,14 +5171,7 @@ async function showCurrentViewerResultsOnMap() {
       return;
     }
 
-    fitViewerMapToGeometry(fullRecord.geometry, {
-      padding: 90,
-      maxZoom: 16,
-      pointZoom: 14,
-      duration: 700
-    });
-
-    drawViewerSelectedHighlight(fullRecord);
+    zoomViewerRecordOnMap(fullRecord);
     return;
   }
 
@@ -6827,14 +6891,7 @@ function renderViewerRecordDetails(record) {
   const zoomBtn = document.getElementById("viewerZoomToOpenRecordBtn");
   if (zoomBtn) {
     zoomBtn.addEventListener("click", () => {
-      fitViewerMapToGeometry(record.geometry, {
-        padding: 90,
-        maxZoom: 16,
-        pointZoom: 13,
-        duration: 700
-      });
-
-      drawViewerSelectedHighlight(record);
+      zoomViewerRecordOnMap(record);
     });
   }
 }
@@ -8189,10 +8246,17 @@ function updateViewerMapModeVisibility() {
     const mode =
       viewerGroupMapMode(groupKey);
 
+    const groupHasVisibleTypes =
+      group.types.some((recordType) =>
+        selectedTypes.includes(recordType)
+      );
+
     const showClusters =
+      groupHasVisibleTypes &&
       mode === "clusters";
 
     const showCentroids =
+      groupHasVisibleTypes &&
       mode === "centroids";
 
     [
@@ -9739,6 +9803,33 @@ function resetMapView() {
   });
 }
 
+function zoomViewerRecordOnMap(record) {
+  if (!record?.geometry) return;
+
+  fitViewerMapToGeometry(record.geometry, {
+    padding: 90,
+    maxZoom: 16,
+    pointZoom: 13,
+    duration: 700
+  });
+
+  /*
+    This separate selected-record layer remains visible even
+    when the normal display layer is switched off.
+  */
+  drawViewerSelectedHighlight(record);
+
+  const recordType = String(
+    record?.identity?.record_type || ""
+  ).trim();
+
+  const mapInput = VIEWER_MAP_LAYER_INPUTS[recordType];
+
+  if (mapInput && !mapInput.checked) {
+    showViewerHiddenLayerNotice(recordType);
+  }
+}
+
 function ensureViewerRecordVisible(record) {
   if (!viewerMap || !record?.geometry) return;
 
@@ -9899,6 +9990,99 @@ function createMapIconButton({
   });
 
   return button;
+}
+
+function showViewerHiddenLayerNotice(recordType) {
+  const mapInput = VIEWER_MAP_LAYER_INPUTS[recordType];
+  if (!mapInput) return;
+
+  document
+    .querySelector(".viewer-map-layer-notice")
+    ?.remove();
+
+  if (viewerHiddenLayerNoticeTimer) {
+    clearTimeout(viewerHiddenLayerNoticeTimer);
+  }
+
+  const layerLabel = viewerLayerLabel(recordType);
+
+  const message = t(
+    "viewer_layer_hidden_zoom_notice",
+    "The {layer} display layer is off. This record is highlighted, but the rest of the layer remains hidden."
+  ).replace("{layer}", layerLabel);
+
+  const notice = document.createElement("div");
+  notice.className = "viewer-map-layer-notice";
+  notice.setAttribute("role", "status");
+  notice.setAttribute("aria-live", "polite");
+
+  notice.innerHTML = `
+    <div class="viewer-map-layer-notice-text">
+      ${escapeHtml(message)}
+    </div>
+
+    <button
+      type="button"
+      class="viewer-map-layer-notice-action"
+    >
+      <span aria-hidden="true">
+        ${svgMapOptionsIcon()}
+      </span>
+
+      <span>
+        ${escapeHtml(t("map_options", "Map options"))}
+      </span>
+    </button>
+
+    <button
+      type="button"
+      class="viewer-map-layer-notice-close"
+      title="${escapeHtml(t("close", "Close"))}"
+      aria-label="${escapeHtml(t("close", "Close"))}"
+    >
+      ×
+    </button>
+  `;
+
+  const host =
+    document.querySelector(".map-pane-body") ||
+    document.body;
+
+  host.appendChild(notice);
+
+  notice
+    .querySelector(".viewer-map-layer-notice-action")
+    ?.addEventListener("click", () => {
+      if (mapOptionsPanel?.hidden) {
+        toggleMapOptionsPanel();
+      }
+
+      const label = mapInput.closest("label");
+
+      label?.scrollIntoView({
+        block: "nearest",
+        behavior: "smooth"
+      });
+
+      label?.classList.add("viewer-map-layer-attention");
+      mapInput.focus();
+
+      window.setTimeout(() => {
+        label?.classList.remove("viewer-map-layer-attention");
+      }, 3000);
+
+      notice.remove();
+    });
+
+  notice
+    .querySelector(".viewer-map-layer-notice-close")
+    ?.addEventListener("click", () => {
+      notice.remove();
+    });
+
+  viewerHiddenLayerNoticeTimer = window.setTimeout(() => {
+    notice.remove();
+  }, 8000);
 }
 
 function addMapOptionsControl() {
@@ -13265,6 +13449,7 @@ async function clearViewerFilters() {
 
   configureScopeControlsForSession({ setDefault: true });
   resetViewerLayerSelectionsToDefault();
+  updateViewerDisplayLayerAvailability();
 
   activeMapViewFilterBbox = null;
   activeViewerSpatialPolygon = null;
@@ -13414,18 +13599,70 @@ function wireViewerEvents() {
     if (leftInput) {
       leftInput.addEventListener("change", async () => {
         viewerPageOffset = 0;
-        await reloadViewer({ includeMap: true });
-      });
-    }
 
-    // Map options: visibility only, no reload needed.
-    if (mapInput) {
-      mapInput.addEventListener("change", () => {
+        /*
+          Keep the ordinary display state harmonised when the user
+          explicitly changes the Results layer selection.
+        */
+        if (mapInput) {
+          mapInput.checked = leftInput.checked;
+        }
+
+        updateViewerDisplayLayerAvailability();
+
+        await reloadViewer({
+          includeMap: true
+        });
+
         updateViewerMapModeVisibility();
         renderViewerMapLabels();
+        updateMapStatusLine();
         renderViewerLegend();
       });
     }
+
+    // Map options: visibility only
+    if (mapInput) {
+      mapInput.addEventListener("change", async () => {
+        try {
+          updateViewerMapModeVisibility();
+          renderViewerMapLabels();
+          renderViewerLegend();
+
+          /*
+            A checked layer may not yet have been fetched, particularly
+            Dataset or Cartography, which start map-hidden.
+          */
+          if (mapInput.checked) {
+            await loadViewerMap();
+          }
+
+          updateViewerMapModeVisibility();
+          renderViewerMapLabels();
+          updateMapStatusLine();
+          renderViewerLegend();
+        } catch (error) {
+          console.error(
+            `Viewer map layer change failed for ${type}:`,
+            error
+          );
+
+          setViewerStatus(
+            error.message ||
+              "Could not update map layer",
+            {
+              isError: true
+            }
+          );
+        }
+      });
+    }
+
+    /*
+      Initialise disabled and enabled states after all listeners
+      and default checkbox values are in place.
+    */
+    updateViewerDisplayLayerAvailability();
   });
 
   if (surveyGridStyleMode) {
