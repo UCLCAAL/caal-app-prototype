@@ -3317,6 +3317,177 @@ router.get("/monuments/map", async (req, res) => {
   }
 });
 
+// for map zoom
+// Extent of the complete current Monuments results query.
+// Does not apply the incidental live map viewport.
+router.get("/monuments/results-extent", async (req, res) => {
+  const currentSession = req.session?.appSession || null;
+
+  if (!currentSession) {
+    return res.status(401).json({
+      ok: false,
+      error: "No active session"
+    });
+  }
+
+  const requestedScopes = parseScopes(req.query.scopes);
+  const normalizedScopes =
+    normalizeRequestedScopes(requestedScopes);
+
+  const allowedScopes =
+    getAllowedScopes(currentSession);
+
+  const scopes = normalizedScopes.filter(
+    (scope) => allowedScopes.includes(scope)
+  );
+
+  if (!scopes.length) {
+    return res.status(403).json({
+      ok: false,
+      error: "No permitted scopes requested"
+    });
+  }
+
+  const lang =
+    req.query.lang ||
+    currentSession.profile?.preferred_language ||
+    "en";
+
+  try {
+    /*
+      Use the same scoped union as the main results query, so
+      Workspace, National CAAL and All CAAL behave identically.
+    */
+    const unionSql = buildBrowseUnionSql(
+      scopes,
+      currentSession,
+      {
+        caalSource: MONUMENTS_CAAL_MV
+      }
+    );
+
+    if (!unionSql) {
+      return res.json({
+        ok: true,
+        extent: null,
+        mappedCount: 0
+      });
+    }
+
+    const baseFilter =
+      buildMonumentFilterWhere(req, lang);
+
+    const boundaryFiltered =
+      appendAdminBoundaryFilter({
+        sql: baseFilter.whereSql,
+        values: baseFilter.values,
+        tableAlias: "combined",
+        boundaryId: parseAdminBoundaryId(
+          req.query.adminBoundaryId
+        )
+      });
+
+    const polygonFiltered =
+      appendSpatialPolygonFilter({
+        sql: boundaryFiltered.sql,
+        values: boundaryFiltered.values,
+        tableAlias: "combined",
+        polygonParam: req.query.spatialPolygon
+      });
+
+    /*
+      filterBbox is the explicitly applied Map extent search.
+      Do not use req.query.bbox, which is only the live viewport
+      used when loading map features.
+    */
+    const bboxFiltered =
+      appendBboxFilter({
+        sql: polygonFiltered.sql,
+        values: polygonFiltered.values,
+        tableAlias: "combined",
+        bboxParam: req.query.spatialPolygon
+          ? null
+          : req.query.filterBbox
+      });
+
+    let finalWhereSql = bboxFiltered.sql;
+    const finalValues = bboxFiltered.values;
+
+    const coordinateClause = `
+      combined."Longitude" IS NOT NULL
+      AND combined."Latitude" IS NOT NULL
+      AND combined."Longitude" BETWEEN -180 AND 180
+      AND combined."Latitude" BETWEEN -90 AND 90
+    `;
+
+    finalWhereSql = finalWhereSql
+      ? `${finalWhereSql} AND ${coordinateClause}`
+      : `WHERE ${coordinateClause}`;
+
+    const result = await pool.query(
+      `
+      SELECT
+        MIN(combined."Longitude")::double precision
+          AS west,
+
+        MIN(combined."Latitude")::double precision
+          AS south,
+
+        MAX(combined."Longitude")::double precision
+          AS east,
+
+        MAX(combined."Latitude")::double precision
+          AS north,
+
+        COUNT(*)::integer
+          AS mapped_count
+
+      FROM (
+        ${unionSql}
+      ) combined
+
+      ${finalWhereSql}
+      `,
+      finalValues
+    );
+
+    const row = result.rows[0] || {};
+
+    const extentValues = [
+      Number(row.west),
+      Number(row.south),
+      Number(row.east),
+      Number(row.north)
+    ];
+
+    const extent =
+      Number(row.mapped_count || 0) > 0 &&
+      extentValues.every(Number.isFinite)
+        ? extentValues
+        : null;
+
+    return res.json({
+      ok: true,
+      extent,
+      mappedCount: Number(
+        row.mapped_count || 0
+      )
+    });
+  } catch (error) {
+    console.error(
+      "Monuments results extent failed:",
+      error
+    );
+
+    return res.status(500).json({
+      ok: false,
+      error:
+        "Failed to calculate monument results extent",
+      detail: error.message
+    });
+  }
+});
+
 // ========================================================
 // GET RECORDS
 // ========================================================

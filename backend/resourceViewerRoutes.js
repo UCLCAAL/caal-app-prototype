@@ -1346,6 +1346,63 @@ router.get("/export/estimate", async (req, res) => {
   }
 });
 
+// ============================================================
+// RESULT EXTENT endpoint — true bounds of the filtered result set,
+// independent of the current viewport. Powers "zoom to all results".
+//
+// Add to resourceViewerRoutes.js near the other viewer GET routes
+// (e.g. beside /export/estimate). Reuses buildViewerWhereSql, so the
+// extent always matches exactly what the results count reflects.
+// ============================================================
+
+router.get("/results-extent", async (req, res) => {
+  const session = requireSession(req, res);
+  if (!session) return;
+
+  try {
+    const filter = buildViewerWhereSql({
+      req, session, baseParamIndex: 1, tableAlias: "v"
+    });
+
+    // No visible record types / scopes => nothing to fit.
+    if (!filter.scopes.length || !filter.recordTypes.length) {
+      return res.json({ ok: true, extent: null });
+    }
+
+    // ST_Extent over the matching geometries — one row, cheap, and
+    // spans the whole result set regardless of what's on screen.
+    const sql = `
+      SELECT ST_XMin(e) AS min_lon, ST_YMin(e) AS min_lat,
+             ST_XMax(e) AS max_lon, ST_YMax(e) AS max_lat
+      FROM (
+        SELECT ST_Extent(v.geom_4326) AS e
+        FROM ${VIEWER_BASE_MV} v
+        ${filter.whereSql}
+      ) x
+      WHERE e IS NOT NULL
+    `;
+
+    const result = await pool.query(sql, filter.values);
+    const row = result.rows[0];
+
+    if (!row) {
+      // Result set has no geometry at all (e.g. only archives/datasets).
+      return res.json({ ok: true, extent: null });
+    }
+
+    return res.json({
+      ok: true,
+      extent: [
+        Number(row.min_lon), Number(row.min_lat),
+        Number(row.max_lon), Number(row.max_lat)
+      ]
+    });
+  } catch (error) {
+    console.error("viewer results-extent failed", error);
+    return res.status(500).json({ ok: false, error: "extent_failed" });
+  }
+});
+
 
 // EXPORT 
 // pinned to v7: v8.0.0 (July 2026) rewrote the API to classes; migrate via streamZip() helper once 8.x matures

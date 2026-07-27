@@ -3429,181 +3429,98 @@ function updateMapStatusLine() {
 }
 
 async function fetchMonumentResultsExtent() {
-  const params = buildMonumentQueryParams({
-    includePaging: false
-  });
-
-  const response = await fetch(
-    `/api/monuments/results-extent?${params.toString()}`,
-    {
-      method: "GET",
-      credentials: "include"
-    }
-  );
-
-  const data = await response.json();
-
-  if (!response.ok || !data.ok) {
-    throw new Error(
-      data.detail ||
-      data.error ||
-      "Could not calculate the results extent"
-    );
+  try {
+    const params = buildMonumentQueryParams({ includePaging: false });
+    const response = await fetch(`/api/monuments/results-extent?${params.toString()}`,
+    if (!response.ok) return null;
+    const data = await response.json();
+    return data && data.ok ? data.extent : null;
+  } catch (err) {
+    console.error("monument results extent fetch failed", err);
+    return null;
   }
-
-  const rawExtent = data.extent;
-
-  /*
-    Support either:
-      [west, south, east, north]
-
-    or:
-      { west, south, east, north }
-  */
-  const values = Array.isArray(rawExtent)
-    ? rawExtent
-    : [
-        rawExtent?.west,
-        rawExtent?.south,
-        rawExtent?.east,
-        rawExtent?.north
-      ];
-
-  const extent = values.map(Number);
-
-  if (
-    extent.length !== 4 ||
-    !extent.every(Number.isFinite)
-  ) {
-    throw new Error(
-      "The results extent response was invalid"
-    );
-  }
-
-  return {
-    west: extent[0],
-    south: extent[1],
-    east: extent[2],
-    north: extent[3]
-  };
 }
 
 async function showCurrentMonumentResultsOnMap() {
-  if (!map || !mapLoaded) return;
-
-  /*
-    An explicitly applied Map extent is itself the Current results
-    extent, so retain this behaviour.
-  */
   if (activeMapViewFilterBbox) {
     fitMapToSavedMapViewFilter();
     return;
   }
 
-  if (Number(monumentTotalCount || 0) <= 0) {
+  if (!map || !Array.isArray(monumentListRecords) || monumentListRecords.length === 0) {
     return;
   }
 
-  setMapStaleState(
-    true,
-    t(
-      "calculating_results_extent",
-      "Calculating results extent..."
-    )
-  );
+  const extent = await fetchMonumentResultsExtent();
 
-  try {
-    const extent =
-      await fetchMonumentResultsExtent();
-
-    const isSingleLocation =
-      extent.west === extent.east &&
-      extent.south === extent.north;
-
-    suppressNextMapMoveReload = true;
-
-    if (isSingleLocation) {
-      map.easeTo({
-        center: [
-          extent.west,
-          extent.south
-        ],
-        zoom: 13,
-        duration: 700
-      });
-    } else {
-      map.fitBounds(
-        [
-          [extent.west, extent.south],
-          [extent.east, extent.north]
-        ],
-        {
-          padding: {
-            top: 70,
-            right: 70,
-            bottom: 70,
-            left: 70
-          },
-          maxZoom: 10,
-          duration: 700
-        }
+  let bounds;
+  if (extent && extent.every((n) => Number.isFinite(n))) {
+    bounds = new maplibregl.LngLatBounds(
+      [extent[0], extent[1]],
+      [extent[2], extent[3]]
+    );
+  } else {
+    // Fallback: fit to the loaded list rows, as before.
+    const coordinates = monumentListRecords
+      .map((record) => record?.geometry?.coordinates)
+      .filter((coords) =>
+        Array.isArray(coords) && coords.length === 2 &&
+        Number.isFinite(Number(coords[0])) && Number.isFinite(Number(coords[1]))
       );
+    if (!coordinates.length) return;
+    bounds = coordinates.reduce((b, coords) => b.extend(coords),
+      new maplibregl.LngLatBounds(coordinates[0], coordinates[0]));
+  }
+
+  setMapStaleState(true, t("redrawing_map", "Redrawing map..."));
+
+  suppressNextMapMoveReload = true;
+
+  await new Promise((resolve) => {
+    let resolved = false;
+
+    function finish() {
+      if (resolved) return;
+      resolved = true;
+      resolve();
     }
 
-    /*
-      Once the map reaches the calculated extent, load the
-      records/clusters for that new viewport.
-    */
-    await new Promise((resolve) => {
-      let finished = false;
+    map.once("moveend", finish);
 
-      const finish = () => {
-        if (finished) return;
-        finished = true;
-        resolve();
-      };
-
-      map.once("moveend", finish);
-      window.setTimeout(finish, 1200);
+    map.fitBounds(bounds, {
+      padding: {
+        top: 70,
+        right: 70,
+        bottom: 70,
+        left: 70
+      },
+      maxZoom: 10,
+      duration: 700
     });
 
+    setTimeout(finish, 900);
+  });
+
+  try {
     await loadMonumentMapRecords();
-
-    renderLiveMapLabels();
-    updateMapOptionsState();
-    updateMapStatusLine();
   } catch (error) {
-    console.error(
-      "Could not show Monument results extent:",
-      error
-    );
-
-    if (typeof showToast === "function") {
-      showToast(
-        error.message ||
-          t(
-            "results_extent_failed",
-            "Could not calculate the results extent."
-          ),
-        5000
-      );
-    }
-  } finally {
-    setMapStaleState(false);
+    console.error("Failed to reload monuments after showing results on map:", error);
   }
+
+  renderLiveMapLabels();
+  updateMapOptionsState();
+  updateMapStatusLine();
 }
 
 function updateShowResultsOnMapButton() {
   if (!showResultsOnMapBtn) return;
 
-  const enabled =
-    Number(monumentTotalCount || 0) > 0;
+  const hasMappableResults =
+    Array.isArray(monumentListRecords) &&
+    monumentListRecords.some((record) => Array.isArray(record?.geometry?.coordinates));
 
-  showResultsOnMapBtn.disabled = !enabled;
-  showResultsOnMapBtn.classList.toggle(
-    "is-disabled",
-    !enabled
-  );
+  showResultsOnMapBtn.disabled = !hasMappableResults;
+  showResultsOnMapBtn.classList.toggle("is-disabled", !hasMappableResults);
 }
 
 function setOptionEnabled(selectEl, value, enabled) {
@@ -9839,6 +9756,9 @@ function renderRelatedArchiveModal(record, caalId, fullRecordUrl) {
   monumentPreviewModal.hidden = false;
 
   wireCopyFieldButtons(monumentPreviewModal);
+  wireOpenRelatedFullRecordButton(fullRecordUrl);
+  wireRelatedRecordChips();
+  wireRelatedPreviewBackButton();
 }
 
 function wireOpenRelatedFullRecordButton(fullRecordUrl) {

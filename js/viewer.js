@@ -5129,6 +5129,29 @@ function updateShowResultsOnMapButton() {
   showViewerResultsOnMapBtn.classList.toggle("is-disabled", !enabled);
 }
 
+// Uses the SAME params the results count/query use (no map bbox,
+// no paging), so the extent matches the current filters exactly.
+async function fetchViewerResultsExtent() {
+  try {
+    // buildViewerQueryParams with map bbox OFF = the current filters
+    // only, matching the results count rather than the viewport.
+    const params = buildViewerQueryParams({
+      includePaging: false,
+      includeMapBbox: false
+    });
+    const response = await fetch(
+      `/api/viewer/results-extent?${params.toString()}`,
+      { method: "GET", credentials: "include" }
+    );
+    if (!response.ok) return null;
+    const data = await response.json();
+    return data && data.ok ? data.extent : null; // [minLon,minLat,maxLon,maxLat] | null
+  } catch (err) {
+    console.error("results extent fetch failed", err);
+    return null;
+  }
+}
+
 async function showCurrentViewerResultsOnMap() {
   if (!viewerMap || !viewerMapLoaded) return;
 
@@ -5176,27 +5199,40 @@ async function showCurrentViewerResultsOnMap() {
   }
 
   /*
-    For multiple results, reload the filtered map data first so the extent
-    cannot be calculated from stale map or centroid caches.
+    For multiple results, fit to the TRUE extent of the filtered result
+    set (from the server) rather than to whatever happens to be loaded
+    in the current viewport — otherwise the map can only ever zoom in.
   */
-  await loadViewerMap();
-
-  const coordinates = getViewerCurrentMapFitCoordinates();
-
-  if (!coordinates.length) {
+  const extent = await fetchViewerResultsExtent();
+ 
+  if (extent && extent.every((n) => Number.isFinite(n))) {
+    const bounds = new maplibregl.LngLatBounds(
+      [extent[0], extent[1]],
+      [extent[2], extent[3]]
+    );
+    suppressViewerMapReload();
+    viewerMap.fitBounds(bounds, {
+      padding: 70,
+      maxZoom: 14,
+      duration: 700
+    });
     return;
   }
-
+ 
+  /*
+    Fallback: no server extent (e.g. results have no geometry, or the
+    request failed). Fit to whatever is loaded, as before — better than
+    doing nothing.
+  */
+  await loadViewerMap();
+  const coordinates = getViewerCurrentMapFitCoordinates();
+  if (!coordinates.length) return;
+ 
   const bounds = coordinates.reduce(
     (box, coordinate) => box.extend(coordinate),
-    new maplibregl.LngLatBounds(
-      coordinates[0],
-      coordinates[0]
-    )
+    new maplibregl.LngLatBounds(coordinates[0], coordinates[0])
   );
-
   suppressViewerMapReload();
-
   viewerMap.fitBounds(bounds, {
     padding: 70,
     maxZoom: 14,

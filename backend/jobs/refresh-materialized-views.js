@@ -47,13 +47,13 @@ const VIEWER_SOURCES_CHANGED_SQL = `
 // hour and only if not already refreshed since 02:00 today.
 const RS_DISPLAY_OVERNIGHT_SQL = `
   SELECT (
-    EXTRACT(HOUR FROM now() AT TIME ZONE 'UTC') IN (2,3)
+    EXTRACT(HOUR FROM now() AT TIME ZONE 'UTC') = 2
     AND COALESCE(
       (SELECT refreshed_at FROM ui.app_cache_status
         WHERE cache_key = 'resource_rs_display_geometry_cache'),
       'epoch'::timestamptz
     ) < date_trunc('day', now() AT TIME ZONE 'UTC') + interval '2 hours'
-  ) AS should_refresh
+  ) AS changed
 `;
 
 // Change-check for the monuments family (grid base reads public.CAAL_Monuments).
