@@ -10199,38 +10199,60 @@ function viewerPolygonAreaSquareMetres(
   );
 }
 
+function viewerMeasurementLocale() {
+  const lang =
+    typeof window.getCurrentLanguage === "function"
+      ? window.getCurrentLanguage()
+      : "en";
+
+  const locales = {
+    en: "en-GB",
+    ru: "ru-RU",
+    zh: "zh-CN",
+    kk: "kk-KZ",
+    ky: "ky-KG",
+    tg: "tg-TJ",
+    tk: "tk-TM",
+    uz: "uz-UZ"
+  };
+
+  return locales[lang] || "en-GB";
+}
+
 function viewerFormatDistance(metres) {
   const value = Number(metres || 0);
+  const locale = viewerMeasurementLocale();
 
   if (value >= 1000) {
-    return `${(value / 1000).toLocaleString(undefined, {
+    return `${(value / 1000).toLocaleString(locale, {
       maximumFractionDigits: 2
-    })} km`;
+    })} ${t("unit_km", "km")}`;
   }
 
-  return `${value.toLocaleString(undefined, {
+  return `${value.toLocaleString(locale, {
     maximumFractionDigits: 1
-  })} m`;
+  })} ${t("unit_m", "m")}`;
 }
 
 function viewerFormatArea(squareMetres) {
   const value = Number(squareMetres || 0);
+  const locale = viewerMeasurementLocale();
 
   if (value >= 1000000) {
-    return `${(value / 1000000).toLocaleString(undefined, {
+    return `${(value / 1000000).toLocaleString(locale, {
       maximumFractionDigits: 2
-    })} km²`;
+    })} ${t("unit_km2", "km²")}`;
   }
 
   if (value >= 10000) {
-    return `${(value / 10000).toLocaleString(undefined, {
+    return `${(value / 10000).toLocaleString(locale, {
       maximumFractionDigits: 2
-    })} ha`;
+    })} ${t("unit_ha", "ha")}`;
   }
 
-  return `${value.toLocaleString(undefined, {
+  return `${value.toLocaleString(locale, {
     maximumFractionDigits: 1
-  })} m²`;
+  })} ${t("unit_m2", "m²")}`;
 }
 
 function viewerMeasurementGeojson() {
@@ -10384,6 +10406,19 @@ function updateViewerMeasurementLayers() {
   });
 }
 
+function viewerMeasurementLastSegmentMetres(
+  coordinates = []
+) {
+  if (coordinates.length < 2) return 0;
+
+  const lastIndex = coordinates.length - 1;
+
+  return viewerDistanceMetres(
+    coordinates[lastIndex - 1],
+    coordinates[lastIndex]
+  );
+}
+
 function updateViewerMeasurementResult() {
   if (
     !viewerMeasurementResult ||
@@ -10428,9 +10463,24 @@ function updateViewerMeasurementResult() {
           );
 
     const distance =
-      viewerMeasurementTotalDistanceMetres(
-        viewerMeasurementCoordinates
-      );
+    viewerMeasurementTotalDistanceMetres(
+      viewerMeasurementCoordinates
+    );
+
+  const lastSegment =
+    viewerMeasurementLastSegmentMetres(
+      viewerMeasurementCoordinates
+    );
+
+  const lastSegmentHtml =
+    coordinateCount >= 3
+      ? `
+        <span class="viewer-measurement-secondary">
+          ${escapeHtml(t("last_segment", "Last segment"))}:
+          ${escapeHtml(viewerFormatDistance(lastSegment))}
+        </span>
+      `
+      : "";
 
     viewerMeasurementResult.hidden = false;
     if (coordinateCount < 2) {
@@ -10453,19 +10503,37 @@ function updateViewerMeasurementResult() {
         ${escapeHtml(viewerFormatDistance(distance))}
       </strong>
 
-      <span>
+      <span class="viewer-measurement-result-label">
         ${escapeHtml(t("total_distance", "Total distance"))}
       </span>
+
+        ${
+          coordinateCount >= 3
+            ? `
+              <span class="viewer-measurement-result-secondary">
+                <span class="viewer-measurement-secondary-label">
+                  ${escapeHtml(t("last_segment", "Last segment"))}
+                </span>
+
+                <span class="viewer-measurement-secondary-value">
+                  ${escapeHtml(viewerFormatDistance(lastSegment))}
+                </span>
+              </span>
+            `
+            : ""
+        }
 
       <button
         type="button"
         class="viewer-measurement-clear-inline"
         data-viewer-clear-measurement
+        title="${escapeHtml(t("clear_measurement", "Clear measurement"))}"
+        aria-label="${escapeHtml(t("clear_measurement", "Clear measurement"))}"
       >
-        ${escapeHtml(t("clear_measurement", "Clear"))}
+        ×
       </button>
     `;
-
+    
     viewerMeasurementResult
       .querySelector("[data-viewer-clear-measurement]")
       ?.addEventListener("click", (event) => {
@@ -10534,8 +10602,10 @@ function updateViewerMeasurementResult() {
       type="button"
       class="viewer-measurement-clear-inline"
       data-viewer-clear-measurement
+      title="${escapeHtml(t("clear_measurement", "Clear measurement"))}"
+      aria-label="${escapeHtml(t("clear_measurement", "Clear measurement"))}"
     >
-      ${escapeHtml(t("clear_measurement", "Clear"))}
+      ×
     </button>
   `;
   
@@ -13232,6 +13302,30 @@ async function applyMapViewFilterFromCurrentMap() {
   await reloadViewer({ includeMap: true });
 }
 
+function renderViewerMeasurementButtonLabels() {
+  if (viewerMeasureDistanceBtn) {
+    viewerMeasureDistanceBtn.removeAttribute("data-i18n");
+
+    viewerMeasureDistanceBtn.innerHTML = `
+      <span class="measurement-button-icon" aria-hidden="true">
+        ${svgMeasureDistanceToolIcon()}
+      </span>
+      <span>${escapeHtml(t("measure_distance", "Measure distance"))}</span>
+    `;
+  }
+
+  if (viewerMeasureAreaBtn) {
+    viewerMeasureAreaBtn.removeAttribute("data-i18n");
+
+    viewerMeasureAreaBtn.innerHTML = `
+      <span class="measurement-button-icon" aria-hidden="true">
+        ${svgMeasureAreaToolIcon()}
+      </span>
+      <span>${escapeHtml(t("measure_area", "Measure area"))}</span>
+    `;
+  }
+}
+
 // --------------------------------------------------------
 // WIRING
 // --------------------------------------------------------
@@ -13415,6 +13509,8 @@ function wireViewerEvents() {
       });
     });
   }
+
+  renderViewerMeasurementButtonLabels();
 
   viewerMeasureDistanceBtn?.addEventListener(
     "click",
@@ -13705,6 +13801,8 @@ document.addEventListener("app:languageChanged", async () => {
 
   try {
     await loadViewerLabels();
+
+    renderViewerMeasurementButtonLabels();
 
     configureScopeControlsForSession({ setDefault: false });
     decorateViewerLayerFilterIcons();

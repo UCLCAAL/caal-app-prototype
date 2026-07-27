@@ -2582,6 +2582,19 @@ function monumentMeasurementTotalDistanceMetres(coordinates = []) {
   return total;
 }
 
+function monumentMeasurementLastSegmentMetres(
+  coordinates = []
+) {
+  if (coordinates.length < 2) return 0;
+
+  const lastIndex = coordinates.length - 1;
+
+  return monumentDistanceMetres(
+    coordinates[lastIndex - 1],
+    coordinates[lastIndex]
+  );
+}
+
 function monumentPolygonAreaSquareMetres(coordinates = []) {
   if (!Array.isArray(coordinates) || coordinates.length < 3) {
     return 0;
@@ -2815,14 +2828,44 @@ function updateMonumentMeasurementResult() {
       monumentMeasurementCoordinates
     );
 
+    const lastSegment = monumentMeasurementLastSegmentMetres(
+      monumentMeasurementCoordinates
+    );
+
     monumentMeasurementResult.innerHTML = `
-      <strong>${escapeHtml(monumentFormatDistance(distance))}</strong>
-      <span>${escapeHtml(t("total_distance", "Total distance"))}</span>
+      <strong>
+        ${escapeHtml(monumentFormatDistance(distance))}
+      </strong>
+
+      <span class="viewer-measurement-result-label">
+        ${escapeHtml(t("total_distance", "Total distance"))}
+      </span>
+
+      ${
+        coordinateCount >= 3
+          ? `
+            <span class="viewer-measurement-result-secondary">
+              <span class="viewer-measurement-secondary-label">
+                ${escapeHtml(t("last_segment", "Last segment"))}
+              </span>
+
+              <span class="viewer-measurement-secondary-value">
+                ${escapeHtml(monumentFormatDistance(lastSegment))}
+              </span>
+            </span>
+          `
+          : ""
+      }
+
       <button
         type="button"
         class="viewer-measurement-clear-inline"
         data-monument-clear-measurement
-      >${escapeHtml(t("clear_measurement", "Clear"))}</button>
+        title="${escapeHtml(t("clear_measurement", "Clear measurement"))}"
+        aria-label="${escapeHtml(t("clear_measurement", "Clear measurement"))}"
+      >
+        ×
+      </button>
     `;
 
     monumentMeasurementResult
@@ -2861,11 +2904,12 @@ function updateMonumentMeasurementResult() {
   const area = monumentPolygonAreaSquareMetres(
     monumentMeasurementCoordinates
   );
+
   const perimeter = monumentMeasurementTotalDistanceMetres([
     ...monumentMeasurementCoordinates,
     monumentMeasurementCoordinates[0]
   ]);
-
+  
   monumentMeasurementResult.innerHTML = `
     <strong>${escapeHtml(monumentFormatArea(area))}</strong>
     <span>
@@ -2877,7 +2921,11 @@ function updateMonumentMeasurementResult() {
       type="button"
       class="viewer-measurement-clear-inline"
       data-monument-clear-measurement
-    >${escapeHtml(t("clear_measurement", "Clear"))}</button>
+      title="${escapeHtml(t("clear_measurement", "Clear measurement"))}"
+      aria-label="${escapeHtml(t("clear_measurement", "Clear measurement"))}"
+    >
+      ×
+    </button>
   `;
 
   monumentMeasurementResult
@@ -15176,6 +15224,30 @@ async function monumentDeleteCurrentRecord() {
   }
 }
 
+function renderMonumentMeasurementButtonLabels() {
+  if (monumentMeasureDistanceBtn) {
+    monumentMeasureDistanceBtn.removeAttribute("data-i18n");
+
+    monumentMeasureDistanceBtn.innerHTML = `
+      <span class="measurement-button-icon" aria-hidden="true">
+        ${svgMeasureDistanceToolIcon()}
+      </span>
+      <span>${escapeHtml(t("measure_distance", "Measure distance"))}</span>
+    `;
+  }
+
+  if (monumentMeasureAreaBtn) {
+    monumentMeasureAreaBtn.removeAttribute("data-i18n");
+
+    monumentMeasureAreaBtn.innerHTML = `
+      <span class="measurement-button-icon" aria-hidden="true">
+        ${svgMeasureAreaToolIcon()}
+      </span>
+      <span>${escapeHtml(t("measure_area", "Measure area"))}</span>
+    `;
+  }
+}
+
 // --------------------------------------------------------
 // Events
 // --------------------------------------------------------
@@ -15251,6 +15323,8 @@ if (cancelMonumentSpatialDrawBtn) {
     });
   });
 }
+
+renderMonumentMeasurementButtonLabels();
 
 monumentMeasureDistanceBtn?.addEventListener("click", () => {
   startMonumentMeasurement("distance");
@@ -15500,6 +15574,8 @@ document.addEventListener("app:languageChanged", async () => {
   try {
     await loadMonumentLabels();
     applyMonumentStaticLabels();
+    renderMonumentMeasurementButtonLabels();
+
     await loadMonumentCacheStatus();
 
     applyMonumentScopeUiForSession(window.appSession);

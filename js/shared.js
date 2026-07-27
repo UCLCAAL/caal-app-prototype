@@ -2323,6 +2323,62 @@ function iconMapImageDownload() {
     </svg>`;
 }
 
+function svgMeasureDistanceToolIcon() {
+  return `
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+    >
+      <line
+        x1="5"
+        y1="16"
+        x2="19"
+        y2="8"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+      />
+      <circle
+        cx="5"
+        cy="16"
+        r="2.2"
+        fill="currentColor"
+      />
+      <circle
+        cx="19"
+        cy="8"
+        r="2.2"
+        fill="currentColor"
+      />
+    </svg>
+  `;
+}
+
+function svgMeasureAreaToolIcon() {
+  return `
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      width="16"
+      height="16"
+    >
+      <path
+        d="M6 7 L17 5.5 L19 15.5 L9 18.5 Z"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linejoin="round"
+      />
+      <circle cx="6" cy="7" r="2" fill="currentColor" />
+      <circle cx="17" cy="5.5" r="2" fill="currentColor" />
+      <circle cx="19" cy="15.5" r="2" fill="currentColor" />
+      <circle cx="9" cy="18.5" r="2" fill="currentColor" />
+    </svg>
+  `;
+}
+
 function caalRecordTypeIconClass(recordType) {
   return `caal-record-type-icon caal-record-type-icon-${String(recordType || "").trim()}`;
 }
@@ -2334,6 +2390,8 @@ window.svgMapOptionsIcon = svgMapOptionsIcon;
 window.svgCopyIcon = svgCopyIcon;
 window.svgViewerMeasurementIcon = svgViewerMeasurementIcon;
 window.iconMapImageDownload = iconMapImageDownload;
+window.svgMeasureDistanceToolIcon = svgMeasureDistanceToolIcon;
+window.svgMeasureAreaToolIcon = svgMeasureAreaToolIcon;
 
 // --------------------------------------------------------
 // Shared language application
