@@ -644,8 +644,12 @@ body {
 .viewer-spatial-search-actions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.6rem;
-  width: 100%;
+  gap: 12px;
+}
+
+.spatial-search-actions button {
+  white-space: nowrap;
+  font-size: clamp(0.9rem, 1.4vw, 1rem);
 }
 
 .viewer-spatial-search-btn {

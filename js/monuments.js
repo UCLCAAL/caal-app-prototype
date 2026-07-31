@@ -256,6 +256,8 @@ let centralAsiaBordersVisible = false;
 let centralAsiaBorderStyle = "subtle";
 let centralAsiaBordersRequestSeq = 0;
 
+let activeMonumentMapSelection = null;
+
 let activeMapViewFilterBbox = null;
 let activeMonumentSpatialPolygon = null;
 
@@ -4248,6 +4250,30 @@ function getActiveFilterChips() {
     });
   }
 
+  if (activeMonumentMapSelection) {
+    chips.push({
+      kind: "map_selection",
+
+      label: t(
+        "selected_map_records",
+        "Selected map location · {count} records"
+      ).replace(
+        "{count}",
+        formatCount(
+          activeMonumentMapSelection.count
+        )
+      ),
+
+      title: t(
+        "selected_map_records_help",
+        "Records selected from a group on the map"
+      ),
+
+      className:
+        "active-filter-chip-map"
+    });
+  }
+
   return chips;
 }
 
@@ -4330,6 +4356,10 @@ async function removeActiveFilterChip(chip) {
       await clearMonumentSpatialPolygonFilter({
         reload: false
       });
+      break;
+
+    case "map_selection":
+      activeMonumentMapSelection = null;
       break;
     
     case "admin_boundary":
@@ -7869,7 +7899,10 @@ function wireLocationStackWarningButtons(record) {
   btn.addEventListener("click", () => {
     const records = getMonumentRecordsAtSameCoordinate(record);
     if (records.length > 1) {
-      showStackedRecordsInResults(records);
+      showStackedRecordsInResults(
+        safeRecords,
+        safeRecords[0]?.geometry?.coordinates
+      );
     }
   });
 }
@@ -12535,7 +12568,10 @@ function renderMonumentStackPopupHtml(records) {
       ? `<div class="map-popup-overflow">
           ${t(
             "popup_record_limit_notice",
-            "Showing first 50 records in the popup. Use Show in results list to view the full set."
+            "Showing the first 50 records. Filter the results to work with all {count} records at this location."
+          ).replace(
+            "{count}",
+            formatCount(safeRecords.length)
           )}
         </div>`
       : "";
@@ -12561,7 +12597,13 @@ function renderMonumentStackPopupHtml(records) {
       ${
         isStack
           ? `<button type="button" class="action-btn primary map-popup-open-all">
-              ${t("show_in_results_list", "Show in results list")}
+              ${t(
+                "show_in_results_list",
+                "Filter to {count} records"
+              ).replace(
+                "{count}",
+                formatCount(safeRecords.length)
+              )}
             </button>`
           : ""
       }
@@ -12644,7 +12686,10 @@ function wireMonumentStackPopupRows(popup, records, options = {}) {
       }
 
       if (openAllBtn) {
-        showStackedRecordsInResults(safeRecords);
+        showStackedRecordsInResults(
+          safeRecords,
+          safeRecords[0]?.geometry?.coordinates
+        );
         closePopup();
         controller.abort();
         return;
@@ -12767,25 +12812,178 @@ function showMonumentStackPopup(lngLat, records, options = {}) {
   });
 }
 
-function showStackedRecordsInResults(records) {
-  const safeRecords = dedupeMonumentRecords(records);
+function fitMapToActiveMonumentMapSelection() {
+  if (
+    !map ||
+    !activeMonumentMapSelection
+  ) {
+    return false;
+  }
+
+  const coordinates =
+    (activeMonumentMapSelection.records || [])
+      .map(
+        (record) =>
+          record?.geometry?.coordinates
+      )
+      .filter(
+        (coords) =>
+          Array.isArray(coords) &&
+          Number.isFinite(Number(coords[0])) &&
+          Number.isFinite(Number(coords[1]))
+      );
+
+  if (!coordinates.length) {
+    return false;
+  }
+
+  const first = coordinates[0];
+
+  const isSingleLocation =
+    coordinates.every(
+      (coords) =>
+        Number(coords[0]) ===
+          Number(first[0]) &&
+        Number(coords[1]) ===
+          Number(first[1])
+    );
+
+  /*
+    Prevent the programmatic movement from triggering
+    the ordinary viewport map reload.
+  */
+  suppressNextMapMoveReload = true;
+
+  if (isSingleLocation) {
+    map.easeTo({
+      center: first,
+      zoom: Math.max(
+        map.getZoom(),
+        11
+      ),
+      duration: 500
+    });
+
+    return true;
+  }
+
+  const bounds = coordinates.reduce(
+    (currentBounds, coords) =>
+      currentBounds.extend(coords),
+    new maplibregl.LngLatBounds(
+      first,
+      first
+    )
+  );
+
+  map.fitBounds(bounds, {
+    padding: 70,
+    maxZoom: 11,
+    duration: 500
+  });
+
+  return true;
+}
+
+function showStackedRecordsInResults(
+  records,
+  coordinates = null
+) {
+  const safeRecords =
+    dedupeMonumentRecords(records);
+
+  /*
+    Invalidate any normal map request which may already
+    be in flight. It must not overwrite this selection.
+  */
+  monumentMapRequestSeq += 1;
+
+  activeMonumentMapSelection = {
+    records: safeRecords,
+    count: safeRecords.length,
+    coordinates:
+      Array.isArray(coordinates)
+        ? coordinates
+        : safeRecords[0]?.geometry?.coordinates || null,
+    kind: monumentStackKind(safeRecords)
+  };
 
   monumentListRecords = safeRecords;
+
+  /*
+    Use current live geometry for any recently edited
+    records which happen to be in this selection.
+  */
+  monumentMapRecords = safeRecords.map(
+    (record) =>
+      mergeLiveGeometryForRecentlySavedRecord(record)
+  );
+
   monumentTotalCount = safeRecords.length;
   monumentTotalIsExact = true;
   monumentPageOffset = 0;
 
-  renderMonumentResultsList(monumentListRecords);
+  /*
+    The normal map can also contain the separate backend
+    national-cluster layer. Clear it so it cannot continue
+    showing records outside this selected result set.
+  */
+  nationalClusterPointRecords = [];
+  nationalClusterFeatures = [];
+  clearNationalClustersLayer();
+
+  /*
+    Only retain the live-edit overlay for records which
+    belong to this selected set.
+  */
+  const selectedIds = new Set(
+    safeRecords
+      .map((record) =>
+        String(
+          record?.identity?.caal_id || ""
+        )
+          .trim()
+          .toLowerCase()
+      )
+      .filter(Boolean)
+  );
+
+  const selectedLiveRecords =
+    (monumentUncachedLiveRecords || [])
+      .filter((record) =>
+        selectedIds.has(
+          String(
+            record?.identity?.caal_id || ""
+          )
+            .trim()
+            .toLowerCase()
+        )
+      );
+
+  renderMonumentResultsList(
+    monumentListRecords
+  );
+
+  drawMonumentRecords(
+    monumentMapRecords
+  );
+
+  drawUncachedLiveEditedMonuments(
+    selectedLiveRecords
+  );
+
   updateShowResultsOnMapButton();
   renderActiveFilterChips();
   updateMapStatusLine();
+  renderLiveMapLabels();
+  updateMapOptionsState();
 
-  if (resultsList) {
-    resultsList.scrollIntoView({
-      behavior: "smooth",
-      block: "nearest"
-    });
-  }
+  fitMapToActiveMonumentMapSelection();
+
+  resultsList?.scrollIntoView({
+    behavior: "smooth",
+    block: "nearest"
+  });
 }
 
 function bindMonumentLayerEvents() {
@@ -16277,11 +16475,22 @@ if (monumentPreviewCloseBtn) {
 }
 
 if (siteSearch) {
-  siteSearch.addEventListener("input", scheduleMonumentSearchAndMapRedraw);
+    siteSearch.addEventListener(
+    "input",
+    () => {
+      activeMonumentMapSelection = null;
+      scheduleMonumentSearchAndMapRedraw();
+    }
+  );
 }
 
 if (filterCaalId) {
-  filterCaalId.addEventListener("input", scheduleMonumentSearchAndMapRedraw);
+  filterCaalId.addEventListener("input",
+    () => {
+      activeMonumentMapSelection = null;
+      scheduleMonumentSearchAndMapRedraw();
+    }
+  );
 }
 
 [
@@ -16294,6 +16503,7 @@ if (filterCaalId) {
 ].forEach((selectEl) => {
   if (selectEl) {
     selectEl.addEventListener("change", () => {
+      activeMonumentMapSelection = null;
       applyMonumentFilters({ includeMap: true, listFirst: true });
     });
   }
@@ -16301,12 +16511,18 @@ if (filterCaalId) {
 
 if (showResultsOnMapBtn) {
   showResultsOnMapBtn.addEventListener("click", () => {
+    if (activeMonumentMapSelection) {
+      fitMapToActiveMonumentMapSelection();
+      return;
+    }
+
     showCurrentMonumentResultsOnMap();
   });
 }
 
 if (filterToMapViewBtn) {
   filterToMapViewBtn.addEventListener("click", async () => {
+    activeMonumentMapSelection = null;
     await applyMapViewFilterFromCurrentMap();
   });
 
@@ -16315,12 +16531,14 @@ if (filterToMapViewBtn) {
 
 if (drawMonumentSpatialPolygonBtn) {
   drawMonumentSpatialPolygonBtn.addEventListener("click", () => {
+    activeMonumentMapSelection = null;
     startMonumentSpatialPolygonDrawing();
   });
 }
 
 if (cancelMonumentSpatialDrawBtn) {
   cancelMonumentSpatialDrawBtn.addEventListener("click", () => {
+    activeMonumentMapSelection = null;
     cancelMonumentSpatialPolygonDrawing({
       clearCompletedPolygon: true
     });
@@ -17122,6 +17340,17 @@ document.addEventListener("DOMContentLoaded", async () => {
     map.on("moveend", () => {
       if (suppressNextMapMoveReload) {
         suppressNextMapMoveReload = false;
+        return;
+      }
+      /*
+        A map-stack selection is a fixed result set.
+
+        Panning or zooming may update borders, but must not
+        reload the normal monument query and replace the
+        selected records on the map.
+      */
+      if (activeMonumentMapSelection) {
+        scheduleCentralAsiaBordersReload();
         return;
       }
 
