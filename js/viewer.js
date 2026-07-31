@@ -1139,6 +1139,58 @@ const VIEWER_CHIP_MULTISELECTS = [
   }
 ];
 
+/*
+  Served by /api/viewer/lookups from viewerFieldMap.CONDITIONAL_FIELDS so
+  the backend stays the single source of truth. The literal below is only
+  a fallback for a failed or stale lookups response — if these two ever
+  disagree, the backend wins and the export is the thing to trust.
+*/
+const VIEWER_FIELD_APPLICABILITY_FALLBACK = {
+  country: [
+    "rs3_poly", "rs3_line", "rs3_group",
+    "institution", "vernacular", "monument", "archive"
+  ],
+  monument_types: ["rs3_poly", "rs3_line", "rs3_group", "monument"],
+  condition_levels: ["rs3_poly", "rs3_line"],
+  deterioration_causes: ["rs3_poly", "rs3_line"],
+  risk_levels: ["rs3_poly", "rs3_line"]
+};
+ 
+let viewerFieldApplicability = { ...VIEWER_FIELD_APPLICABILITY_FALLBACK };
+
+/*
+  One entry per advanced filter. `field` must match the key in
+  viewerFieldMap.CONDITIONAL_FIELDS and the data-filter-field attribute
+  in the markup. risk_levels covers two sibling groups (type and minimum
+  level), so more than one element may carry the same field.
+*/
+const VIEWER_FILTER_CONTROLS = [
+  {
+    field: "country",
+    selects: [viewerFilterCountry],
+    chipsIds: ["viewerFilterCountryChips"]
+  },
+  {
+    field: "monument_types",
+    selects: [viewerFilterMonumentType],
+    chipsIds: ["viewerFilterMonumentTypeChips"]
+  },
+  {
+    field: "condition_levels",
+    selects: [viewerFilterCondition],
+    chipsIds: ["viewerFilterConditionChips"]
+  },
+  {
+    field: "deterioration_causes",
+    selects: [viewerFilterDeteriorationCause],
+    chipsIds: ["viewerFilterDeteriorationCauseChips"]
+  },
+  {
+    field: "risk_levels",
+    selects: [viewerFilterRiskType, viewerFilterRiskMin],
+    chipsIds: ["viewerFilterRiskTypeChips"]
+  }
+];
 
 function getViewerDefaultMapView() {
   const workspaceCode = getViewerSessionWorkspaceCode();
@@ -2316,6 +2368,10 @@ async function loadBoundarySummaryIntoPopup(thisPopup, boundaryId) {
 }
 
 function showViewerReferencePopup(feature, lngLat) {
+  if (viewerMapInteractionToolIsActive()) {
+    return;
+  }
+
   const props = feature?.properties || {};
   const type = String(props.record_type || "");
 
@@ -2423,18 +2479,30 @@ function bindViewerReferenceLayerPopups() {
     if (!viewerMap.getLayer(layerId)) return;
 
     viewerMap.on("mouseenter", layerId, () => {
+      if (viewerMapInteractionToolIsActive()) {
+        updateViewerMapToolCursor();
+        return;
+      }
+
       viewerMap.getCanvas().style.cursor = "pointer";
     });
 
     viewerMap.on("mouseleave", layerId, () => {
-      viewerMap.getCanvas().style.cursor = "";
+      updateViewerMapToolCursor();
     });
 
-    viewerMap.on("click", layerId, (e) => {
-      const f = e.features?.[0];
-      if (!f) return;
+    viewerMap.on("click", layerId, (event) => {
+      if (viewerMapInteractionToolIsActive()) {
+        return;
+      }
 
-      showViewerReferencePopup(f, e.lngLat);
+      const feature = event.features?.[0];
+      if (!feature) return;
+
+      showViewerReferencePopup(
+        feature,
+        event.lngLat
+      );
     });
 
     viewerReferencePopupLayersBound.add(layerId);
@@ -3424,6 +3492,144 @@ function updateViewerDisplayLayerAvailability() {
   });
 }
 
+/*
+  Which of the currently ticked layers a filter actually constrains.
+ 
+  applies    - at least one ticked layer carries the field
+  scope      - the ticked layers that carry it
+  universal  - every ticked layer carries it, so no scope note is needed
+*/
+function viewerFilterScopeFor(field, activeTypes) {
+  const applicable = viewerFieldApplicability[field];
+ 
+  if (!applicable) {
+    return { applies: true, scope: activeTypes, universal: true };
+  }
+ 
+  const scope = activeTypes.filter(
+    (recordType) => applicable.includes(recordType)
+  );
+ 
+  return {
+    applies: scope.length > 0,
+    scope,
+    universal: scope.length > 0 && scope.length === activeTypes.length
+  };
+}
+ 
+/* "Applies to RS3 polygons, RS3 lines only. Other layers are unaffected." */
+function viewerFilterScopeSentence(recordTypes) {
+  const labels = recordTypes
+    .map((recordType) => VIEWER_RECORD_TYPE_LABELS[recordType] || recordType)
+    .join(", ");
+ 
+  return t(
+    "viewer_filter_applies_to",
+    "Applies to {types} only. Other layers are unaffected."
+  ).replace("{types}", labels);
+}
+ 
+/*
+  The scope note is generated rather than authored, so a change to the
+  applicability map can never leave a stale sentence behind in the markup.
+  It lands directly after the container's own heading or label.
+*/
+function viewerFilterScopeNoteEl(container) {
+  let note = container.querySelector(":scope > .viewer-filter-scope");
+ 
+  if (!note) {
+    note = document.createElement("p");
+    note.className = "filter-help-text viewer-filter-scope";
+ 
+    const anchor = container.querySelector(":scope > h4, :scope > label");
+ 
+    if (anchor) anchor.insertAdjacentElement("afterend", note);
+    else container.prepend(note);
+  }
+ 
+  return note;
+}
+ 
+function viewerSetScopeNote(container, scopeInfo) {
+  const note = viewerFilterScopeNoteEl(container);
+ 
+  if (!scopeInfo || !scopeInfo.applies || scopeInfo.universal) {
+    note.hidden = true;
+    note.textContent = "";
+    return;
+  }
+ 
+  note.hidden = false;
+  note.textContent = viewerFilterScopeSentence(scopeInfo.scope);
+}
+ 
+function updateViewerFilterApplicability() {
+  const activeTypes = getSelectedResourceTypes();
+ 
+  /*
+    Sections first. Where every filter in a section shares one scope —
+    as the remote sensing block does — the section owns the note and the
+    controls inside it stay quiet, rather than repeating the same
+    sentence three times.
+  */
+  const ownedBySection = new Set();
+ 
+  document.querySelectorAll("[data-filter-section]").forEach((section) => {
+    const fields = [...new Set(
+      Array.from(section.querySelectorAll("[data-filter-field]"))
+        .map((el) => el.getAttribute("data-filter-field"))
+    )];
+ 
+    const applying = fields
+      .map((field) => viewerFilterScopeFor(field, activeTypes))
+      .filter((info) => info.applies);
+ 
+    section.hidden = applying.length === 0;
+ 
+    const keys = applying.map((info) => info.scope.join("|"));
+    const shared = applying.length > 0 && keys.every((key) => key === keys[0]);
+ 
+    viewerSetScopeNote(section, shared ? applying[0] : null);
+ 
+    if (shared) fields.forEach((field) => ownedBySection.add(field));
+  });
+ 
+  VIEWER_FILTER_CONTROLS.forEach((control) => {
+    const groups = Array.from(
+      document.querySelectorAll(`[data-filter-field="${control.field}"]`)
+    );
+ 
+    if (!groups.length) return;
+ 
+    const scopeInfo = viewerFilterScopeFor(control.field, activeTypes);
+ 
+    groups.forEach((group) => { group.hidden = !scopeInfo.applies; });
+ 
+    /*
+      Selections are deliberately NOT cleared when a control hides.
+      Scoped filtering makes an inapplicable filter a no-op server-side,
+      so the value is harmless, and keeping it means re-ticking the layer
+      restores what the user had. The chips are marked dormant instead.
+    */
+    control.selects.forEach((selectEl) => {
+      if (selectEl) selectEl.disabled = !scopeInfo.applies;
+    });
+ 
+    control.chipsIds.forEach((chipsId) => {
+      const chips = document.getElementById(chipsId);
+      if (chips) {
+        chips.classList.toggle("viewer-filter-dormant", !scopeInfo.applies);
+      }
+    });
+ 
+    // Note lives on the first group only, and only if no section owns it.
+    viewerSetScopeNote(
+      groups[0],
+      ownedBySection.has(control.field) ? null : scopeInfo
+    );
+  });
+}
+
 function resetViewerLayerSelectionsToDefault() {
   VIEWER_RECORD_TYPES.forEach((type) => {
     const filterInput = VIEWER_LAYER_INPUTS[type];
@@ -4076,6 +4282,8 @@ async function loadViewerLookups() {
   }
 
   viewerLookups = data.lookups || {};
+  viewerFieldApplicability =
+    data.fieldApplicability || { ...VIEWER_FIELD_APPLICABILITY_FALLBACK };
 }
 
 function populateViewerFilterLookups() {
@@ -4394,6 +4602,10 @@ function viewerMapPropertyArray(value) {
 
 function showViewerMapPopup(feature, lngLat) {
   if (!viewerMap || !feature?.properties) return;
+
+  if (viewerMapInteractionToolIsActive()) {
+    return;
+  }
 
   if (viewerPopup) {
     viewerPopup.remove();
@@ -8120,10 +8332,8 @@ function bindViewerCentroidEvents() {
         "click",
         layerId,
         (event) => {
-          if (
-            viewerSpatialDrawIsActive ||
-            viewerMeasurementIsActive
-          ) {
+          if (viewerMapInteractionToolIsActive()) {
+            updateViewerMapToolCursor();
             return;
           }
 
@@ -8171,10 +8381,8 @@ function bindViewerCentroidEvents() {
         "mouseenter",
         layerId,
         () => {
-          if (
-            viewerSpatialDrawIsActive ||
-            viewerMeasurementIsActive
-          ) {
+          if (viewerMapInteractionToolIsActive()) {
+            updateViewerMapToolCursor();
             return;
           }
 
@@ -8187,8 +8395,7 @@ function bindViewerCentroidEvents() {
         "mouseleave",
         layerId,
         () => {
-          viewerMap.getCanvas()
-            .style.cursor = "";
+          updateViewerMapToolCursor();
         }
       );
     });
@@ -8197,10 +8404,8 @@ function bindViewerCentroidEvents() {
       "click",
       group.unclustered,
       (event) => {
-        if (
-          viewerSpatialDrawIsActive ||
-          viewerMeasurementIsActive
-        ) {
+        if (viewerMapInteractionToolIsActive()) {
+          updateViewerMapToolCursor();
           return;
         }
 
@@ -8222,10 +8427,8 @@ function bindViewerCentroidEvents() {
       "mouseenter",
       group.unclustered,
       () => {
-        if (
-          viewerSpatialDrawIsActive ||
-          viewerMeasurementIsActive
-        ) {
+        if (viewerMapInteractionToolIsActive()) {
+          updateViewerMapToolCursor();
           return;
         }
 
@@ -8238,8 +8441,7 @@ function bindViewerCentroidEvents() {
       "mouseleave",
       group.unclustered,
       () => {
-        viewerMap.getCanvas()
-          .style.cursor = "";
+        updateViewerMapToolCursor();
       }
     );
   });
@@ -8971,25 +9173,62 @@ function ensureViewerStyleLayers(recordType) {
   }
 }
 
-function bindViewerLayerEvents(recordType, layerIds) {
+function bindViewerLayerEvents(
+  recordType,
+  layerIds
+) {
   layerIds.forEach((layerId) => {
-    if (viewerLayerEventsBound.has(layerId)) return;
-    if (!viewerMap.getLayer(layerId)) return;
+    if (viewerLayerEventsBound.has(layerId)) {
+      return;
+    }
 
-    viewerMap.on("mouseenter", layerId, () => {
-      viewerMap.getCanvas().style.cursor = "pointer";
-    });
+    if (!viewerMap.getLayer(layerId)) {
+      return;
+    }
 
-    viewerMap.on("mouseleave", layerId, () => {
-      viewerMap.getCanvas().style.cursor = "";
-    });
+    viewerMap.on(
+      "mouseenter",
+      layerId,
+      () => {
+        if (viewerMapInteractionToolIsActive()) {
+          updateViewerMapToolCursor();
+          return;
+        }
 
-    viewerMap.on("click", layerId, (event) => {
-      const feature = event.features?.[0];
-      if (!feature?.properties) return;
+        viewerMap.getCanvas().style.cursor =
+          "pointer";
+      }
+    );
 
-      showViewerMapPopup(feature, event.lngLat);
-    });
+    viewerMap.on(
+      "mouseleave",
+      layerId,
+      () => {
+        updateViewerMapToolCursor();
+      }
+    );
+
+    viewerMap.on(
+      "click",
+      layerId,
+      (event) => {
+        if (viewerMapInteractionToolIsActive()) {
+          return;
+        }
+
+        const feature =
+          event.features?.[0];
+
+        if (!feature?.properties) {
+          return;
+        }
+
+        showViewerMapPopup(
+          feature,
+          event.lngLat
+        );
+      }
+    );
 
     viewerLayerEventsBound.add(layerId);
   });
@@ -9214,7 +9453,8 @@ async function applyCompletedViewerSpatialPolygon(
   featureId,
   geometry
 ) {
-  const polygon = normaliseViewerSpatialPolygon(geometry);
+  const polygon =
+    normaliseViewerSpatialPolygon(geometry);
 
   if (!polygon) {
     cancelViewerSpatialPolygonDrawing({
@@ -9226,28 +9466,41 @@ async function applyCompletedViewerSpatialPolygon(
         "viewer_spatial_polygon_invalid",
         "The drawn area was not valid. Draw a simpler polygon."
       ),
-      { isError: true }
+      {
+        isError: true
+      }
     );
 
     return false;
   }
 
+  /*
+    Preserve the polygon separately as the active
+    search filter.
+  */
   viewerSpatialDrawFeatureId = featureId;
   activeViewerSpatialPolygon = polygon;
 
-  // Polygon and rectangular extent filters are mutually exclusive.
+  // Polygon and rectangular extent filters are
+  // mutually exclusive.
   activeMapViewFilterBbox = null;
 
   viewerSpatialDrawIsActive = false;
   viewerSpatialDrawCoordinates = [];
 
   if (viewerSpatialDraw) {
-    viewerSpatialDraw.setMode("viewer-spatial-render");
+    viewerSpatialDraw.setMode(
+      "viewer-spatial-render"
+    );
   }
 
-  if (viewerMap) {
-    viewerMap.getCanvas().style.cursor = "";
-  }
+  /*
+    Remove the temporary TerraDraw polygon now that
+    its geometry has been stored as the active filter.
+  */
+  removeViewerSpatialDrawFeature();
+
+  updateViewerMapToolCursor();
 
   updateViewerSpatialPolygonButton();
   updateFilterToMapViewButton();
@@ -9652,10 +9905,6 @@ function startViewerSpatialPolygonDrawing() {
     cancelViewerMeasurementDrawing();
   }
 
-  if (viewerMeasurementIsActive) {
-    cancelViewerMeasurementDrawing();
-  }
-
   removeViewerSpatialDrawFeature();
 
   activeViewerSpatialPolygon = null;
@@ -9664,13 +9913,13 @@ function startViewerSpatialPolygonDrawing() {
 
   viewerSpatialDrawIsActive = true;
   viewerSpatialDraw.setMode("polygon");
+  closeViewerMapPopupsForTool();
+  updateViewerMapToolCursor();
 
   if (viewerPopup) {
     viewerPopup.remove();
     viewerPopup = null;
   }
-
-  viewerMap.getCanvas().style.cursor = "crosshair";
 
   updateViewerSpatialPolygonButton();
   updateFilterToMapViewButton();
@@ -9693,9 +9942,7 @@ function cancelViewerSpatialPolygonDrawing({
     activeViewerSpatialPolygon = null;
   }
 
-  if (viewerMap) {
-    viewerMap.getCanvas().style.cursor = "";
-  }
+  updateViewerMapToolCursor();
 
   updateViewerSpatialPolygonButton();
   setViewerSpatialDrawMessage(false);
@@ -10881,9 +11128,7 @@ function clearViewerMeasurement({
     viewerMeasurementMode = null;
   }
 
-  if (viewerMap) {
-    viewerMap.getCanvas().style.cursor = "";
-  }
+  updateViewerMapToolCursor();
 
   updateViewerMeasurementLayers();
   updateViewerMeasurementButtons();
@@ -10893,9 +11138,7 @@ function clearViewerMeasurement({
 function cancelViewerMeasurementDrawing() {
   viewerMeasurementIsActive = false;
 
-  if (viewerMap) {
-    viewerMap.getCanvas().style.cursor = "";
-  }
+  updateViewerMapToolCursor();
 
   updateViewerMeasurementButtons();
   updateViewerMeasurementResult();
@@ -10931,13 +11174,39 @@ function finishViewerMeasurement() {
 
   viewerMeasurementIsActive = false;
 
-  if (viewerMap) {
-    viewerMap.getCanvas().style.cursor = "";
-  }
+  updateViewerMapToolCursor();
 
   updateViewerMeasurementLayers();
   updateViewerMeasurementButtons();
   updateViewerMeasurementResult();
+}
+
+function viewerMapInteractionToolIsActive() {
+  return (
+    viewerSpatialDrawIsActive ||
+    viewerMeasurementIsActive
+  );
+}
+
+function updateViewerMapToolCursor() {
+  mapElement?.classList.toggle(
+    "is-map-tool-active",
+    viewerMapInteractionToolIsActive()
+  );
+
+  if (!viewerMap) return;
+
+  viewerMap.getCanvas().style.cursor =
+    viewerMapInteractionToolIsActive()
+      ? "crosshair"
+      : "";
+}
+
+function closeViewerMapPopupsForTool() {
+  if (viewerPopup) {
+    viewerPopup.remove();
+    viewerPopup = null;
+  }
 }
 
 function startViewerMeasurement(mode) {
@@ -10961,9 +11230,10 @@ function startViewerMeasurement(mode) {
   viewerMeasurementCoordinates = [];
   viewerMeasurementIsActive = true;
 
-  viewerMeasurementPanel.hidden = false;
+  closeViewerMapPopupsForTool();
+  updateViewerMapToolCursor();
 
-  viewerMap.getCanvas().style.cursor = "crosshair";
+  viewerMeasurementPanel.hidden = false;
 
   updateViewerMeasurementLayers();
   updateViewerMeasurementButtons();
@@ -13645,6 +13915,7 @@ function wireViewerEvents() {
         }
 
         updateViewerDisplayLayerAvailability();
+        updateViewerFilterApplicability();
 
         await reloadViewer({
           includeMap: true
@@ -14013,6 +14284,7 @@ async function initViewerPage() {
     updateFilterToMapViewButton();
     renderViewerRecordDetails(null);
     populateViewerFilterLookups();
+    updateViewerFilterApplicability();
 
     wireViewerEvents();
     wireViewerClickToggleMultiSelects();

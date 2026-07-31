@@ -15,8 +15,6 @@ const {
   getSessionWorkspaceCode
 } = require("./workspaceStorage");
 
-
-
 const router = express.Router();
 
 // ========================================================
@@ -554,7 +552,7 @@ async function loadViewerRelationsForCaalId(caalId) {
   }));
 }
 
-// ========================================================
+// =========================================================
 // SOURCE SCOPE SQL
 // ========================================================
 
@@ -735,8 +733,13 @@ function buildViewerWhereSql({
   const values = [];
   const clauses = [];
   let index = baseParamIndex;
-
+  
   const p = tableAlias ? `${tableAlias}.` : "";
+
+  // "strict" reproduces the pre-change behaviour for A/B comparison.
+  const filterMode =
+    String(req.query.filterMode || "scoped") === "strict" ? "strict" : "scoped";
+  const scopedFilters = [];
 
   const workspaceCode = getSessionWorkspaceCode(session) || "caal";
   values.push(workspaceCode);
@@ -787,7 +790,12 @@ function buildViewerWhereSql({
   const countries = parseCsvParam(req.query.countries);
 
   if (countries.length) {
-    clauses.push(`COALESCE(${p}filter_country_canonical, ${p}filter_country) = ANY($${index}::text[])`);
+    clauses.push(scopeFilterSql(
+      "country",
+      `COALESCE(${p}filter_country_canonical, ${p}filter_country) = ANY($${index}::text[])`,
+      p, filterMode
+    ));
+    scopedFilters.push("country");
     values.push(countries);
     index += 1;
   }
@@ -795,12 +803,13 @@ function buildViewerWhereSql({
   const monumentTypes = parseCsvParam(req.query.monumentTypes);
 
   if (monumentTypes.length) {
-    clauses.push(`
-      (
-        ${monumentTypeDescendantFilterSql(`${p}filter_monument_type_concept_ids`, `$${index}`)}
-        OR ${p}filter_monument_types && $${index}::text[]
-      )
-    `);
+    clauses.push(scopeFilterSql(
+      "monument_types",
+      `${monumentTypeDescendantFilterSql(`${p}filter_monument_type_concept_ids`, `$${index}`)}
+        OR ${p}filter_monument_types && $${index}::text[]`,
+      p, filterMode
+    ));
+    scopedFilters.push("monument_types");
     values.push(monumentTypes);
     index += 1;
   }
@@ -808,7 +817,12 @@ function buildViewerWhereSql({
   const conditionLevels = parseIntCsvParam(req.query.condition);
 
   if (conditionLevels.length) {
-    clauses.push(`${p}filter_condition_levels && $${index}::int[]`);
+    clauses.push(scopeFilterSql(
+      "condition_levels",
+      `${p}filter_condition_levels && $${index}::int[]`,
+      p, filterMode
+    ));
+    scopedFilters.push("condition_levels");
     values.push(conditionLevels);
     index += 1;
   }
@@ -816,7 +830,12 @@ function buildViewerWhereSql({
   const deteriorationCauses = parseCsvParam(req.query.deteriorationCause);
 
   if (deteriorationCauses.length) {
-    clauses.push(`${p}filter_deterioration_causes && $${index}::text[]`);
+    clauses.push(scopeFilterSql(
+      "deterioration_causes",
+      `${p}filter_deterioration_causes && $${index}::text[]`,
+      p, filterMode
+    ));
+    scopedFilters.push("deterioration_causes");
     values.push(deteriorationCauses);
     index += 1;
   }
@@ -827,7 +846,7 @@ function buildViewerWhereSql({
   if (riskTypes.length) {
     const effectiveRiskMin = riskMin ?? 2;
 
-    clauses.push(`
+    clauses.push(scopeFilterSql("risk_levels", `
       EXISTS (
         SELECT 1
         FROM jsonb_each_text(${p}filter_risk_levels) AS risk(key, value)
@@ -838,12 +857,13 @@ function buildViewerWhereSql({
                 ELSE NULL
               END >= $${index + 1}::int
       )
-    `);
+    `, p, filterMode));
+    scopedFilters.push("risk_levels");
 
     values.push(riskTypes, effectiveRiskMin);
     index += 2;
   } else if (riskMin !== null) {
-    clauses.push(`
+    clauses.push(scopeFilterSql("risk_levels", `
       EXISTS (
         SELECT 1
         FROM jsonb_each_text(${p}filter_risk_levels) AS risk(key, value)
@@ -853,7 +873,8 @@ function buildViewerWhereSql({
                 ELSE NULL
               END >= $${index}::int
       )
-    `);
+    `, p, filterMode));
+    scopedFilters.push("risk_levels");
 
     values.push(riskMin);
     index += 1;
@@ -956,7 +977,9 @@ function buildViewerWhereSql({
     values,
     nextParamIndex: index,
     scopes,
-    recordTypes
+    recordTypes,
+    filterMode,
+    scopedFilters
   };
 }
 
@@ -1217,7 +1240,7 @@ function buildExportEstimateSql({ whereSql, scopesParam, includeRelated }) {
 
   return `
     WITH sel_dedup AS (
-      SELECT DISTINCT v.caal_id_norm
+      SELECT DISTINCT v.caal_id_norm, v.record_type, v.source_schema
       FROM ${VIEWER_BASE_MV} v
       ${whereSql}
     )${relatedCtes}
@@ -1414,6 +1437,12 @@ const path = require("path");
 const { writeGeoPackage } = require("./viewerGeoPackage");
 const { buildKml } = require("./viewerKml");
 
+const {
+  COMMON_FIELDS, fieldsForRecordType, commonFields, rowValues,
+  CONDITIONAL_FIELDS, scopeFilterSql, vocabArrayJoinsFor,
+  EXPORT_SPECS, exportTypeRecordsSql
+} = require("./viewerFieldMap");
+
 const EXPORT_LANG_SUFFIXES = {
   en: "en", ru: "ru", zh: "zh", kk: "kk",
   ky: "ky", tg: "tg", tk: "tk", uz: "uz"
@@ -1488,11 +1517,13 @@ function exportCtesSql({ whereSql, scopesParam, includeRelated }) {
     )${related}`;
 }
 
-function exportRecordsSql(ctes, sfx) {
-  // One row per resource identity; localised value columns fall back
-  // lang -> en -> canonical/raw (matches viewer display behaviour).
-  return `${ctes}
-    , picked AS (
+/**
+ * Body of the `picked` CTE: one row per resource identity, with localised
+ * value columns. Extracted so the thin export and each per-type export
+ * build on an identical selection and cannot drift apart.
+ */
+function pickedCteBody(sfx) {
+  return `
       SELECT DISTINCT ON (v.caal_id_norm)
         v.caal_id, v.caal_id_norm, v.record_type, v.dataset_label,
         v.display_label,
@@ -1539,7 +1570,14 @@ function exportRecordsSql(ctes, sfx) {
         OFFSET 0
       ) wkt
       ORDER BY v.caal_id_norm, v.record_type
-    )
+  `;
+}
+
+function exportRecordsSql(ctes, sfx) {
+  // One row per resource identity; localised value columns fall back
+  // lang -> en -> canonical/raw (matches viewer display behaviour).
+  return `${ctes}
+    , picked AS (${pickedCteBody(sfx)})
     SELECT * FROM picked
     ORDER BY export_role, record_type, caal_id`;
 }
@@ -1590,7 +1628,7 @@ function exportRelationshipsSql(ctes, sfx) {
 function exportRecordsGpkgSql(ctes, sfx) {
   return `${ctes}
     , picked AS (
-      SELECT DISTINCT ON (v.caal_id_norm)
+      SELECT DISTINCT ON (v.caal_id_norm, v.record_type, v.source_schema)
         v.caal_id, v.caal_id_norm, v.record_type, v.dataset_label,
         v.display_label,
         COALESCE(v.filter_country_${sfx}, v.filter_country_en,
@@ -1628,7 +1666,7 @@ function exportRecordsGpkgSql(ctes, sfx) {
              THEN 'selected' ELSE 'related' END AS export_role
       FROM ${VIEWER_BASE_MV} v
       JOIN export_set es ON es.caal_id_norm = v.caal_id_norm
-      ORDER BY v.caal_id_norm, v.record_type
+      ORDER BY v.caal_id_norm, v.record_type, v.source_schema, v.source_row_id
     )
     SELECT * FROM picked
     ORDER BY export_role, record_type, caal_id`;
@@ -1878,48 +1916,132 @@ router.get("/export", async (req, res) => {
       refreshedAt = cache.rows[0] ? cache.rows[0].at : null;
     } catch (e) { /* non-fatal */ }
 
-    // 4. Compose the three CSVs
+    // 4. Compose the CSV bundle.
+    //    records.csv  - common columns only, every row
+    //    <type>.csv   - one per record type present, with that type's columns
+    //    manifest.csv - what is in the zip and what each file's columns are
+    const commonCols = commonFields("csv");
     const recordsCsv = csvFile(
-      ["caal_id","export_role","record_type","dataset_label","display_label",
-       "country","monument_types","condition_levels","deterioration_causes",
-       "risk_levels","centroid_lon","centroid_lat","geometry_wkt",
-       "geometry_truncated","source_schema","source_table","source_row_id"],
-      records.map(r => [
-        r.caal_id, r.export_role, r.record_type, r.dataset_label,
-        r.display_label, r.country, r.monument_types, r.condition_levels,
-        r.deterioration_causes, r.risk_levels, r.centroid_lon, r.centroid_lat,
-        r.geometry_wkt, r.geometry_truncated, r.source_schema,
-        r.source_table, r.source_row_id
-      ])
+      commonCols,
+      records.map(r => rowValues(r, commonCols))
     );
 
+    const byRecordType = new Map();
+    for (const r of records) {
+      const t = r.record_type || "unknown";
+      if (!byRecordType.has(t)) byRecordType.set(t, []);
+      byRecordType.get(t).push(r);
+    }
+
+    // Record types with an export spec get the full column set from their
+    // own MV; everything else keeps the thin common+applicable columns.
+    // A failed rich query falls back rather than failing the whole export,
+    // and the manifest records which path each file took.
+    const layerFiles = [];
+    for (const [recordType, rows] of [...byRecordType.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0]))) {
+
+      let file = null;
+
+      if (EXPORT_SPECS[recordType]) {
+        try {
+          const typeQuery = exportTypeRecordsSql({
+            ctes,
+            pickedSql: pickedCteBody(sfx),
+            recordType,
+            lang,
+            commonCols
+          });
+          const typeRows = (await pool.query(typeQuery.sql, values)).rows;
+
+          // An inner join to the per-type MV can silently drop rows the
+          // thin query found — e.g. a workspace whose MV does not exist.
+          const dropped = rows.length - typeRows.length;
+          if (dropped !== 0) {
+            console.warn(
+              `[viewer/export] ${recordType}: spec query returned ` +
+              `${typeRows.length} of ${rows.length} rows (${dropped} unmatched)`
+            );
+          }
+
+          file = {
+            name: `${recordType}.csv`,
+            recordType,
+            columns: typeQuery.columns,
+            rowCount: typeRows.length,
+            columnsSource: dropped === 0 ? "spec" : `spec (${dropped} rows unmatched)`,
+            content: csvFile(
+              typeQuery.columns,
+              typeRows.map(r => rowValues(r, typeQuery.columns))
+            )
+          };
+        } catch (err) {
+          console.warn(
+            `[viewer/export] ${recordType}: spec query failed, ` +
+            `falling back to common columns — ${err.message}`
+          );
+        }
+      }
+
+      if (!file) {
+        const cols = fieldsForRecordType(recordType, "csv");
+        file = {
+          name: `${recordType}.csv`,
+          recordType,
+          columns: cols,
+          rowCount: rows.length,
+          columnsSource: "common",
+          content: csvFile(cols, rows.map(r => rowValues(r, cols)))
+        };
+      }
+
+      layerFiles.push(file);
+    }
+
+    const RELATIONSHIP_HEADER = [
+      "edge_id","from_caal_id","from_display_label","from_record_type",
+      "from_role","relationship","to_caal_id","to_display_label",
+      "to_record_type","to_role","inverse_relationship"
+    ];
     const relationshipsCsv = csvFile(
-      ["edge_id","from_caal_id","from_display_label","from_record_type",
-       "from_role","relationship","to_caal_id","to_display_label",
-       "to_record_type","to_role","inverse_relationship"],
-      relationships.map(r => [
-        r.edge_id, r.from_caal_id, r.from_display_label, r.from_record_type,
-        r.from_role, r.relationship, r.to_caal_id, r.to_display_label,
-        r.to_record_type, r.to_role, r.inverse_relationship
-      ])
+      RELATIONSHIP_HEADER,
+      relationships.map(r => RELATIONSHIP_HEADER.map(f => r[f]))
     );
 
-    const infoCsv = csvFile(
-      ["key", "value"],
+    const infoRows = [
+      ["generated_at", new Date().toISOString()],
+      ["language", lang],
+      ["include_related", String(includeRelated)],
+      ["selected_record_count", String(selected)],
+      ["related_record_count", String(Number(est.related_record_count || 0))],
+      ["relationship_count", String(relationships.length)],
+      ["record_limit", String(exportLimitFor(format))],
+      ["data_refreshed_at", refreshedAt ? new Date(refreshedAt).toISOString() : "unknown"],
+      ["coordinate_reference_system", "EPSG:4326 (WGS84 lon/lat)"],
+      ["geometry_note",
+       `geometry_wkt omitted and geometry_truncated=true when WKT exceeds ${EXPORT_WKT_MAX_CHARS} chars; use centroid or a GIS format for full geometry`],
+      ["column_note",
+       "Per-record-type files carry only the columns that apply to that type. A column absent from a file means the concept does not exist for that record type, not that the value is unrecorded."],
+      ["filters", req.originalUrl.split("?")[1] || ""],
+      ["source", "CAAL Viewer export"]
+    ];
+    const infoCsv = csvFile(["key", "value"], infoRows);
+
+    const manifestCsv = csvFile(
+      ["file", "record_type", "row_count", "column_count", "columns_source", "columns"],
       [
-        ["generated_at", new Date().toISOString()],
-        ["language", lang],
-        ["include_related", String(includeRelated)],
-        ["selected_record_count", String(selected)],
-        ["related_record_count", String(Number(est.related_record_count || 0))],
-        ["relationship_count", String(relationships.length)],
-        ["record_limit", String(exportLimitFor(format))],
-        ["data_refreshed_at", refreshedAt ? new Date(refreshedAt).toISOString() : "unknown"],
-        ["coordinate_reference_system", "EPSG:4326 (WGS84 lon/lat)"],
-        ["geometry_note",
-         `geometry_wkt omitted and geometry_truncated=true when WKT exceeds ${EXPORT_WKT_MAX_CHARS} chars; use centroid or a GIS format for full geometry`],
-        ["filters", req.originalUrl.split("?")[1] || ""],
-        ["source", "CAAL Viewer export"]
+        ["records.csv", "(all types)", String(records.length),
+         String(commonCols.length), commonCols.join("; ")],
+        ...layerFiles.map(f => [
+          f.name, f.recordType, String(f.rowCount),
+          String(f.columns.length), f.columnsSource, f.columns.join("; ")
+        ]),
+        ...(includeRelated ? [[
+          "relationships.csv", "(edges)", String(relationships.length),
+          String(RELATIONSHIP_HEADER.length), RELATIONSHIP_HEADER.join("; ")
+        ]] : []),
+        ["export_information.csv", "(provenance)", String(infoRows.length),
+         "2", "key; value"]
       ]
     );
 
@@ -1932,7 +2054,9 @@ router.get("/export", async (req, res) => {
     const zip = archiver("zip", { zlib: { level: 6 } });
     zip.on("error", err => { throw err; });
     zip.pipe(res);
+    zip.append(manifestCsv, { name: "manifest.csv" });
     zip.append(recordsCsv, { name: "records.csv" });
+    for (const f of layerFiles) zip.append(f.content, { name: f.name });
     if (includeRelated) zip.append(relationshipsCsv, { name: "relationships.csv" });
     zip.append(infoCsv, { name: "export_information.csv" });
     await zip.finalize();
@@ -2051,6 +2175,7 @@ router.get("/lookups", async (req, res) => {
       ok: true,
       page: "viewer",
       language: lang,
+      fieldApplicability: CONDITIONAL_FIELDS,
       lookups: {
         country: countriesResult.rows,
         monument_type: monumentTypesResult.rows,

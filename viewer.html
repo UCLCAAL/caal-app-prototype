@@ -493,7 +493,7 @@
               />
             </div>
 
-            <div class="filter-group chip-multiselect-group">
+            <div class="filter-group chip-multiselect-group" data-filter-field="country">
               <label for="viewerFilterCountry" data-i18n="country">Country</label>
               <div class="selected-filter-chips" id="viewerFilterCountryChips"></div>
               <select
@@ -506,7 +506,7 @@
               </p>
             </div>
 
-            <div class="filter-group chip-multiselect-group">
+            <div class="filter-group chip-multiselect-group" data-filter-field="monument_types">
               <label for="viewerFilterMonumentType" data-i18n="monument_type">Monument Type</label>
               <div class="selected-filter-chips" id="viewerFilterMonumentTypeChips"></div>
 
@@ -523,13 +523,10 @@
               </p>
             </div>
 
-            <div class="advanced-filter-section">
+            <div class="advanced-filter-section" data-filter-section="rs_assessments">
               <h4 data-i18n="viewer_remote_sensing_assessments">Remote sensing assessments</h4>
-              <p class="filter-help-text" data-i18n="viewer_rs_assessments_help">
-                Applies to RS3 polygon and line records.
-              </p>
 
-              <div class="filter-group chip-multiselect-group">
+              <div class="filter-group chip-multiselect-group" data-filter-field="condition_levels">
                 <label for="viewerFilterCondition" data-i18n="overall_condition">
                   Overall condition
                 </label>
@@ -550,7 +547,7 @@
                 </p>
               </div>
 
-              <div class="filter-group chip-multiselect-group">
+              <div class="filter-group chip-multiselect-group" data-filter-field="deterioration_causes">
                 <label for="viewerFilterDeteriorationCause" data-i18n="causes_of_deterioration">
                   Causes of deterioration
                 </label>
@@ -577,7 +574,7 @@
                 </p>
               </div>
 
-              <div class="filter-group chip-multiselect-group">
+              <div class="filter-group chip-multiselect-group" data-filter-field="risk_levels">
                 <label for="viewerFilterRiskType" data-i18n="type_of_risk">
                   Type of risk
                 </label>
@@ -604,10 +601,8 @@
                 </p>
               </div>
 
-              <div class="filter-group">
+              <div class="filter-group" data-filter-field="risk_levels">
                 <label for="viewerFilterRiskMin" data-i18n="minimum_risk_level">
-                  Minimum risk level
-                </label>
                 <select id="viewerFilterRiskMin" class="form-control">
                   <option value="" data-i18n="any_level">Any level</option>
                   <option value="2" data-i18n="risk_level_2_or_higher">2 - Low or higher</option>

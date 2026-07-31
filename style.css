@@ -1851,8 +1851,17 @@ svg {
 .advanced-filter-section h4 {
   margin: 0;
   font-size: 0.92rem;
-  font-weight: 800;
-  color: #334155;
+  font-weight: 700;
+  color: #3f5059;
+}
+
+.viewer-filter-scope {
+  margin: 0 0 0.15rem;
+  padding-left: 0.5rem;
+  border-left: 2px solid #cbd5e1;
+  color: var(--muted);
+  font-size: 0.8rem;
+  line-height: 1.35;
 }
 
 .filter-field {
@@ -1873,6 +1882,16 @@ svg {
   color: #64748b;
   font-size: 0.82rem;
   line-height: 1.3;
+}
+
+.viewer-filter-dormant {
+  opacity: 0.45;
+  pointer-events: none;
+}
+
+
+#map.is-map-tool-active .maplibregl-canvas {
+  cursor: crosshair !important;
 }
 
 /* =========================================================
@@ -2587,7 +2606,7 @@ svg {
 .filter-group label {
   display: block;
   font-size: 0.85rem;
-  color: var(--muted);
+  color: #3f5059;
   margin-bottom: 0.3rem;
 }
 
