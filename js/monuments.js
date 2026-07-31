@@ -213,7 +213,8 @@ let monumentIsAddMode = false;
 let monumentPendingNewRecord = null;
 let monumentIsDirty = false;
 
-let monumentEditOriginalRecord = null;
+let monumentEditOriginalRecord = null; // useful for cancel
+let monumentEditBaselinePayload = null; // records exactly what the rendered edit form contained when editing began
 
 function cloneMonumentRecordForEdit(record) {
   if (!record) return null;
@@ -4641,16 +4642,47 @@ function mRenderLegacyMultiSelect({
   const inputId = `monument_multi_${fieldBase.replace(/[^a-zA-Z0-9]+/g, "_")}`;
   const chipsId = `${inputId}_chips`;
 
-  const selectedValues = mLegacyMultiValues(record, fieldBase, count).map(String);
+  const selectedValues = mLegacyMultiValues(
+    record,
+    fieldBase,
+    count
+  )
+    .map((value) =>
+      resolveMonumentLookupValue(lookupName, value)
+    )
+    .filter(Boolean);
 
   const options = mLookupOptions(lookupName);
 
   const optionsHtml = options
     .map((item) => {
-      const value = String(item.value ?? "");
-      const selected = selectedValues.includes(value) ? "selected" : "";
+      const value = monumentLookupStorageValue(item);
 
-      return `<option value="${value}" ${selected}>${item.label ?? value}</option>`;
+      if (!value) {
+        return "";
+      }
+
+      const selected = selectedValues.some(
+        (selectedValue) =>
+          normaliseMonumentLookupToken(selectedValue) ===
+          normaliseMonumentLookupToken(value)
+      )
+        ? "selected"
+        : "";
+
+      const optionLabel =
+        item.label ??
+        item.display_label ??
+        value;
+
+      return `
+        <option
+          value="${mAttributeValue(value)}"
+          ${selected}
+        >
+          ${optionLabel}
+        </option>
+      `;
     })
     .join("");
 
@@ -4671,7 +4703,10 @@ function mRenderLegacyMultiSelect({
         data-field-name="${mAttributeValue(fieldBase)}"
         data-field-base="${mAttributeValue(fieldBase)}"
         data-field-count="${count}"
-        data-original-value="${mAttributeValue(selectedValues.join(", "))}"
+        data-original-value="${mAttributeValue(
+          [...selectedValues].join(", ")
+        )}"
+        data-lookup-name="${mAttributeValue(lookupName)}"
       >
         ${optionsHtml}
       </select>
@@ -4767,12 +4802,7 @@ function sortLegacyTreeItems(items, treeLookupName) {
 }
 
 function getTreeItemValue(item) {
-  return String(
-    item?.value ||
-    item?.canonical_value ||
-    item?.concept_id ||
-    ""
-  ).trim();
+  return monumentLookupStorageValue(item);
 }
 
 function getTreeItemConceptId(item) {
@@ -4787,14 +4817,18 @@ function normaliseTreeItems(treeItems) {
   return (Array.isArray(treeItems) ? treeItems : []).map((item) => {
     const conceptId = getTreeItemConceptId(item);
     const parentId = getTreeItemParentId(item);
-    const value = getTreeItemValue(item) || conceptId;
+    const value = getTreeItemValue(item);
 
     return {
       ...item,
       concept_id: conceptId,
       parent_id: parentId,
       value,
-      label: item.label || item.display_label || item.display_en || value,
+      label:
+        item.label ||
+        item.display_label ||
+        item.display_en ||
+        value,
       chip_label:
         item.chip_label ||
         item.path_label ||
@@ -4932,7 +4966,13 @@ function mRenderLegacyTreePicker({
   const inputId = `legacy_tree_${safeKey}`;
   const chipsId = `${inputId}_chips`;
 
-  const selectedValues = mLegacyMultiValues(record, fieldBase, count).map(String);
+  const selectedValues = new Set(
+    mLegacyMultiValues(record, fieldBase, count)
+      .map((value) =>
+        resolveMonumentLookupValue(treeLookupName, value)
+      )
+      .filter(Boolean)
+  );
   const treeItems = Array.isArray(monumentLookups?.[treeLookupName])
     ? monumentLookups[treeLookupName]
     : [];
@@ -4970,7 +5010,8 @@ function mRenderLegacyTreePicker({
     const parentId = getTreeItemParentId(item);
     const value = getTreeItemValue(item);
     const children = childrenByParent.get(conceptId) || [];
-    const checked = selectedValues.includes(String(value));
+    const checked =
+     selectedValues.has(String(value));
     const hasChildren = children.length > 0;
 
     return `
@@ -5039,7 +5080,9 @@ function mRenderLegacyTreePicker({
         class="detail-item${fullWidth ? " full-width" : ""} legacy-tree-picker"
         data-field-base="${mAttributeValue(fieldBase)}"
         data-field-count="${count}"
-        data-original-value="${mAttributeValue(selectedValues.join(", "))}"
+        data-original-value="${mAttributeValue(
+          [...selectedValues].join(", ")
+        )}"
       >
         <span class="detail-label">${label}</span>
 
@@ -5378,6 +5421,108 @@ function mLookupLabel(lookupName, value) {
   return match ? (match.label ?? match.value ?? value) : value;
 }
 
+function normaliseMonumentLookupToken(value) {
+  return String(value ?? "").trim().toLocaleLowerCase();
+}
+
+function monumentLookupStorageValue(item) {
+  if (!item) return "";
+
+  const canonical = String(
+    item?.canonical_value ??
+    item?.raw?.canonical_value ??
+    ""
+  ).trim();
+
+  if (canonical) {
+    return canonical;
+  }
+
+  const value = String(item?.value ?? "").trim();
+
+  const conceptId = String(
+    item?.concept_id ??
+    item?.raw?.concept_id ??
+    ""
+  ).trim();
+
+  /*
+    Do not use a concept ID as the stored user-facing field value.
+  */
+  if (value && (!conceptId || value !== conceptId)) {
+    return value;
+  }
+
+  return "";
+}
+
+function monumentLookupItemAliases(item) {
+  const raw = item?.raw || {};
+
+  const values = [
+    item?.value,
+    item?.canonical_value,
+    item?.concept_id,
+    item?.label,
+    item?.display_label,
+    item?.chip_label,
+    item?.label_en,
+
+    item?.display_en,
+    item?.display_ru,
+    item?.display_zh,
+    item?.display_kk,
+    item?.display_ky,
+    item?.display_tg,
+    item?.display_tk,
+    item?.display_uz,
+
+    raw?.canonical_value,
+    raw?.concept_id,
+    raw?.label_en,
+
+    raw?.display_en,
+    raw?.display_ru,
+    raw?.display_zh,
+    raw?.display_kk,
+    raw?.display_ky,
+    raw?.display_tg,
+    raw?.display_tk,
+    raw?.display_uz
+  ];
+
+  return new Set(
+    values
+      .map(normaliseMonumentLookupToken)
+      .filter(Boolean)
+  );
+}
+
+function resolveMonumentLookupItem(lookupName, value) {
+  const token = normaliseMonumentLookupToken(value);
+  if (!token) return null;
+
+  return (
+    mLookupOptions(lookupName, { sort: false }).find((item) =>
+      monumentLookupItemAliases(item).has(token)
+    ) || null
+  );
+}
+
+function resolveMonumentLookupValue(lookupName, value) {
+  const original = String(value ?? "").trim();
+  if (!original) return "";
+
+  const item = resolveMonumentLookupItem(lookupName, original);
+
+  if (!item) {
+    // Unknown legacy value: preserve it rather than deleting it.
+    return original;
+  }
+
+  return monumentLookupStorageValue(item) || original;
+}
+
 function mRecordSearchText(record) {
   const fields = [
     mIdentity(record, "caal_id"),
@@ -5555,11 +5700,6 @@ function mBuildSavePayload() {
   payload["Start Date"] = normaliseDateValue(dateScratchRecord.raw["Start Date"]);
   payload["End Date"] = normaliseDateValue(dateScratchRecord.raw["End Date"]);
 
-  if (monumentSelectedRecord?.raw) {
-    monumentSelectedRecord.raw["Start Date"] = payload["Start Date"];
-    monumentSelectedRecord.raw["End Date"] = payload["End Date"];
-  }
-
   if (monumentUserCanEditMasterId()) {
     payload["MasterID"] = normaliseRelatedIdList(mGetInputValue("MasterID"));
   }
@@ -5568,6 +5708,128 @@ function mBuildSavePayload() {
   payload._source_scope = monumentSelectedRecord?.source?.scope || null;
 
   return payload;
+}
+
+function cloneMonumentPayload(payload) {
+  return JSON.parse(
+    JSON.stringify(payload || {})
+  );
+}
+
+function normaliseMonumentPatchCompareValue(value) {
+  if (
+    value === undefined ||
+    value === null ||
+    value === ""
+  ) {
+    return null;
+  }
+
+  if (typeof value === "string") {
+    return value.trim();
+  }
+
+  return value;
+}
+
+function monumentPatchValuesEqual(a, b) {
+  return (
+    JSON.stringify(
+      normaliseMonumentPatchCompareValue(a)
+    ) ===
+    JSON.stringify(
+      normaliseMonumentPatchCompareValue(b)
+    )
+  );
+}
+
+function captureMonumentEditBaseline() {
+  monumentEditBaselinePayload =
+    cloneMonumentPayload(
+      mBuildSavePayload()
+    );
+}
+
+function mBuildPatchPayload(
+  currentPayload = mBuildSavePayload()
+) {
+  /*
+    Fail closed.
+
+    If something has gone wrong and we did not capture an
+    edit baseline, do NOT fall back to sending the complete
+    form as a PATCH.
+  */
+  if (!monumentEditBaselinePayload) {
+    throw new Error(
+      "Monument edit baseline is unavailable. Cancel editing and reopen the record before saving."
+    );
+  }
+
+  const patch = {};
+
+  Object.entries(currentPayload).forEach(
+    ([field, value]) => {
+      /*
+        These are routing metadata rather than table fields.
+        Add them separately below.
+      */
+      if (field.startsWith("_")) {
+        return;
+      }
+
+      const originalValue =
+        monumentEditBaselinePayload[field];
+
+      if (
+        !monumentPatchValuesEqual(
+          originalValue,
+          value
+        )
+      ) {
+        patch[field] = value;
+      }
+    }
+  );
+
+  /*
+    Longitude and Latitude must travel as a pair.
+
+    This keeps the two coordinate columns and PostGIS geom
+    consistent if either coordinate changed.
+  */
+  const longitudeChanged =
+    Object.prototype.hasOwnProperty.call(
+      patch,
+      "Longitude"
+    );
+
+  const latitudeChanged =
+    Object.prototype.hasOwnProperty.call(
+      patch,
+      "Latitude"
+    );
+
+  if (longitudeChanged || latitudeChanged) {
+    patch["Longitude"] =
+      currentPayload["Longitude"];
+
+    patch["Latitude"] =
+      currentPayload["Latitude"];
+  }
+
+  /*
+    Backend needs these to identify the real storage target.
+    They are not database fields because normaliseMonumentPayload()
+    ignores them.
+  */
+  patch._storage_scope =
+    currentPayload._storage_scope;
+
+  patch._source_scope =
+    currentPayload._source_scope;
+
+  return patch;
 }
 
 function validateLegacyMultiSelectLimits() {
@@ -5640,37 +5902,69 @@ function mAttributeValue(value) {
     .replace(/>/g, "&gt;");
 }
 
-function mRenderTextInput(fieldName, label, value, fullWidth = false) {
+function mRenderTextInput(
+  fieldName,
+  label,
+  value,
+  fullWidth = false
+) {
   const inputId = mInputId(fieldName);
-  const fullWidthClass = fullWidth ? " full-width" : "";
+  const fullWidthClass =
+    fullWidth ? " full-width" : "";
+
+  const safeValue =
+    mAttributeValue(value ?? "");
+
   return `
     <div class="detail-item${fullWidthClass}">
-      <label class="detail-label" for="${inputId}">${label}</label>
+      <label
+        class="detail-label"
+        for="${inputId}"
+      >
+        ${label}
+      </label>
+
       <input
         type="text"
         id="${inputId}"
         class="form-control"
-        value="${value ?? ""}"
-        data-field-name="${fieldName}"
-        data-original-value="${mAttributeValue(value ?? "")}"
+        value="${safeValue}"
+        data-field-name="${mAttributeValue(fieldName)}"
+        data-original-value="${safeValue}"
       >
     </div>
   `;
 }
 
-function mRenderTextarea(fieldName, label, value, fullWidth = true) {
+function mRenderTextarea(
+  fieldName,
+  label,
+  value,
+  fullWidth = true
+) {
   const inputId = mInputId(fieldName);
-  const fullWidthClass = fullWidth ? " full-width" : "";
+  const fullWidthClass =
+    fullWidth ? " full-width" : "";
+
+  const safeValue =
+    mAttributeValue(value ?? "");
+
   return `
     <div class="detail-item${fullWidthClass}">
-      <label class="detail-label" for="${inputId}">${label}</label>
+      <label
+        class="detail-label"
+        for="${inputId}"
+      >
+        ${label}
+      </label>
+
       <textarea
         id="${inputId}"
         class="form-control"
         rows="4"
-        data-field-name="${fieldName}"
-        data-original-value="${mAttributeValue(value ?? "")}"
-      >${value ?? ""}</textarea>
+        data-field-name="${mAttributeValue(fieldName)}"
+        data-original-value="${safeValue}"
+      >${safeValue}</textarea>
     </div>
   `;
 }
@@ -5699,27 +5993,72 @@ function mRenderReadOnlyItem(label, value, fullWidth = false) {
   return mRenderDetailItem(label, value, fullWidth);
 }
 
-function mRenderSelect(fieldName, label, lookupName, currentValue, fullWidth = false, lookupOptions = {}) {
+function mRenderSelect(
+  fieldName,
+  label,
+  lookupName,
+  currentValue,
+  fullWidth = false,
+  lookupOptions = {}
+) {
   const inputId = mInputId(fieldName);
   const fullWidthClass = fullWidth ? " full-width" : "";
 
-  const optionsHtml = mLookupOptions(lookupName, lookupOptions)
+  const rawCurrentValue = String(currentValue ?? "").trim();
+
+  const resolvedCurrentValue =
+    resolveMonumentLookupValue(lookupName, rawCurrentValue);
+
+  const options = mLookupOptions(lookupName, lookupOptions);
+
+  const representedValues = new Set();
+
+  const optionsHtml = options
     .map((item) => {
-      const value = item.value ?? "";
-      const selected = String(value) === String(currentValue ?? "") ? "selected" : "";
-      const label = item.label ?? value;
+      const value = monumentLookupStorageValue(item);
+      if (!value) return "";
+
+      representedValues.add(value);
+
+      const selected =
+        normaliseMonumentLookupToken(value) ===
+        normaliseMonumentLookupToken(resolvedCurrentValue)
+          ? "selected"
+          : "";
+
+      const optionLabel =
+        item.label ??
+        item.display_label ??
+        value;
 
       return `
         <option
           value="${mAttributeValue(value)}"
-          title="${mAttributeValue(label)}"
+          title="${mAttributeValue(optionLabel)}"
           ${selected}
         >
-          ${label}
+          ${optionLabel}
         </option>
       `;
     })
     .join("");
+
+  /*
+    Preserve a genuinely unresolved legacy value.
+    Do not discard it merely because it is absent from today's lookup.
+  */
+  const legacyOption =
+    resolvedCurrentValue &&
+    !representedValues.has(resolvedCurrentValue)
+      ? `
+        <option
+          value="${mAttributeValue(resolvedCurrentValue)}"
+          selected
+        >
+          ${mSafeValue(rawCurrentValue || resolvedCurrentValue)}
+        </option>
+      `
+      : "";
 
   return `
     <div class="detail-item${fullWidthClass}">
@@ -5727,15 +6066,79 @@ function mRenderSelect(fieldName, label, lookupName, currentValue, fullWidth = f
       <select
         id="${inputId}"
         class="form-control"
-        data-field-name="${fieldName}"
-        data-original-value="${mAttributeValue(currentValue ?? "")}"
-        title="${mAttributeValue(mLookupLabel(lookupName, currentValue) || "")}"
+        data-field-name="${mAttributeValue(fieldName)}"
+        data-lookup-name="${mAttributeValue(lookupName)}"
+        data-original-value="${mAttributeValue(resolvedCurrentValue)}"
+        title="${mAttributeValue(
+          mLookupLabel(lookupName, resolvedCurrentValue) || ""
+        )}"
       >
         <option value=""></option>
+        ${legacyOption}
         ${optionsHtml}
       </select>
     </div>
   `;
+}
+
+function monumentEditCompareValue(inputEl, useOriginal = false) {
+  if (!inputEl) return "";
+
+  const lookupName = String(
+    inputEl.dataset.lookupName || ""
+  ).trim();
+
+  let values;
+
+  if (useOriginal) {
+    if (inputEl.multiple) {
+      values = String(inputEl.dataset.originalValue || "")
+        .split(",")
+        .map((value) => value.trim())
+        .filter(Boolean);
+    } else {
+      values = [inputEl.dataset.originalValue || ""];
+    }
+  } else if (inputEl.multiple) {
+    values = Array.from(inputEl.selectedOptions || [])
+      .map((option) => String(option.value || "").trim())
+      .filter(Boolean);
+  } else {
+    values = [inputEl.value || ""];
+  }
+
+  values = values.map((value) => {
+    if (!lookupName) {
+      return normaliseEditCompareValue(value);
+    }
+
+    return resolveMonumentLookupValue(lookupName, value);
+  });
+
+  if (inputEl.multiple) {
+    return [...new Set(values.filter(Boolean))]
+      .sort()
+      .join("\u001f");
+  }
+
+  return values[0] || "";
+}
+
+function updateMonumentChangedFieldState(inputEl) {
+  if (!inputEl) return;
+
+  const original = monumentEditCompareValue(inputEl, true);
+  const current = monumentEditCompareValue(inputEl, false);
+
+  const changed = original !== current;
+
+  const wrapper = inputEl.closest(".detail-item");
+
+  if (wrapper) {
+    wrapper.classList.toggle("field-changed", changed);
+  }
+
+  inputEl.classList.toggle("field-changed-input", changed);
 }
 
 const MONUMENT_REPEATABLE_MAX = 4;
@@ -6358,12 +6761,20 @@ function updateMonumentActionBar() {
     monumentCloseRecordBtn.hidden = monumentIsEditMode || !hasSelectedRecord;
   }
 
+  const deleteStorageScope = String(
+    monumentSelectedRecord?.source?.storage || ""
+  ).trim();
+
+  const isSupportedDeleteStorage =
+    deleteStorageScope === "public_caal" ||
+    deleteStorageScope.endsWith("_workspace");
+
   const canDelete =
     monumentIsEditMode &&
     hasSelectedRecord &&
     canEditThisRecord &&
-    monumentSelectedRecord?.source?.scope === "workspace" &&
-    monumentSelectedRecord?.identity?.id;
+    isSupportedDeleteStorage &&
+    !!monumentSelectedRecord?.identity?.id;
 
   if (monumentDeleteBtn) {
     monumentDeleteBtn.hidden = !canDelete;
@@ -8614,6 +9025,7 @@ function clearSelectedMonumentRecord() {
   monumentSelectedRecord = null;
   monumentPendingNewRecord = null;
   monumentEditOriginalRecord = null;
+  monumentEditBaselinePayload = null;
 
   monumentIsEditMode = false;
   monumentIsDirty = false;
@@ -14057,6 +14469,162 @@ function mRenderExternalReferenceItem(label, value) {
   `;
 }
 
+function monumentSaveSummaryLookupNames(
+  fieldName
+) {
+  if (fieldName === "Country") {
+    return ["country"];
+  }
+
+  if (fieldName === "Classification") {
+    return ["classification"];
+  }
+
+  if (fieldName === "Designation") {
+    return ["designation"];
+  }
+
+  if (
+    /^Monument Type[1-6]$/.test(
+      fieldName
+    )
+  ) {
+    return [
+      "monument_type",
+      "monument_type_tree"
+    ];
+  }
+
+  if (
+    /^Religion[1-3]$/.test(
+      fieldName
+    )
+  ) {
+    return ["religion"];
+  }
+
+  if (
+    /^Cultural Period[1-6]$/.test(
+      fieldName
+    )
+  ) {
+    return [
+      "cultural_period",
+      "cultural_period_tree"
+    ];
+  }
+
+  if (
+    fieldName ===
+    "Location Confidence"
+  ) {
+    return ["location_confidence"];
+  }
+
+  if (
+    /^Administrative Subdivision Type[1-4]$/.test(
+      fieldName
+    )
+  ) {
+    return [
+      "admin_subdivision_type"
+    ];
+  }
+
+  if (
+    /^Measurement Unit[1-4]$/.test(
+      fieldName
+    )
+  ) {
+    return ["measurement_unit"];
+  }
+
+  if (
+    /^Measurement Type[1-4]$/.test(
+      fieldName
+    )
+  ) {
+    return ["measurement_type"];
+  }
+
+  return [];
+}
+
+function findMonumentSaveSummaryLookupItem(
+  fieldName,
+  value
+) {
+  const preferredNames =
+    monumentSaveSummaryLookupNames(
+      fieldName
+    );
+
+  for (const lookupName of preferredNames) {
+    const item =
+      resolveMonumentLookupItem(
+        lookupName,
+        value
+      );
+
+    if (item) {
+      return item;
+    }
+  }
+
+  /*
+    For any other controlled lookup, only use
+    an automatic match if it is unambiguous.
+  */
+  const matches = [];
+
+  Object.keys(monumentLookups || {})
+    .forEach((lookupName) => {
+      const item =
+        resolveMonumentLookupItem(
+          lookupName,
+          value
+        );
+
+      if (item) {
+        matches.push(item);
+      }
+    });
+
+  return matches.length === 1
+    ? matches[0]
+    : null;
+}
+
+window.formatMonumentSaveSummaryValue =
+  function (fieldName, value) {
+    if (
+      value === null ||
+      value === undefined ||
+      value === ""
+    ) {
+      return t(
+        "not_recorded",
+        "Not recorded"
+      );
+    }
+
+    const item =
+      findMonumentSaveSummaryLookupItem(
+        fieldName,
+        value
+      );
+
+    if (!item) {
+      return String(value);
+    }
+
+    return String(
+      item.label ??
+      item.display_label ??
+      value
+    );
+  };
+
 function renderMonumentDisplayMode(record) {
   const appSession = window.appSession || null;
   const accessLevel =
@@ -15154,6 +15722,8 @@ window.monumentCanChangeLanguage = function () {
   monumentIsDirty = false;
   monumentPendingNewRecord = null;
   monumentIsAddMode = false;
+  monumentEditOriginalRecord = null;
+  monumentEditBaselinePayload = null;
   updateAddModeUI();
 
   clearMonumentDraftMapState();
@@ -15175,10 +15745,34 @@ async function saveCurrentMonumentRecord() {
   if (!validateRelatedFieldsBeforeSave()) return;
   if (!validateLegacyMultiSelectLimits()) return;
 
-  const payload = mBuildSavePayload();
-
   const record = monumentSelectedRecord;
   const isNewRecord = !record?.identity?.id;
+
+  const fullPayload =
+    mBuildSavePayload();
+
+  const payload =
+    isNewRecord
+      ? fullPayload
+      : mBuildPatchPayload(fullPayload);
+
+  if (!isNewRecord) {
+    const changedFields =
+      Object.keys(payload).filter(
+        (field) => !field.startsWith("_")
+      );
+
+    if (!changedFields.length) {
+      alert(
+        t(
+          "no_changes_to_save",
+          "No changes to save."
+        )
+      );
+
+      return;
+    }
+  }
 
   if (isNewRecord && !validateNewMonumentLocationBeforeSave(payload)) {
     return;
@@ -15271,6 +15865,7 @@ async function saveCurrentMonumentRecord() {
 
     monumentPendingNewRecord = null;
     monumentEditOriginalRecord = null;
+    monumentEditBaselinePayload = null;
 
     monumentIsEditMode = false;
     monumentSyncModeVisualState();
@@ -15439,6 +16034,7 @@ function cancelCurrentMonumentEdit() {
   ) {
     monumentPendingNewRecord = null;
     monumentEditOriginalRecord = null;
+    monumentEditBaselinePayload = null;
 
     clearMonumentDraftMapState();
     clearSelectedMonumentMapHighlight();
@@ -15475,6 +16071,7 @@ function cancelCurrentMonumentEdit() {
   }
 
   monumentEditOriginalRecord = null;
+  monumentEditBaselinePayload = null;
 
   /*
     Remove unsaved moved/new point before redrawing the
@@ -15528,20 +16125,51 @@ async function monumentDeleteCurrentRecord() {
 
   if (!record?.identity?.id) return;
 
-  if (record.source?.scope !== "workspace") {
-    alert(mLabel("Only workspace records can be deleted.", "Only workspace records can be deleted."));
+  const storageScope = String(
+    record.source?.storage || ""
+  ).trim();
+
+  const isSupportedDeleteStorage =
+    storageScope === "public_caal" ||
+    storageScope.endsWith("_workspace");
+
+  if (!isSupportedDeleteStorage) {
+    alert(
+      t(
+        "monument_delete_storage_unsupported",
+        "This record cannot be deleted from its current storage location."
+      )
+    );
     return;
   }
 
-  const caalId = record.identity?.caal_id || mLabel("this record", "this record");
-  const name = record.summary?.primary_name || record.summary?.primary_name_english || "";
+  const caalId =
+    record.identity?.caal_id ||
+    mLabel("this record", "this record");
+
+  const name =
+    record.summary?.primary_name ||
+    record.summary?.primary_name_english ||
+    "";
+
+  const isPublicDelete =
+    storageScope === "public_caal";
+
+  const deleteWarning = isPublicDelete
+    ? t(
+        "delete_public_monument_warning",
+        "This will delete the record from the public CAAL table. A recovery copy will be kept in the record registry."
+      )
+    : t(
+        "delete_workspace_monument_warning",
+        "This will delete the record from the workspace. A recovery copy will be kept in the record registry."
+      );
 
   const confirmed = window.confirm(
-    `${mLabel("Delete monument record", "Delete monument record")} ${caalId}?\n\n${name}\n\n` +
-    mLabel(
-      "This will remove it from the workspace, but a recovery copy will be kept in the registry.",
-      "This will remove it from the workspace, but a recovery copy will be kept in the registry."
-    )
+    `${t(
+      "delete_monument_record",
+      "Delete monument record"
+    )} ${caalId}?\n\n${name}\n\n${deleteWarning}`
   );
 
   if (!confirmed) return;
@@ -15772,6 +16400,7 @@ if (addMonumentBtn) {
 
     monumentLastSaveSummary = null;
     monumentEditOriginalRecord = null;
+    monumentEditBaselinePayload = null;
 
     clearFocusedResultHighlight();
     clearSelectedMonumentMapHighlight();
@@ -15803,9 +16432,7 @@ if (monumentEditBtn) {
     monumentLastSaveSummary = null;
 
     /*
-      Preserve exactly what was loaded before editing.
-      Several edit controls deliberately mutate
-      monumentSelectedRecord while the form is open.
+      Preserve the raw record for Cancel.
     */
     monumentEditOriginalRecord =
       cloneMonumentRecordForEdit(
@@ -15816,9 +16443,20 @@ if (monumentEditBtn) {
     monumentSyncModeVisualState();
     monumentIsDirty = false;
 
+    /*
+      Render first so legacy/localised controlled values
+      are resolved into the actual edit controls.
+    */
     renderMonumentRecordDetails(
       monumentSelectedRecord
     );
+
+    /*
+      Snapshot the rendered form. Existing-record PATCHes
+      will then contain only values actually changed after
+      editing began.
+    */
+    captureMonumentEditBaseline();
 
     updateSelectedResultCard();
   });
@@ -16041,23 +16679,6 @@ document.addEventListener("app:languageChanged", async () => {
 
 function normaliseEditCompareValue(value) {
   return String(value ?? "").trim();
-}
-
-function updateMonumentChangedFieldState(inputEl) {
-  if (!inputEl) return;
-
-  const original = normaliseEditCompareValue(inputEl.dataset.originalValue);
-  const current = normaliseEditCompareValue(inputEl.value);
-
-  const changed = original !== current;
-
-  const wrapper = inputEl.closest(".detail-item");
-
-  if (wrapper) {
-    wrapper.classList.toggle("field-changed", changed);
-  }
-
-  inputEl.classList.toggle("field-changed-input", changed);
 }
 
 function wireMonumentChangedFieldHighlights(root = recordDetails) {
@@ -16438,7 +17059,10 @@ document.addEventListener("DOMContentLoaded", async () => {
       monumentIsAddMode = false;
       monumentIsEditMode = true;
       updateAddModeUI();
-      renderMonumentRecordDetails(monumentSelectedRecord);
+      renderMonumentRecordDetails(
+        monumentSelectedRecord
+      );
+
       updateSelectedResultCard();
     });
 

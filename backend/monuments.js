@@ -3951,6 +3951,176 @@ function valuesDifferForLog(oldValue, newValue) {
     JSON.stringify(normaliseLogValue(newValue));
 }
 
+function controlledLookupForMonumentField(field) {
+  if (field === "Country") {
+    return { view: "ui.v_lkp_countries", matchConceptId: false };
+  }
+
+  if (field === "Classification") {
+    return { view: "ui.v_lkp_classifications", matchConceptId: false };
+  }
+
+  if (/^Monument Type[1-6]$/.test(field)) {
+    return {
+      view: "ui.v_lkp_site_types_context",
+      matchConceptId: true
+    };
+  }
+
+  if (/^Cultural Period[1-6]$/.test(field)) {
+    return {
+      view: "ui.v_lkp_cultural_periods_context",
+      matchConceptId: true
+    };
+  }
+
+  if (/^Religion[1-3]$/.test(field)) {
+    return { view: "ui.v_lkp_religion", matchConceptId: false };
+  }
+
+  if (field === "Location Confidence") {
+    return { view: "ui.v_lkp_loc_acc_ass", matchConceptId: false };
+  }
+
+  if (/^Administrative Subdivision Type[1-4]$/.test(field)) {
+    return { view: "ui.v_lkp_admin_type", matchConceptId: false };
+  }
+
+  if (/^Measurement Unit[1-4]$/.test(field)) {
+    return {
+      view: "ui.v_lkp_unit_of_measurement",
+      matchConceptId: false
+    };
+  }
+
+  if (/^Measurement Type[1-4]$/.test(field)) {
+    return {
+      view: "ui.v_lkp_measurement_type",
+      matchConceptId: false
+    };
+  }
+
+  if (field === "Designation") {
+    return {
+      view: "ui.v_lkp_designation_type",
+      matchConceptId: false
+    };
+  }
+
+  return null;
+}
+
+async function resolveControlledCanonicalValue(
+  field,
+  value,
+  cache = new Map()
+) {
+  const config = controlledLookupForMonumentField(field);
+  if (!config) return null;
+
+  const text = String(value ?? "").trim();
+  if (!text) return null;
+
+  const cacheKey =
+    `${config.view}::${text.toLocaleLowerCase()}`;
+
+  if (cache.has(cacheKey)) {
+    return cache.get(cacheKey);
+  }
+
+  const conceptIdClause = config.matchConceptId
+    ? `
+      OR lower(btrim(COALESCE(concept_id, ''))) =
+         lower(btrim($1::text))
+    `
+    : "";
+
+  const result = await pool.query(
+    `
+    SELECT canonical_value
+    FROM ${config.view}
+    WHERE canonical_value IS NOT NULL
+      AND (
+        lower(btrim(canonical_value)) =
+          lower(btrim($1::text))
+
+        OR lower(btrim(COALESCE(display_en, ''))) =
+          lower(btrim($1::text))
+        OR lower(btrim(COALESCE(display_ru, ''))) =
+          lower(btrim($1::text))
+        OR lower(btrim(COALESCE(display_zh, ''))) =
+          lower(btrim($1::text))
+        OR lower(btrim(COALESCE(display_kk, ''))) =
+          lower(btrim($1::text))
+        OR lower(btrim(COALESCE(display_ky, ''))) =
+          lower(btrim($1::text))
+        OR lower(btrim(COALESCE(display_tg, ''))) =
+          lower(btrim($1::text))
+        OR lower(btrim(COALESCE(display_tk, ''))) =
+          lower(btrim($1::text))
+        OR lower(btrim(COALESCE(display_uz, ''))) =
+          lower(btrim($1::text))
+
+        ${conceptIdClause}
+      )
+    LIMIT 1
+    `,
+    [text]
+  );
+
+  const canonical =
+    result.rows[0]?.canonical_value || null;
+
+  cache.set(cacheKey, canonical);
+
+  return canonical;
+}
+
+async function controlledValuesAreEquivalent(
+  field,
+  oldValue,
+  newValue,
+  cache
+) {
+  const config = controlledLookupForMonumentField(field);
+
+  if (!config) {
+    return false;
+  }
+
+  const [oldCanonical, newCanonical] =
+    await Promise.all([
+      resolveControlledCanonicalValue(
+        field,
+        oldValue,
+        cache
+      ),
+      resolveControlledCanonicalValue(
+        field,
+        newValue,
+        cache
+      )
+    ]);
+
+  /*
+    If either value cannot be resolved, do not assume
+    equivalence. This protects genuinely different or
+    unresolved legacy values.
+  */
+  if (!oldCanonical || !newCanonical) {
+    return false;
+  }
+
+  return (
+    normaliseControlledSummaryToken(oldCanonical) ===
+    normaliseControlledSummaryToken(newCanonical)
+  );
+}
+
+function normaliseControlledSummaryToken(value) {
+  return String(value ?? "").trim().toLocaleLowerCase();
+}
+
 function buildChangedValueSnapshots(oldRow, newRow, submittedFields) {
   const changedFields = [];
   const oldValues = {};
@@ -4447,6 +4617,34 @@ const SAVE_SUMMARY_EXCLUDED_FIELDS = new Set([
   "Preferred Language"
 ]);
 
+function isUserFacingSaveSummaryField(field) {
+  const name = String(field || "").trim();
+
+  if (!name) return false;
+
+  if (SAVE_SUMMARY_EXCLUDED_FIELDS.has(name)) {
+    return false;
+  }
+
+  /*
+    Internal controlled-vocabulary / lookup machinery.
+    These may be useful to the database and audit trail,
+    but they must not appear in the user save confirmation.
+  */
+  if (
+    /concept[_\s-]?id/i.test(name) ||
+    /canonical[_\s-]?value/i.test(name) ||
+    /(?:^|[_\s-])canonical$/i.test(name) ||
+    /^filter_/i.test(name) ||
+    /^search_blob/i.test(name) ||
+    /^geom(?:_|$)/i.test(name)
+  ) {
+    return false;
+  }
+
+  return true;
+}
+
 function normaliseSaveSummaryValue(value) {
   if (value === undefined || value === null || value === "") {
     return null;
@@ -4466,7 +4664,10 @@ function buildSavedFieldsFromPayload(payload = {}, options = {}) {
   } = options;
 
   const fields = Object.entries(payload)
-    .filter(([field]) => !exclude.has(field))
+    .filter(([field]) =>
+      !exclude.has(field) &&
+      isUserFacingSaveSummaryField(field)
+    )
     .map(([field, value]) => ({
       field,
       label: field,
@@ -4481,15 +4682,20 @@ function buildSavedFieldsFromPayload(payload = {}, options = {}) {
   };
 }
 
-function buildSavedFieldsFromChangedValues({
+async function buildSavedFieldsFromChangedValues({
   oldRow,
   newRow,
   submittedFields = [],
   maxFields = 18
 }) {
   const fields = [];
+  const lookupCache = new Map();
 
   for (const field of submittedFields) {
+    if (!isUserFacingSaveSummaryField(field)) {
+      continue;
+    }
+
     const oldValue = oldRow?.[field] ?? null;
     const newValue = newRow?.[field] ?? null;
 
@@ -4497,7 +4703,19 @@ function buildSavedFieldsFromChangedValues({
       continue;
     }
 
-    const normalisedNewValue = normaliseSaveSummaryValue(newValue);
+    if (
+      await controlledValuesAreEquivalent(
+        field,
+        oldValue,
+        newValue,
+        lookupCache
+      )
+    ) {
+      continue;
+    }
+
+    const normalisedNewValue =
+      normaliseSaveSummaryValue(newValue);
 
     fields.push({
       field,
@@ -5002,17 +5220,93 @@ router.patch("/monuments/:id", async (req, res) => {
 
   const values = fields.map((field) => payload[field]);
 
-  const lng = payload["Longitude"];
-  const lat = payload["Latitude"];
-
-  if (
-    Number.isFinite(Number(lng)) &&
-    Number.isFinite(Number(lat))
-  ) {
-    setParts.push(
-      `${GEOM_COLUMN_SQL} = ST_SetSRID(ST_MakePoint($${fields.length + 1}, $${fields.length + 2}), 4326)`
+  const hasLongitude =
+    Object.prototype.hasOwnProperty.call(
+      payload,
+      "Longitude"
     );
-    values.push(Number(lng), Number(lat));
+
+  const hasLatitude =
+    Object.prototype.hasOwnProperty.call(
+      payload,
+      "Latitude"
+    );
+
+  if (hasLongitude || hasLatitude) {
+    /*
+      A coordinate edit must contain the pair.
+      The frontend PATCH builder above guarantees this,
+      but enforced server-side too.
+    */
+    if (!hasLongitude || !hasLatitude) {
+      return res.status(400).json({
+        ok: false,
+        error:
+          "Longitude and latitude must be updated together"
+      });
+    }
+
+    const lng = payload["Longitude"];
+    const lat = payload["Latitude"];
+
+    const lngBlank =
+      lng === null ||
+      lng === undefined ||
+      String(lng).trim() === "";
+
+    const latBlank =
+      lat === null ||
+      lat === undefined ||
+      String(lat).trim() === "";
+
+    /*
+      Explicitly removing both coordinates also removes geom.
+    */
+    if (lngBlank && latBlank) {
+      setParts.push(
+        `${GEOM_COLUMN_SQL} = NULL`
+      );
+    } else {
+      const numericLng = Number(lng);
+      const numericLat = Number(lat);
+
+      if (
+        !Number.isFinite(numericLng) ||
+        !Number.isFinite(numericLat)
+      ) {
+        return res.status(400).json({
+          ok: false,
+          error:
+            "Longitude and latitude must both be valid numbers"
+        });
+      }
+
+      if (
+        numericLng < -180 ||
+        numericLng > 180 ||
+        numericLat < -90 ||
+        numericLat > 90
+      ) {
+        return res.status(400).json({
+          ok: false,
+          error:
+            "Longitude must be between -180 and 180, and latitude between -90 and 90"
+        });
+      }
+
+      setParts.push(
+        `${GEOM_COLUMN_SQL} = ST_SetSRID(` +
+        `ST_MakePoint(` +
+        `$${values.length + 1}, ` +
+        `$${values.length + 2}` +
+        `), 4326)`
+      );
+
+      values.push(
+        numericLng,
+        numericLat
+      );
+    }
   }
 
   setParts.push(`"Tstamp" = NOW()`);
@@ -5192,7 +5486,7 @@ router.patch("/monuments/:id", async (req, res) => {
 
     record.relations = await getResourceRelations(pool, record.identity?.caal_id);
 
-    const changedFieldSummary = buildSavedFieldsFromChangedValues({
+    const changedFieldSummary = await buildSavedFieldsFromChangedValues({
       oldRow: oldRowForSummary,
       newRow: freshRow,
       submittedFields: fields
@@ -5271,8 +5565,7 @@ router.delete("/monuments/:id", async (req, res) => {
 
   if (isPublicTarget) {
     const canDeletePublic =
-      isCaalAdmin(currentSession) ||
-      currentSession?.permissions?.can_edit_workspace === true;
+      canEditPublicCaalMonuments(currentSession);
 
     if (!canDeletePublic) {
       return res.status(403).json({

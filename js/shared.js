@@ -754,6 +754,30 @@ function showToast(message, durationMs = 3000) {
 }
 
 // save summary for materialised views
+function getSaveSummaryDisplayValue(
+  item,
+  value,
+  summary
+) {
+  if (
+    summary?.record_type ===
+      "monument" &&
+    typeof window
+      .formatMonumentSaveSummaryValue ===
+      "function"
+  ) {
+    return window
+      .formatMonumentSaveSummaryValue(
+        item?.field,
+        value
+      );
+  }
+
+  return formatSaveSummaryValue(
+    value
+  );
+}
+
 function getSaveSummaryLocale() {
   const lang =
     typeof window.getCurrentLanguage === "function"
@@ -804,10 +828,15 @@ function formatSaveSummaryValue(value) {
 }
 
 function renderSaveSummaryFieldValue(item, summary = {}) {
-  const isChangedFieldsSummary = summary.summary_mode === "changed_fields";
+  const isChangedFieldsSummary =
+    summary.summary_mode === "changed_fields";
 
   if (!isChangedFieldsSummary) {
-    return `<span>${formatSaveSummaryValue(item.value)}</span>`;
+    return `<span>${getSaveSummaryDisplayValue(
+      item,
+      item.value,
+      summary
+    )}</span>`;
   }
 
   const hasOldValue = Object.prototype.hasOwnProperty.call(item, "old_value");
@@ -819,11 +848,19 @@ function renderSaveSummaryFieldValue(item, summary = {}) {
   return `
     <span class="save-summary-change">
       <span class="save-summary-old-value">
-        ${formatSaveSummaryValue(oldValue)}
+        ${getSaveSummaryDisplayValue(
+           item,
+           item.old_value,
+           summary
+         )}
       </span>
       <span class="save-summary-arrow" aria-hidden="true">→</span>
       <span class="save-summary-new-value">
-        ${formatSaveSummaryValue(newValue)}
+        ${getSaveSummaryDisplayValue(
+          item,
+          item.new_value,
+          summary
+        )}
       </span>
     </span>
   `;
