@@ -882,7 +882,7 @@ async function deactivateResourceRelationsForDeletedRecord(db, {
   username = null,
   note = null
 }) {
-  if (!caalId) return;
+  if (!caalId) return [];
 
   const effectiveUsername =
     currentSession?.user?.username ||
@@ -926,7 +926,7 @@ async function deactivateResourceRelationsForDeletedRecord(db, {
       parentId: row.parent_id,
       childId: row.child_id,
       relationType: row.relation_type,
-      action: "deactivated",
+      action: "deactivated_on_delete",
       currentSession,
       username: effectiveUsername,
       oldValues: {
@@ -945,11 +945,107 @@ async function deactivateResourceRelationsForDeletedRecord(db, {
       note: note || `Deactivated because ${caalId} was deleted.`
     });
   }
+  return result.rows.map((row) => row.edge_id);
+}
+
+async function reactivateResourceRelationsForRestoredRecord(db, {
+  caalId,
+  deletedAt = null,
+  sourceSchema = null,
+  sourceTable = null,
+  currentSession = null,
+  username = null
+}) {
+  if (!caalId) return [];
+
+  const effectiveUsername =
+    currentSession?.user?.username ||
+    username ||
+    "web app";
+
+  const result = await db.query(
+    `
+    WITH candidate_edges AS (
+      SELECT e.edge_id
+      FROM public."CAAL_Resource_Relations_edges" e
+      WHERE COALESCE(e.edge_status, 'active') = 'inactive'
+        AND (
+          lower(trim(e.parent_id)) = lower(trim($1))
+          OR lower(trim(e.child_id)) = lower(trim($1))
+        )
+    ),
+    latest_actions AS (
+      SELECT DISTINCT ON (l.edge_id)
+        l.edge_id,
+        l.action
+      FROM public."CAAL_Resource_Relations_web_edit_log" l
+      JOIN candidate_edges c
+        ON c.edge_id = l.edge_id
+      WHERE (
+        $2::timestamptz IS NULL
+        OR l.created_at >= $2::timestamptz
+      )
+      ORDER BY
+        l.edge_id,
+        l.created_at DESC,
+        l.id DESC
+    )
+    UPDATE public."CAAL_Resource_Relations_edges" e
+    SET
+      edge_status = 'active',
+      updated_at = now(),
+      updated_by = $3,
+      notes =
+        COALESCE(e.notes, '') ||
+        E'\\nReactivated because deleted resource was restored.'
+    FROM latest_actions a
+    WHERE e.edge_id = a.edge_id
+      AND a.action = 'deactivated_on_delete'
+    RETURNING
+      e.edge_id,
+      e.parent_id,
+      e.child_id,
+      e.relation_type
+    `,
+    [
+      caalId,
+      deletedAt,
+      effectiveUsername
+    ]
+  );
+
+  for (const row of result.rows) {
+    await logResourceRelationEdit(db, {
+      edgeId: row.edge_id,
+      parentId: row.parent_id,
+      childId: row.child_id,
+      relationType: row.relation_type,
+      action: "reactivated_on_restore",
+      currentSession,
+      username: effectiveUsername,
+      sourceTable:
+        sourceSchema && sourceTable
+          ? `${sourceSchema}.${sourceTable}`
+          : sourceTable,
+      oldValues: {
+        edge_status: "inactive"
+      },
+      newValues: {
+        edge_status: "active"
+      },
+      note: `Reactivated because ${caalId} was restored.`
+    });
+  }
+
+  return result.rows.map(
+    (row) => row.edge_id
+  );
 }
 
 module.exports = {
   getResourceRelations,
   syncResourceRelationsForMonument,
   syncResourceRelationsForArchive,
-  deactivateResourceRelationsForDeletedRecord
+  deactivateResourceRelationsForDeletedRecord,
+  reactivateResourceRelationsForRestoredRecord
 };

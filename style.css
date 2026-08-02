@@ -478,6 +478,18 @@ body {
   max-width: 260px;
 }
 
+.viewer-legend-monument {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #64748b;
+  border: 2px solid #ffffff;
+  box-sizing: border-box;
+
+  /* Makes the white map-style stroke visible on the white legend */
+  box-shadow: 0 0 0 1px rgba(15, 23, 42, 0.28);
+}
+
 .viewer-legend-related {
   background: #7C3AED;          /* same value as VIEWER_COLOURS.related */
   border: 2px solid #ffffff;
@@ -616,6 +628,74 @@ body {
 
 .viewer-measurement-row .measurement-row-fields {
   grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.viewer-coordinate-result {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px 16px;
+}
+
+.viewer-coordinate-result > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.viewer-coordinate-result strong {
+  font-variant-numeric: tabular-nums;
+}
+
+.viewer-coordinate-result-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.viewer-map-coordinate-status {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+
+  min-height: 28px;
+  padding: 4px 12px;
+
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 18px;
+
+  box-sizing: border-box;
+
+  background: rgba(255, 255, 255, 0.92);
+  border-top: 1px solid rgba(100, 116, 139, 0.35);
+
+  color: #334155;
+  font-size: 12px;
+  line-height: 1.4;
+
+  z-index: 3;
+  pointer-events: none;
+
+  backdrop-filter: blur(2px);
+}
+
+.viewer-map-coordinate-status strong {
+  color: #111827;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+/*
+  Leave room for the coordinate bar under the normal
+  MapLibre bottom-left and bottom-right controls.
+*/
+#map.has-coordinate-status .maplibregl-ctrl-bottom-left,
+#map.has-coordinate-status .maplibregl-ctrl-bottom-right {
+  bottom: 28px;
 }
 
 /* =========================================
@@ -828,14 +908,17 @@ body {
   display: block;
 }
 
-/* measurement tool */
+/* ========================================================
+   Viewer map tools / measurement panel
+   ======================================================== */
+
 .viewer-measurement-panel {
   position: absolute;
   top: 0.75rem;
   right: 3.75rem;
   z-index: 30;
 
-  width: min(220px, calc(100% - 5rem));
+  width: min(205px, calc(100% - 5rem));
   padding: 0.65rem;
 
   border: 1px solid #cbd5e1;
@@ -844,16 +927,22 @@ body {
   box-shadow: 0 5px 16px rgba(15, 23, 42, 0.16);
 }
 
+
+/* --------------------------------------------------------
+   Header
+   -------------------------------------------------------- */
+
 .viewer-measurement-panel-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.5rem;
+
   margin-bottom: 0.55rem;
 }
 
 .viewer-measurement-panel-header strong {
-  font-size: 0.95rem;
+  font-size: 0.9rem;
   line-height: 1.2;
 }
 
@@ -862,25 +951,65 @@ body {
   height: 1.6rem;
   min-width: 1.6rem;
   padding: 0;
+
   font-size: 0.9rem;
   font-weight: 600;
 }
 
+
+/* --------------------------------------------------------
+   Tool buttons
+   Distance / Area / Point coordinates
+   -------------------------------------------------------- */
+
 .viewer-measurement-actions {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(3, 1fr);
   gap: 0.45rem;
 }
 
 .viewer-measurement-action {
-  min-height: 2.2rem;
-  padding: 0.4rem 0.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  width: 100%;
+  min-width: 0;
+  height: 2.3rem;
+  min-height: 2.3rem;
+  padding: 0;
 
   border-radius: 8px;
-  font-size: 0.82rem;
-  line-height: 1.15;
-  text-align: center;
+
+  font-size: 0;
+  line-height: 1;
+
+  cursor: pointer;
+}
+
+.viewer-measurement-action .measurement-button-icon {
+  display: inline-flex;
+  align-items: center;
   justify-content: center;
+
+  width: 1.3rem;
+  height: 1.3rem;
+}
+
+.viewer-measurement-action .measurement-button-icon svg {
+  display: block;
+
+  width: 1.3rem;
+  height: 1.3rem;
+}
+
+.viewer-measurement-action:hover {
+  background: #f8fafc;
+}
+
+.viewer-measurement-action:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .viewer-measurement-action.is-active,
@@ -888,14 +1017,31 @@ body {
   border-color: var(--accent);
   background: var(--accent-soft);
   color: var(--accent);
-  font-weight: 700;
 }
+
+
+/* --------------------------------------------------------
+   Instruction
+   -------------------------------------------------------- */
+
+.viewer-measurement-instruction {
+  margin-top: 0.45rem;
+
+  color: #475569;
+  font-size: 0.72rem;
+  line-height: 1.3;
+}
+
+
+/* --------------------------------------------------------
+   Result box
+   -------------------------------------------------------- */
 
 .viewer-measurement-result {
   position: relative;
 
   margin-top: 0.5rem;
-  padding: 0.65rem 3rem 0.65rem 0.75rem;
+  padding: 0.65rem 2.6rem 0.65rem 0.75rem;
 
   border: 1px solid #a8c3b9;
   border-radius: 8px;
@@ -908,9 +1054,151 @@ body {
 
 .viewer-measurement-result strong {
   display: block;
+
   color: var(--accent);
   font-size: 0.92rem;
+  font-weight: 700;
 }
+
+.viewer-measurement-placeholder {
+  color: #64748b;
+  font-size: 0.72rem;
+  font-style: italic;
+}
+
+
+/* --------------------------------------------------------
+   Distance / area secondary result
+   -------------------------------------------------------- */
+
+.viewer-measurement-result-label,
+.viewer-measurement-result-secondary,
+.viewer-measurement-secondary-label,
+.viewer-measurement-secondary-value {
+  display: block;
+}
+
+.viewer-measurement-result-secondary {
+  margin-top: 0.45rem;
+}
+
+.viewer-measurement-secondary-label {
+  color: #3f6258;
+  font-size: 0.72rem;
+}
+
+.viewer-measurement-secondary-value {
+  margin-top: 0.05rem;
+
+  color: var(--accent);
+  font-size: 0.82rem;
+  font-weight: 600;
+
+  white-space: nowrap;
+}
+
+
+/* --------------------------------------------------------
+   Point coordinates result
+   -------------------------------------------------------- */
+
+.viewer-measurement-result {
+  position: relative;
+
+  margin-top: 0.5rem;
+  padding: 0.65rem 2.65rem 0.65rem 0.75rem;
+
+  border: 1px solid #a8c3b9;
+  border-radius: 8px;
+  background: var(--accent-soft);
+
+  color: #29564d;
+  font-size: 0.76rem;
+  line-height: 1.35;
+}
+
+.viewer-coordinate-result {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+}
+
+.viewer-coordinate-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.viewer-coordinate-row > span {
+  color: #3f6258;
+  font-size: 0.72rem;
+}
+
+.viewer-coordinate-row > strong {
+  color: var(--accent);
+  font-size: 0.86rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
+
+/* right-side point-coordinate actions */
+
+.viewer-coordinate-result-actions {
+  position: absolute;
+  top: 0.45rem;
+  right: 0.45rem;
+
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.2rem;
+}
+
+.viewer-coordinate-icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+
+  width: 1.55rem;
+  height: 1.55rem;
+  padding: 0;
+
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+
+  color: var(--accent);
+  cursor: pointer;
+}
+
+.viewer-coordinate-icon-btn svg {
+  width: 0.9rem;
+  height: 0.9rem;
+}
+
+.viewer-coordinate-clear-btn {
+  font-size: 1rem;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.viewer-coordinate-icon-btn:hover,
+.viewer-coordinate-icon-btn:focus-visible {
+  background: rgba(47, 111, 95, 0.1);
+  color: #24584b;
+}
+
+.viewer-coordinate-icon-btn:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* --------------------------------------------------------
+   Inline clear button
+   -------------------------------------------------------- */
 
 .viewer-measurement-clear-inline {
   position: absolute;
@@ -943,79 +1231,7 @@ body {
   background: rgba(47, 111, 95, 0.1);
   color: #24584b;
 }
-
-.viewer-measurement-result-label,
-.viewer-measurement-result-secondary {
-  display: block;
-}
-
-.viewer-measurement-result-secondary {
-  margin-top: 0.15rem;
-}
-
-.viewer-measurement-result-label,
-.viewer-measurement-result-secondary,
-.viewer-measurement-secondary-label,
-.viewer-measurement-secondary-value {
-  display: block;
-}
-
-.viewer-measurement-result-secondary {
-  margin-top: 0.45rem;
-}
-
-.viewer-measurement-secondary-label {
-  color: #3f6258;
-  font-size: 0.72rem;
-}
-
-.viewer-measurement-secondary-value {
-  margin-top: 0.05rem;
-  color: var(--accent);
-  font-size: 0.82rem;
-  font-weight: 600;
-  white-space: nowrap;
-}
-
-.viewer-measurement-instruction {
-  margin-top: 0.45rem;
-  color: #475569;
-  font-size: 0.72rem;
-  line-height: 1.3;
-}
-
-.viewer-measurement-panel .viewer-measurement-action {
-  min-height: 2rem;
-  padding: 0.35rem 0.45rem;
-
-  font-size: 0.76rem;
-  line-height: 1.15;
-  font-weight: 500;
-
-  border-radius: 8px;
-}
-
-.viewer-measurement-panel
-.viewer-measurement-action.is-active,
-.viewer-measurement-panel
-.viewer-measurement-action[aria-pressed="true"] {
-  font-size: 0.76rem;
-  font-weight: 700;
-}
-
-.viewer-measurement-panel-header strong {
-  font-size: 0.9rem;
-}
-
-.viewer-measurement-placeholder {
-  color: #64748b;
-  font-size: 0.72rem;
-  font-style: italic;
-}
-
-.viewer-measurement-panel {
-  width: min(205px, calc(100% - 5rem));
-}
+/* end of measurement tools */
 
 .viewer-external-reference-link {
   overflow-wrap: anywhere;
@@ -2387,6 +2603,49 @@ svg {
 
 .monument-repeatable-add {
   align-self: flex-start;
+}
+
+.deleted-record-notice {
+  margin: 0.75rem 0 1rem;
+  padding: 0.8rem 0.9rem;
+
+  border: 1px solid #aeb6bd;
+  border-left: 4px solid #6b7280;
+  border-radius: 10px;
+
+  background: #f3f4f6;
+  color: #374151;
+}
+
+.deleted-record-notice > strong {
+  display: block;
+  margin-bottom: 0.3rem;
+}
+
+.deleted-record-notice p {
+  margin: 0;
+  line-height: 1.4;
+}
+
+.deleted-record-admin-meta {
+  display: grid;
+  gap: 0.2rem;
+  margin-top: 0.65rem;
+  padding-top: 0.55rem;
+  border-top: 1px solid #d1d5db;
+  font-size: 0.88rem;
+}
+
+.record-status-deleted {
+  background: #e5e7eb;
+  border-color: #9ca3af;
+  color: #4b5563;
+}
+
+.result-card.deleted-cache-card {
+  background: #f3f4f6;
+  border-color: #aeb6bd;
+  opacity: 0.78;
 }
 
 @media (max-width: 1200px) {

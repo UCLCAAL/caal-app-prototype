@@ -115,6 +115,7 @@ const monumentEditBtn = document.getElementById("monumentEditBtn");
 const monumentSaveBtn = document.getElementById("monumentSaveBtn");
 const monumentCancelEditBtn = document.getElementById("monumentCancelEditBtn");
 const monumentDeleteBtn = document.getElementById("monumentDeleteBtn");
+const monumentReinstateBtn = document.getElementById("monumentReinstateBtn");
 const monumentCloseRecordBtn = document.getElementById("monumentCloseRecordBtn");
 
 const refreshMonumentsCacheBtn = document.getElementById("refreshMonumentsCacheBtn");
@@ -328,6 +329,110 @@ function rememberMonumentSaveSummary(summary) {
 }
 
 let monumentUncachedLiveRecords = [];
+let monumentDeletedSinceCacheRecords = [];
+
+function deletedMonumentCaalIdMap() {
+  return new Map(
+    (monumentDeletedSinceCacheRecords || [])
+      .map((record) => [
+        String(
+          record?.identity?.caal_id || ""
+        )
+          .trim()
+          .toLowerCase(),
+        record
+      ])
+      .filter(([key]) => key)
+  );
+}
+
+function reconcileDeletedMonumentRecord(record) {
+  if (!record) return record;
+
+  const caalId = String(
+    record?.identity?.caal_id || ""
+  )
+    .trim()
+    .toLowerCase();
+
+  if (!caalId) return record;
+
+  const deleted =
+    deletedMonumentCaalIdMap().get(caalId);
+
+  if (!deleted) return record;
+
+  /*
+    Use the complete recovery snapshot supplied by the
+    tombstone endpoint, but retain the scope in which this
+    cached result was returned.
+  */
+  return {
+    ...deleted,
+
+    source: {
+      ...(deleted.source || {}),
+      scope:
+        record.source?.scope ||
+        deleted.source?.scope,
+      storage:
+        record.source?.storage ||
+        deleted.source?.storage,
+      is_editable: false,
+      is_deleted: true
+    }
+  };
+}
+
+async function loadDeletedSinceCacheMonuments() {
+  const scopes = getMonumentEnabledScopes();
+
+  if (!scopes.length) {
+    monumentDeletedSinceCacheRecords = [];
+    return [];
+  }
+
+  const lang =
+    (
+      typeof window.getCurrentLanguage ===
+      "function" &&
+      window.getCurrentLanguage()
+    ) ||
+    window.appSession?.profile
+      ?.preferred_language ||
+    "en";
+
+  const params = new URLSearchParams();
+
+  params.set("lang", lang);
+  params.set("scopes", scopes.join(","));
+
+  const response = await fetch(
+    `/api/monuments/deleted-since-cache?${params.toString()}`,
+    {
+      method: "GET",
+      credentials: "include"
+    }
+  );
+
+  const data = await response.json();
+
+  if (!response.ok || !data.ok) {
+    throw new Error(
+      data.detail ||
+      data.error ||
+      "Failed to load deleted monuments"
+    );
+  }
+
+  monumentDeletedSinceCacheRecords =
+    Array.isArray(data.records)
+      ? data.records
+      : [];
+
+  return monumentDeletedSinceCacheRecords;
+}
+
 let uncachedLiveLayerEventsBound = false;
 
 async function loadUncachedLiveEditedMonuments() {
@@ -363,6 +468,79 @@ function bindUncachedLiveLayerEvents() {
   // The normal monument layer event binder handles this layer.
   // Do not bind here because the click/hover handlers are scoped inside that binder.
   return;
+}
+
+function drawDeletedSinceCacheMonuments(
+  records = monumentDeletedSinceCacheRecords
+) {
+  if (!map || !mapLoaded) return;
+
+  const deletedRecords =
+    (records || []).filter(
+      (record) =>
+        record?.source?.is_deleted === true &&
+        Array.isArray(
+          record?.geometry?.coordinates
+        )
+    );
+
+  const geojson = {
+    type: "FeatureCollection",
+    features:
+      deletedRecords
+        .map(monumentRecordToFeature)
+        .filter(Boolean)
+  };
+
+  const source =
+    map.getSource("monuments-deleted-live");
+
+  if (
+    source &&
+    typeof source.setData === "function"
+  ) {
+    source.setData(geojson);
+  } else {
+    map.addSource(
+      "monuments-deleted-live",
+      {
+        type: "geojson",
+        data: geojson
+      }
+    );
+  }
+
+  if (
+    !map.getLayer(
+      "monuments-deleted-live-layer"
+    )
+  ) {
+    map.addLayer({
+      id: "monuments-deleted-live-layer",
+      type: "circle",
+      source: "monuments-deleted-live",
+
+      paint: {
+        "circle-radius": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          4, 5,
+          8, 6,
+          12, 8
+        ],
+
+        "circle-color": "#7c8791",
+        "circle-opacity": 0.55,
+
+        "circle-stroke-color": "#ffffff",
+        "circle-stroke-width": 2
+      }
+    });
+  }
+
+  bringMonumentOverlaysToFront();
+  renderMonumentLegend();
 }
 
 function drawUncachedLiveEditedMonuments(records = monumentUncachedLiveRecords) {
@@ -2516,26 +2694,42 @@ async function clearMonumentSpatialPolygonFilter({
 function toggleMonumentMeasurementPanel() {
   if (!monumentMeasurementPanel) return;
 
-  const willOpen = monumentMeasurementPanel.hidden;
-  monumentMeasurementPanel.hidden = !willOpen;
+  /*
+    Clicking the ruler while the panel is open
+    means close the tool completely.
+  */
+  if (!monumentMeasurementPanel.hidden) {
+    closeMonumentMeasurementPanel();
+    return;
+  }
 
-  monumentMeasurementControlBtn?.classList.toggle(
-    "is-active",
-    willOpen
+  monumentMeasurementPanel.hidden = false;
+
+  monumentMeasurementControlBtn?.classList.add(
+    "is-active"
   );
 
   monumentMeasurementControlBtn?.setAttribute(
     "aria-expanded",
-    willOpen ? "true" : "false"
+    "true"
   );
 }
 
 function closeMonumentMeasurementPanel() {
+  /*
+    Closing Tools ends and removes the current
+    measurement rather than merely hiding it.
+  */
+  clearMonumentMeasurement();
+
   if (monumentMeasurementPanel) {
     monumentMeasurementPanel.hidden = true;
   }
 
-  monumentMeasurementControlBtn?.classList.remove("is-active");
+  monumentMeasurementControlBtn?.classList.remove(
+    "is-active"
+  );
+
   monumentMeasurementControlBtn?.setAttribute(
     "aria-expanded",
     "false"
@@ -6760,39 +6954,16 @@ function monumentConfirmLoseChanges() {
 function updateMonumentActionBar() {
   const record = monumentSelectedRecord;
 
+  const isDeleted =
+    record?.source?.is_deleted === true;
+
   const hasSelectedRecord = !!record;
 
-  const canEditThisRecord = canEditMonumentRecord(record);
-
-  if (addMonumentBtn) {
-    addMonumentBtn.hidden = monumentIsEditMode;
-  }
-
-  if (monumentEditBtn) {
-    monumentEditBtn.hidden =
-      monumentIsEditMode ||
-      !hasSelectedRecord ||
-      !canEditThisRecord;
-
-    monumentEditBtn.disabled = false;
-    monumentEditBtn.title = "";
-    monumentEditBtn.classList.remove("is-disabled");
-  }
-
-  if (monumentSaveBtn) {
-    monumentSaveBtn.hidden = !monumentIsEditMode;
-  }
-
-  if (monumentCancelEditBtn) {
-    monumentCancelEditBtn.hidden = !monumentIsEditMode;
-  }
-
-  if (monumentCloseRecordBtn) {
-    monumentCloseRecordBtn.hidden = monumentIsEditMode || !hasSelectedRecord;
-  }
+  const canEditThisRecord =
+    canEditMonumentRecord(record);
 
   const deleteStorageScope = String(
-    monumentSelectedRecord?.source?.storage || ""
+    record?.source?.storage || ""
   ).trim();
 
   const isSupportedDeleteStorage =
@@ -6800,18 +6971,185 @@ function updateMonumentActionBar() {
     deleteStorageScope.endsWith("_workspace");
 
   const canDelete =
+    !isDeleted &&
     monumentIsEditMode &&
     hasSelectedRecord &&
     canEditThisRecord &&
     isSupportedDeleteStorage &&
-    !!monumentSelectedRecord?.identity?.id;
+    !!record?.identity?.id;
+
+  if (addMonumentBtn) {
+    addMonumentBtn.hidden = monumentIsEditMode;
+  }
+
+  if (monumentEditBtn) {
+    monumentEditBtn.hidden =
+      isDeleted ||
+      monumentIsEditMode ||
+      !hasSelectedRecord ||
+      !canEditThisRecord;
+
+    monumentEditBtn.disabled = false;
+    monumentEditBtn.title = "";
+    monumentEditBtn.classList.remove(
+      "is-disabled"
+    );
+  }
+
+  if (monumentSaveBtn) {
+    monumentSaveBtn.hidden =
+      !monumentIsEditMode ||
+      isDeleted;
+  }
+
+  if (monumentCancelEditBtn) {
+    monumentCancelEditBtn.hidden =
+      !monumentIsEditMode ||
+      isDeleted;
+  }
+
+  if (monumentReinstateBtn) {
+    monumentReinstateBtn.hidden =
+      !isDeleted ||
+      record?.deletion?.can_reinstate !== true;
+  }
+
+  if (monumentCloseRecordBtn) {
+    monumentCloseRecordBtn.hidden =
+      monumentIsEditMode ||
+      !hasSelectedRecord;
+  }
 
   if (monumentDeleteBtn) {
     monumentDeleteBtn.hidden = !canDelete;
   }
 }
 
+async function monumentReinstateCurrentRecord() {
+  const record = monumentSelectedRecord;
+
+  const caalId =
+    String(
+      record?.identity?.caal_id || ""
+    ).trim();
+
+  if (
+    !caalId ||
+    record?.deletion?.can_reinstate !== true
+  ) {
+    return;
+  }
+
+  const confirmed = window.confirm(
+    t(
+      "confirm_reinstate_record",
+      "Reinstate this deleted monument record?"
+    )
+  );
+
+  if (!confirmed) return;
+
+  setMonumentsLoading(
+    true,
+    t(
+      "reinstating_record",
+      "Reinstating record..."
+    )
+  );
+
+  try {
+    const lang =
+      (
+        typeof window.getCurrentLanguage ===
+        "function" &&
+        window.getCurrentLanguage()
+      ) ||
+      window.appSession?.profile
+        ?.preferred_language ||
+      "en";
+
+    const response = await fetch(
+      `/api/monuments/${encodeURIComponent(caalId)}/reinstate?lang=${encodeURIComponent(lang)}`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        credentials: "include",
+        body: JSON.stringify({})
+      }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok || !data.ok) {
+      throw new Error(
+        data.detail ||
+        data.error ||
+        "Monument reinstate failed"
+      );
+    }
+
+    await loadDeletedSinceCacheMonuments();
+
+    monumentSelectedRecord =
+      data.record || null;
+
+    monumentIsEditMode = false;
+    monumentIsDirty = false;
+    monumentIsAddMode = false;
+
+    await applyMonumentFilters({
+      includeMap: true,
+      listFirst: true
+    });
+
+    if (data.record) {
+      monumentSelectedRecord = data.record;
+
+      renderMonumentRecordDetails(
+        data.record
+      );
+
+      if (
+        data.record.geometry?.coordinates
+      ) {
+        drawSelectedMonumentHighlight(
+          data.record
+        );
+      }
+    }
+
+    if (typeof showToast === "function") {
+      showToast(
+        t(
+          "monument_record_reinstated",
+          "Monument record reinstated"
+        )
+      );
+    }
+  } catch (error) {
+    console.error(
+      "Monument reinstate failed:",
+      error
+    );
+
+    alert(
+      error.message ||
+      t(
+        "monument_reinstate_failed",
+        "Monument reinstate failed"
+      )
+    );
+  } finally {
+    setMonumentsLoading(false);
+  }
+}
+
 function canEditMonumentRecord(record) {
+  if (record?.source?.is_deleted === true) {
+    return false;
+  }
   if (!record) return false;
 
   if (record?.source?.is_editable === true) {
@@ -11560,6 +11898,7 @@ async function loadMonumentMapRecords() {
     }
 
     let standardRecords = [];
+    let extraDeletedRecords = [];
 
     if (normalMapScopes.length) {
       const params = buildMonumentQueryParams({ includePaging: false });
@@ -11585,7 +11924,41 @@ async function loadMonumentMapRecords() {
         throw new Error(data.detail || data.error || "Failed to load monument map records");
       }
 
-      standardRecords = data.records || [];
+      standardRecords =
+        (data.records || []).map(
+          reconcileDeletedMonumentRecord
+        );
+      
+      const standardIds = new Set(
+        standardRecords
+          .map((record) =>
+            String(
+              record?.identity?.caal_id || ""
+            )
+              .trim()
+              .toLowerCase()
+          )
+          .filter(Boolean)
+      );
+
+      extraDeletedRecords =
+        (monumentDeletedSinceCacheRecords || [])
+          .filter((record) => {
+            const caalId = String(
+              record?.identity?.caal_id || ""
+            )
+              .trim()
+              .toLowerCase();
+
+            if (!caalId || standardIds.has(caalId)) {
+              return false;
+            }
+
+            return monumentMatchesFilters(
+              record,
+              getMonumentCurrentFilters()
+            );
+          });
     }
 
     if (requestSeq !== monumentMapRequestSeq) {
@@ -11608,12 +11981,13 @@ async function loadMonumentMapRecords() {
       the national endpoint returns clusters only.
       At high zoom, it returns national points and those become clickable.
 
-      Include uncached live records so the label/export/click helpers can see them.
+      Include uncached live and deleted records so the label/export/click helpers can see them.
     */
     monumentMapRecords = [
       ...standardRecords,
       ...nationalClusterPointRecords,
-      ...liveRecords
+      ...liveRecords,
+      ...extraDeletedRecords
     ];
 
     /*
@@ -11623,6 +11997,11 @@ async function loadMonumentMapRecords() {
     */
     drawMonumentRecords(standardRecords);
     drawUncachedLiveEditedMonuments(liveRecords);
+
+    drawDeletedSinceCacheMonuments([
+      ...standardRecords,
+      ...extraDeletedRecords
+    ]);
 
     renderLiveMapLabels();
     updateMapOptionsState();
@@ -11672,7 +12051,10 @@ async function loadMonumentListRecords() {
       throw new Error(data.detail || data.error || "Failed to load monument list records");
     }
 
-    monumentListRecords = data.records || [];
+    monumentListRecords =
+    (data.records || []).map(
+      reconcileDeletedMonumentRecord
+    );
     monumentTotalCount = data.total || 0;
     monumentTotalIsExact = data.total_is_exact !== false;
 
@@ -11716,6 +12098,10 @@ async function loadFullMonumentRecord(record) {
   const caalId = record?.identity?.caal_id;
 
   if (!caalId) {
+    return record;
+  }
+
+  if (record?.source?.is_deleted === true) {
     return record;
   }
 
@@ -11971,6 +12357,7 @@ async function applyMonumentFilters({ includeMap = true, listFirst = true } = {}
   setMonumentsLoading(true, t("updating_results", "Updating results..."));
 
   try {
+    await loadDeletedSinceCacheMonuments();
     if (listFirst) {
       await loadMonumentListRecords();
 
@@ -12006,6 +12393,12 @@ async function applyMonumentFilters({ includeMap = true, listFirst = true } = {}
     }
   } catch (error) {
     console.error("Failed to reload monuments after filter change:", error);
+    console.warn(
+      "Deleted monument reconciliation unavailable:",
+      error
+    );
+
+    monumentDeletedSinceCacheRecords = [];
   } finally {
     setMonumentsLoading(false);
   }
@@ -12382,7 +12775,8 @@ function getMonumentPopupRecordsForPoint(point) {
     "national-cluster-points",
     "monuments-national-layer",
     "monuments-all-caal-layer",
-    "monuments-workspace-layer"
+    "monuments-workspace-layer",
+    "monuments-deleted-live-layer"
   ].filter((layerId) => map?.getLayer(layerId));
 
   const clickedRecords = getMonumentRecordsNearClick(
@@ -13485,6 +13879,23 @@ function bindMonumentLayerEvents() {
     const record = popupRecords[0];
     if (!record) return;
 
+    /*
+      Do not reuse a stack popup for a single record.
+      Stack and single popups have different MapLibre options
+      and different CSS classes.
+    */
+    const existingPopupEl =
+      monumentHoverPopup?.getElement?.();
+
+    if (
+      monumentHoverPopup &&
+      existingPopupEl?.classList.contains(
+        "monument-stack-map-popup"
+      )
+    ) {
+      clearMonumentPointHover();
+    }
+
     if (!monumentHoverPopup) {
       monumentHoverPopup = new maplibregl.Popup({
         closeButton: false,
@@ -13542,7 +13953,8 @@ function bindMonumentLayerEvents() {
     "monuments-national-layer",
     "monuments-all-caal-layer",
     "monuments-workspace-layer",
-    "monuments-uncached-live-base"
+    "monuments-uncached-live-base",
+    "monuments-deleted-live-layer"
   ].forEach((layerId) => {
     if (!map.getLayer(layerId)) return;
 
@@ -13598,13 +14010,24 @@ function drawMonumentRecords(records) {
       ? liveEditedCaalIdSet()
       : new Set();
 
-  const drawableRecords = (records || []).filter((record) => {
-    const caalId = String(record?.identity?.caal_id || "")
-      .trim()
-      .toLowerCase();
+  const drawableRecords = (records || []).filter(
+    (record) => {
+      if (record?.source?.is_deleted === true) {
+        return false;
+      }
 
-    return !caalId || !liveEditedIds.has(caalId);
-  });
+      const caalId = String(
+        record?.identity?.caal_id || ""
+      )
+        .trim()
+        .toLowerCase();
+
+      return (
+        !caalId ||
+        !liveEditedIds.has(caalId)
+      );
+    }
+  );
 
   const workspaceRecords = drawableRecords.filter(
     (r) => monumentDisplayScope(r) === "workspace"
@@ -13723,7 +14146,7 @@ function drawMonumentRecords(records) {
     source: "monuments-national",
     filter: ["has", "point_count"],
     layout: {
-      "text-field": ["get", "point_count_abbreviated"],
+      "text-field": ["to-string", ["get", "point_count"]],
       "text-size": 12
     },
     paint: {
@@ -13751,7 +14174,7 @@ function drawMonumentRecords(records) {
     source: "monuments-all-caal",
     filter: ["has", "point_count"],
     layout: {
-      "text-field": ["get", "point_count_abbreviated"],
+      "text-field": ["to-string", ["get", "point_count"]],
       "text-size": 12
     },
     paint: {
@@ -14286,6 +14709,7 @@ function renderMonumentResultsList(records) {
 
       const isRecentSave = isRecentlySavedMonument(record);
       const relatedSummaryHtml = monumentRelatedTypeSummaryHtml(record);
+      const isDeleted = record?.source?.is_deleted === true;
 
       const classification = String(mSummary(record, "classification") || "").trim();
       const monumentType = String(mSummary(record, "monument_type1") || "").trim();
@@ -14296,13 +14720,28 @@ function renderMonumentResultsList(records) {
 
       return `
         <div
-          class="result-card ${isSelected ? "is-selected" : ""} ${isRecentSave ? "recent-save-card" : ""}"
+          class="result-card
+            ${isSelected ? "is-selected" : ""}
+            ${isRecentSave ? "recent-save-card" : ""}
+            ${isDeleted ? "deleted-cache-card" : ""}"
           data-result-index="${index}"
         >
           <div class="result-card-topline">
             <strong>${mSafeValue(monumentResultTitle(record))}</strong>
 
             <div class="result-card-badges">
+              ${
+                isDeleted
+                  ? `
+                    <span class="record-status-badge record-status-deleted">
+                      ${t(
+                        "deleted_since_cache_refresh",
+                        "Deleted since cache refresh"
+                      )}
+                    </span>
+                  `
+                  : ""
+              }
               <span class="${monumentScopeBadgeClass(record)}">
                 ${mSafeValue(monumentScopeLabelForRecord(record))}
               </span>
@@ -14824,6 +15263,78 @@ window.formatMonumentSaveSummaryValue =
   };
 
 function renderMonumentDisplayMode(record) {
+  const isDeleted = record?.source?.is_deleted === true;
+
+  const deletion = record?.deletion || {};
+
+  const deletionNoticeHtml =
+    isDeleted
+      ? `
+        <div class="deleted-record-notice">
+          <strong>
+            ${t(
+              "deleted_since_cache_refresh",
+              "Deleted since cache refresh"
+            )}
+          </strong>
+
+          <p>
+            ${t(
+              "deleted_cache_notice",
+              "This record has been deleted and is shown temporarily until the browse cache is refreshed."
+            )}
+          </p>
+
+          ${
+            deletion.can_reinstate
+              ? `
+                <div class="deleted-record-admin-meta">
+                  ${
+                    deletion.deleted_by
+                      ? `
+                        <div>
+                          <strong>${t("deleted_by", "Deleted by")}:</strong>
+                          ${mSafeValue(deletion.deleted_by)}
+                        </div>
+                      `
+                      : ""
+                  }
+
+                  ${
+                    deletion.deleted_at
+                      ? `
+                        <div>
+                          <strong>${t("deleted_at", "Deleted")}:</strong>
+                          ${mSafeValue(
+                            monumentFormatCacheTimestamp(
+                              deletion.deleted_at
+                            )
+                          )}
+                        </div>
+                      `
+                      : ""
+                  }
+
+                  ${
+                    deletion.delete_reason
+                      ? `
+                        <div>
+                          <strong>${t("delete_reason", "Reason")}:</strong>
+                          ${mSafeValue(
+                            deletion.delete_reason
+                          )}
+                        </div>
+                      `
+                      : ""
+                  }
+                </div>
+              `
+              : ""
+          }
+        </div>
+      `
+      : "";
+
   const appSession = window.appSession || null;
   const accessLevel =
     Number(
@@ -14852,9 +15363,18 @@ function renderMonumentDisplayMode(record) {
 
   const saveSummary = getMonumentSaveSummaryForRecord(record);
 
-  const statusBadge = canEditThisRecord
-    ? `<span class="record-status-badge record-status-editable">${t("editable", "Editable")}</span>`
-    : `<span class="record-status-badge record-status-readonly">${t("read_only", "Read-only")}</span>`;
+  const statusBadge = isDeleted
+    ? `
+        <span class="record-status-badge record-status-deleted">
+          ${t(
+            "deleted",
+            "Deleted"
+          )}
+        </span>
+      `
+    : canEditThisRecord
+      ? `<span class="record-status-badge record-status-editable">${t("editable", "Editable")}</span>`
+      : `<span class="record-status-badge record-status-readonly">${t("read_only", "Read-only")}</span>`;
     
   const locationHtml = [
     renderLocationStackWarning(record),
@@ -15057,6 +15577,8 @@ function renderMonumentDisplayMode(record) {
 
       ${renderMasterIdChip(record)}
     </div>
+
+    ${deletionNoticeHtml}
 
     ${
       saveSummary && typeof window.renderSaveSummaryCard === "function"
@@ -16400,6 +16922,14 @@ async function monumentDeleteCurrentRecord() {
       return;
     }
 
+    const deletedCaalId = String(
+      data.deleted?.CAAL_ID ||
+      caalId ||
+      ""
+    )
+      .trim()
+      .toLowerCase();
+
     monumentPendingNewRecord = null;
     monumentSelectedRecord = null;
     monumentIsEditMode = false;
@@ -16408,15 +16938,51 @@ async function monumentDeleteCurrentRecord() {
 
     monumentSyncModeVisualState();
     updateAddModeUI();
-    updateMonumentActionBar();
     clearPendingPickPoint();
 
-    if (typeof showToast === "function") {
-      showToast(t("monument_record_deleted", "Monument record deleted"));
+    await applyMonumentFilters({
+      includeMap: true,
+      listFirst: true
+    });
+
+    const tombstone =
+      monumentDeletedSinceCacheRecords.find(
+        (item) =>
+          String(
+            item?.identity?.caal_id || ""
+          )
+            .trim()
+            .toLowerCase() === deletedCaalId
+      ) || null;
+
+    if (tombstone) {
+      monumentSelectedRecord = tombstone;
+
+      renderMonumentRecordDetails(
+        tombstone
+      );
+
+      updateSelectedResultCard();
+      updateMonumentActionBar();
+
+      if (tombstone.geometry?.coordinates) {
+        drawSelectedMonumentHighlight(
+          tombstone
+        );
+      }
+    } else {
+      renderMonumentEmptyState();
     }
 
-    await applyMonumentFilters({ includeMap: true, listFirst: true });
-    renderMonumentEmptyState();
+    if (typeof showToast === "function") {
+      showToast(
+        t(
+          "monument_record_deleted_cache_pending",
+          "Record deleted. It will disappear after the CAAL browse cache refreshes."
+        ),
+        6000
+      );
+    }
   } catch (error) {
     console.error("Monument delete failed:", error);
     alert(error.message || t("monument_delete_failed", "Monument delete failed"));
@@ -16698,8 +17264,14 @@ if (monumentCancelEditBtn) {
   });
 }
 
+if (monumentReinstateBtn) {
+  monumentReinstateBtn.onclick =
+    monumentReinstateCurrentRecord;
+}
+
 if (monumentDeleteBtn) {
-  monumentDeleteBtn.onclick = monumentDeleteCurrentRecord;
+  monumentDeleteBtn.onclick =
+    monumentDeleteCurrentRecord;
 }
 
 if (mapOptionsBtn && mapOptionsPanel) {
@@ -16991,6 +17563,7 @@ function wireMonumentChangedFieldHighlights(root = recordDetails) {
     setMapStaleState(true, t("redrawing_map", "Redrawing map..."));
 
     try {
+      await loadDeletedSinceCacheMonuments();
       await loadMonumentListRecords();
       await loadMonumentMapRecords();
 
@@ -17115,6 +17688,7 @@ document.addEventListener("DOMContentLoaded", async () => {
 
           showToast(t("caal_cache_refreshed", "CAAL cache refreshed"));
 
+          await loadDeletedSinceCacheMonuments();
           await loadMonumentMapRecords();
           await loadMonumentListRecords();
           await loadMonumentCacheStatus();
@@ -17292,6 +17866,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       "bottom-left"
     );
 
+    // initial page load
     map.on("load", async () => {
       mapLoaded = true;
       updateAddModeUI();
@@ -17312,6 +17887,7 @@ document.addEventListener("DOMContentLoaded", async () => {
           console.warn("Administrative boundaries could not be loaded:", borderError);
         }
 
+        await loadDeletedSinceCacheMonuments();
         await loadMonumentMapRecords();
         await loadMonumentListRecords();
 

@@ -19,13 +19,15 @@ const {
   monumentTableForWorkspaceCode,
   storageScopeForWorkspaceCode,
   createStorageTargetForRecord,
-  enabledWorkspaceStorageConfigs
+  enabledWorkspaceStorageConfigs,
+  quoteIdent
 } = require("./workspaceStorage");
 
 const {
   getResourceRelations,
   syncResourceRelationsForMonument,
-  deactivateResourceRelationsForDeletedRecord
+  deactivateResourceRelationsForDeletedRecord,
+  reactivateResourceRelationsForRestoredRecord
 } = require("./resourceRelations");
 
 const { allocateCaalId } = require("./caalIdAllocator");
@@ -2520,6 +2522,7 @@ router.get("/monuments/map-national-clusters", async (req, res) => {
 
   const extraClauses = [
     `(${nationalWhere})`,
+
     `
     NOT EXISTS (
       SELECT 1
@@ -2529,6 +2532,17 @@ router.get("/monuments/map-national-clusters", async (req, res) => {
         AND COALESCE(rr.status, '') <> 'deleted'
     )
     `,
+
+    `
+    NOT EXISTS (
+      SELECT 1
+      FROM public.record_registry deleted_rr
+      WHERE lower(trim(deleted_rr.caal_id)) =
+            lower(trim(m."CAAL_ID"))
+        AND deleted_rr.status = 'deleted'
+    )
+    `,
+
     `
     m."Longitude" BETWEEN $${nextIndex} AND $${nextIndex + 1}
     AND m."Latitude" BETWEEN $${nextIndex + 2} AND $${nextIndex + 3}
@@ -3008,6 +3022,108 @@ router.get("/monuments/live-edited-map-records", async (req, res) => {
     return res.status(500).json({
       ok: false,
       error: "Uncached live monument records fetch failed",
+      detail: error.message
+    });
+  }
+});
+
+router.get("/monuments/deleted-since-cache", async (req, res) => {
+  const currentSession =
+    req.session?.appSession || null;
+
+  if (!currentSession) {
+    return res.status(401).json({
+      ok: false,
+      error: "No active session"
+    });
+  }
+
+  const lang =
+    req.query.lang ||
+    currentSession.profile?.preferred_language ||
+    "en";
+
+  const requestedScopes =
+    normalizeRequestedScopes(
+      parseScopes(req.query.scopes)
+    );
+
+  const allowedScopes =
+    getAllowedScopes(currentSession);
+
+  const scopes =
+    requestedScopes.length
+      ? requestedScopes.filter((scope) =>
+          allowedScopes.includes(scope)
+        )
+      : allowedScopes;
+
+  if (!scopes.length) {
+    return res.json({
+      ok: true,
+      records: [],
+      total: 0
+    });
+  }
+
+  try {
+    const result = await pool.query(
+      `
+      WITH cache_status AS (
+        SELECT refreshed_at
+        FROM ui.app_cache_status
+        WHERE cache_key = 'monuments_caal_cache'
+        LIMIT 1
+      ),
+      threshold AS (
+        SELECT COALESCE(
+          (SELECT refreshed_at FROM cache_status),
+          now() - interval '2 hours'
+        ) AS changed_after
+      )
+      SELECT
+        rr.*
+      FROM public.record_registry rr
+      CROSS JOIN threshold
+      WHERE rr.status = 'deleted'
+        AND (
+          rr.record_type = 'monument'
+          OR rr.source_table = 'CAAL_Monuments'
+        )
+        AND rr.deleted_record IS NOT NULL
+        AND rr.deleted_at > threshold.changed_after
+      ORDER BY rr.deleted_at DESC
+      `
+    );
+
+    const records = result.rows
+      .map((row) =>
+        buildDeletedMonumentRecord(
+          row,
+          lang,
+          currentSession
+        )
+      )
+      .filter((record) =>
+        scopes.includes(record.source?.scope)
+      );
+
+    return res.json({
+      ok: true,
+      records,
+      total: records.length,
+      source_mode: "deleted_since_cache"
+    });
+  } catch (error) {
+    console.error(
+      "Deleted monument cache reconciliation failed:",
+      error
+    );
+
+    return res.status(500).json({
+      ok: false,
+      error:
+        "Deleted monument cache reconciliation failed",
       detail: error.message
     });
   }
@@ -3881,6 +3997,170 @@ function isCaalAdmin(session) {
 function isNationalAdmin(session) {
   const workspaceCode = getSessionWorkspaceCode(session);
   return getAccessLevel(session) === 9 && workspaceCode && workspaceCode !== "caal";
+}
+
+function deletedMonumentWorkspaceCode(registryRow) {
+  return String(
+    registryRow?.workspace_code ||
+    registryRow?.deleted_record?.workspace_code ||
+    (
+      registryRow?.source_schema &&
+      registryRow.source_schema !== "public"
+        ? registryRow.source_schema
+        : ""
+    )
+  )
+    .trim()
+    .toLowerCase();
+}
+
+function canReinstateDeletedMonument(currentSession, registryRow) {
+  if (isCaalAdmin(currentSession)) {
+    return true;
+  }
+
+  if (!isNationalAdmin(currentSession)) {
+    return false;
+  }
+
+  const sessionWorkspace =
+    getSessionWorkspaceCode(currentSession);
+
+  const recordWorkspace =
+    deletedMonumentWorkspaceCode(registryRow);
+
+  return (
+    !!sessionWorkspace &&
+    !!recordWorkspace &&
+    sessionWorkspace === recordWorkspace
+  );
+}
+
+function deletedMonumentSourceScope(
+  registryRow,
+  currentSession
+) {
+  const userId =
+    currentAppUserIdFromSession(currentSession);
+
+  const creatorId =
+    registryRow?.created_by_app_user_id ??
+    registryRow?.deleted_record?.created_by_app_user_id ??
+    null;
+
+  if (
+    userId !== null &&
+    creatorId !== null &&
+    Number(userId) === Number(creatorId)
+  ) {
+    return "workspace";
+  }
+
+  const sessionWorkspace =
+    getSessionWorkspaceCode(currentSession);
+
+  const recordWorkspace =
+    deletedMonumentWorkspaceCode(registryRow);
+
+  if (
+    sessionWorkspace &&
+    sessionWorkspace !== "caal" &&
+    recordWorkspace === sessionWorkspace
+  ) {
+    return "national_ref";
+  }
+
+  return "all_caal";
+}
+
+function deletedMonumentStorageScope(registryRow) {
+  const stored =
+    String(registryRow?.storage_scope || "").trim();
+
+  if (stored) {
+    return stored;
+  }
+
+  const schema =
+    String(registryRow?.source_schema || "").trim();
+
+  if (schema === "public") {
+    return "public_caal";
+  }
+
+  return schema ? `${schema}_workspace` : null;
+}
+
+function buildDeletedMonumentRecord(
+  registryRow,
+  lang,
+  currentSession
+) {
+  const raw = {
+    ...(registryRow?.deleted_record || {})
+  };
+
+  const sourceScope =
+    deletedMonumentSourceScope(
+      registryRow,
+      currentSession
+    );
+
+  const storageScope =
+    deletedMonumentStorageScope(registryRow);
+
+  const canReinstate =
+    canReinstateDeletedMonument(
+      currentSession,
+      registryRow
+    );
+
+  const record = buildMonumentRecord(
+    {
+      ...raw,
+      source_scope: sourceScope,
+      storage_scope: storageScope,
+      is_promoted: storageScope === "public_caal",
+      is_editable: false
+    },
+    lang,
+    currentAppUserIdFromSession(currentSession),
+    false
+  );
+
+  /*
+    buildMonumentRecord() has some owner-based editability
+    fallback logic, so force deletion state afterwards.
+  */
+  record.source = {
+    ...(record.source || {}),
+    scope: sourceScope,
+    storage: storageScope,
+    is_deleted: true,
+    is_editable: false
+  };
+
+  record.deletion = {
+    deleted_since_cache: true,
+    can_reinstate: canReinstate
+  };
+
+  /*
+    Only an administrator authorised to restore this
+    particular record receives administrative audit details.
+  */
+  if (canReinstate) {
+    record.deletion.deleted_at =
+      registryRow.deleted_at || null;
+
+    record.deletion.deleted_by =
+      registryRow.deleted_by || null;
+
+    record.deletion.delete_reason =
+      registryRow.delete_reason || null;
+  }
+
+  return record;
 }
 
 function canEditMonuments(session) {
@@ -5587,6 +5867,9 @@ router.delete("/monuments/:id", async (req, res) => {
         username || "web_app"
       ]);
 
+      const sessionWorkspaceCode =
+        getSessionWorkspaceCode(currentSession);
+
       const targetResult = await client.query(
         `
         SELECT m.*
@@ -5594,6 +5877,14 @@ router.delete("/monuments/:id", async (req, res) => {
         WHERE m.id = $1
           AND (
             $2::boolean = true
+
+            OR (
+              $4::boolean = true
+              AND lower(
+                trim(COALESCE(m.workspace_code, ''))
+              ) = lower(trim($5))
+            )
+
             OR EXISTS (
               SELECT 1
               FROM public.record_registry rr
@@ -5601,13 +5892,16 @@ router.delete("/monuments/:id", async (req, res) => {
                 AND rr.created_by_app_user_id = $3
                 AND COALESCE(rr.status, '') <> 'deleted'
             )
+
             OR m.created_by_app_user_id = $3
           )
         `,
         [
           id,
           isCaalAdmin(currentSession),
-          userId
+          userId,
+          isNationalAdmin(currentSession),
+          sessionWorkspaceCode
         ]
       );
 
@@ -5627,11 +5921,27 @@ router.delete("/monuments/:id", async (req, res) => {
           UPDATE public.record_registry rr
           SET
             status = 'deleted',
+
+            workspace_code = COALESCE(
+              NULLIF(rr.workspace_code, ''),
+              NULLIF($7, '')
+            ),
+
+            storage_scope = COALESCE(
+              NULLIF(rr.storage_scope, ''),
+              'public_caal'
+            ),
+
             deleted_at = now(),
             deleted_by_app_user_id = $2,
             deleted_by = $3,
             delete_reason = $4,
-            deleted_record = $5::jsonb
+            deleted_record = $5::jsonb,
+
+            restored_at = NULL,
+            restored_by_app_user_id = NULL,
+            restored_by = NULL,
+            restore_notes = NULL
           WHERE (
               rr.caal_id = $1
               OR (
@@ -5652,6 +5962,8 @@ router.delete("/monuments/:id", async (req, res) => {
             created_at,
             created_by,
             created_by_app_user_id,
+            workspace_code,
+            storage_scope,
             status,
             notes,
             deleted_at,
@@ -5667,8 +5979,10 @@ router.delete("/monuments/:id", async (req, res) => {
             $1,
             'monument',
             now(),
-            $3,
-            $2,
+            COALESCE($9, $3),
+            $8,
+            $7,
+            'public_caal',
             'deleted',
             'Registry row created during public CAAL web app delete',
             now(),
@@ -5686,12 +6000,15 @@ router.delete("/monuments/:id", async (req, res) => {
           ) AS registry_id
         `,
         [
-          target["CAAL_ID"],
-          userId,
-          username,
-          deleteReason,
-          JSON.stringify(target),
-          target.id
+          target["CAAL_ID"],                 // $1
+          userId,                            // $2 deleter
+          username,                          // $3 deleter
+          deleteReason,                      // $4
+          JSON.stringify(target),            // $5
+          target.id,                         // $6
+          target.workspace_code || null,     // $7
+          target.created_by_app_user_id ?? null, // $8
+          target["Recorder"] || null         // $9
         ]
       );
 
@@ -5767,16 +6084,23 @@ router.delete("/monuments/:id", async (req, res) => {
 
     /*
       Non-CAAL users may only delete their own workspace records.
-      CAAL admins may delete workspace records only if you allow that by reaching this branch.
-      Public CAAL deletion is blocked above.
     */
-    const ownershipClause = canEditCaal
-      ? ""
-      : `AND m.created_by_app_user_id = $2`;
+    const canAdministerWorkspace =
+      canEditCaal ||
+      (
+        isNationalAdmin(currentSession) &&
+        requestedStorageScope === ownStorageScope
+      );
 
-    const masterIdClause = canEditCaal
-      ? ""
-      : `AND COALESCE(m."MasterID", '') = ''`;
+    const ownershipClause =
+      canAdministerWorkspace
+        ? ""
+        : `AND m.created_by_app_user_id = $2`;
+
+    const masterIdClause =
+      canAdministerWorkspace
+        ? ""
+        : `AND COALESCE(m."MasterID", '') = ''`;
 
     const deleteSql = `
       WITH target AS (
@@ -5790,11 +6114,28 @@ router.delete("/monuments/:id", async (req, res) => {
         UPDATE public.record_registry rr
         SET
           status = 'deleted',
+
+          workspace_code = COALESCE(
+            NULLIF(rr.workspace_code, ''),
+            NULLIF(target.workspace_code, ''),
+            $6
+          ),
+
+          storage_scope = COALESCE(
+            NULLIF(rr.storage_scope, ''),
+            $7
+          ),
+
           deleted_at = now(),
           deleted_by_app_user_id = $2,
           deleted_by = $3,
           delete_reason = $4,
-          deleted_record = to_jsonb(target)
+          deleted_record = to_jsonb(target),
+
+          restored_at = NULL,
+          restored_by_app_user_id = NULL,
+          restored_by = NULL,
+          restore_notes = NULL
         FROM target
         WHERE rr.source_schema = $5
           AND rr.source_table = 'CAAL_Monuments'
@@ -5811,6 +6152,9 @@ router.delete("/monuments/:id", async (req, res) => {
           created_at,
           created_by,
           created_by_app_user_id,
+          workspace_code,
+          storage_scope,
+          created_by_workspace_code,
           status,
           notes,
           deleted_at,
@@ -5828,6 +6172,12 @@ router.delete("/monuments/:id", async (req, res) => {
           now(),
           COALESCE(target."Recorder", $3),
           target.created_by_app_user_id,
+          COALESCE(
+            NULLIF(target.workspace_code, ''),
+            $6
+          ),
+          $7,
+          $6,
           'deleted',
           'Registry row created during web app delete',
           now(),
@@ -5849,11 +6199,13 @@ router.delete("/monuments/:id", async (req, res) => {
     `;
 
     const result = await pool.query(deleteSql, [
-      id,
-      userId,
-      username,
-      deleteReason,
-      storage.schema
+      id,                    // $1
+      userId,                // $2
+      username,              // $3
+      deleteReason,          // $4
+      storage.schema,        // $5
+      storage.workspaceCode, // $6
+      requestedStorageScope  // $7
     ]);
 
     if (result.rows.length === 0) {
@@ -5887,6 +6239,417 @@ router.delete("/monuments/:id", async (req, res) => {
   }
 });
 
+router.post(
+  "/monuments/:caalId/reinstate",
+  async (req, res) => {
+    const currentSession =
+      req.session?.appSession || null;
 
+    if (!currentSession) {
+      return res.status(401).json({
+        ok: false,
+        error: "No active session"
+      });
+    }
+
+    if (
+      !isCaalAdmin(currentSession) &&
+      !isNationalAdmin(currentSession)
+    ) {
+      return res.status(403).json({
+        ok: false,
+        error: "Administrator only"
+      });
+    }
+
+    const caalId =
+      String(req.params.caalId || "").trim();
+
+    if (!caalId) {
+      return res.status(400).json({
+        ok: false,
+        error: "Missing CAAL_ID"
+      });
+    }
+
+    const restoreNotes =
+      String(req.body?.notes || "").trim() ||
+      null;
+
+    const userId =
+      currentSession?.user?.user_id ?? null;
+
+    const username =
+      currentSession?.user?.username ?? null;
+
+    const client = await pool.connect();
+
+    let registryRow = null;
+    let restoredRow = null;
+
+    try {
+      await client.query("BEGIN");
+
+      const registryResult =
+        await client.query(
+          `
+          SELECT *
+          FROM public.record_registry
+          WHERE lower(trim(caal_id)) =
+                lower(trim($1))
+            AND status = 'deleted'
+            AND (
+              record_type = 'monument'
+              OR source_table = 'CAAL_Monuments'
+            )
+          ORDER BY deleted_at DESC NULLS LAST
+          LIMIT 1
+          FOR UPDATE
+          `,
+          [caalId]
+        );
+
+      registryRow =
+        registryResult.rows[0] || null;
+
+      if (!registryRow) {
+        await client.query("ROLLBACK");
+
+        return res.status(404).json({
+          ok: false,
+          error: "Deleted monument record not found"
+        });
+      }
+
+      if (
+        !canReinstateDeletedMonument(
+          currentSession,
+          registryRow
+        )
+      ) {
+        await client.query("ROLLBACK");
+
+        return res.status(403).json({
+          ok: false,
+          error:
+            "You do not have permission to reinstate this monument"
+        });
+      }
+
+      if (!registryRow.deleted_record) {
+        await client.query("ROLLBACK");
+
+        return res.status(409).json({
+          ok: false,
+          error:
+            "This registry entry does not contain a recovery copy"
+        });
+      }
+
+      const sourceSchema =
+        String(registryRow.source_schema || "");
+
+      const sourceTable =
+        String(registryRow.source_table || "");
+
+      if (sourceTable !== "CAAL_Monuments") {
+        await client.query("ROLLBACK");
+
+        return res.status(400).json({
+          ok: false,
+          error: "Unsupported monument source table"
+        });
+      }
+
+      /*
+        Only configured application storage schemas may be
+        restored. Do not blindly trust identifiers stored in
+        record_registry.
+      */
+      const configuredStorage =
+        Object.entries(WORKSPACE_STORAGE)
+          .map(([workspaceCode, config]) => ({
+            workspaceCode,
+            ...config
+          }))
+          .find((storage) =>
+            storage.schema === sourceSchema &&
+            storage.monumentTable === sourceTable
+          );
+
+      if (!configuredStorage) {
+        await client.query("ROLLBACK");
+
+        return res.status(400).json({
+          ok: false,
+          error:
+            "The original monument storage location is not configured"
+        });
+      }
+
+      const targetTable =
+        tableSql(sourceSchema, sourceTable);
+
+      const duplicateResult =
+        await client.query(
+          `
+          SELECT id, "CAAL_ID"
+          FROM ${targetTable}
+          WHERE id = $1
+             OR lower(trim("CAAL_ID")) =
+                lower(trim($2))
+          LIMIT 1
+          `,
+          [
+            registryRow.source_row_id,
+            registryRow.caal_id
+          ]
+        );
+
+      if (duplicateResult.rows.length) {
+        await client.query("ROLLBACK");
+
+        return res.status(409).json({
+          ok: false,
+          error:
+            "The record already exists in its original table"
+        });
+      }
+
+      const columnsResult =
+        await client.query(
+          `
+          SELECT
+            column_name,
+            is_generated,
+            is_identity
+          FROM information_schema.columns
+          WHERE table_schema = $1
+            AND table_name = $2
+          ORDER BY ordinal_position
+          `,
+          [sourceSchema, sourceTable]
+        );
+
+      const writableColumns =
+        columnsResult.rows
+          .filter(
+            (column) =>
+              column.is_generated === "NEVER"
+          )
+          .map((column) => column.column_name);
+
+      const hasIdentity =
+        columnsResult.rows.some(
+          (column) =>
+            column.is_identity === "YES"
+        );
+
+      if (!writableColumns.length) {
+        throw new Error(
+          "No writable columns found for restore"
+        );
+      }
+
+      const recoveryCopy = {
+        ...registryRow.deleted_record,
+
+        /*
+          Make restoration newer than the current cache so a
+          public restored record participates in live cache
+          reconciliation until the next refresh.
+        */
+        Tstamp: new Date().toISOString()
+      };
+
+      const columnSql =
+        writableColumns
+          .map(quoteIdent)
+          .join(", ");
+
+      const restoredSelectSql =
+        writableColumns
+          .map(
+            (column) =>
+              `restored.${quoteIdent(column)}`
+          )
+          .join(", ");
+
+      const overridingSql =
+        hasIdentity
+          ? "OVERRIDING SYSTEM VALUE"
+          : "";
+
+      /*
+        For public-table triggers, identify this as a web-app
+        operation in the same way as create/update/delete.
+      */
+      if (sourceSchema === "public") {
+        await client.query(
+          `SELECT set_config(
+            'caal.edit_source',
+            'web_app',
+            true
+          )`
+        );
+
+        await client.query(
+          `SELECT set_config(
+            'caal.app_user_id',
+            $1,
+            true
+          )`,
+          [String(userId || "")]
+        );
+
+        await client.query(
+          `SELECT set_config(
+            'caal.username',
+            $1,
+            true
+          )`,
+          [username || "web_app"]
+        );
+      }
+
+      const restoreResult =
+        await client.query(
+          `
+          WITH restored AS (
+            SELECT (
+              jsonb_populate_record(
+                NULL::${targetTable},
+                $1::jsonb
+              )
+            ).*
+          )
+          INSERT INTO ${targetTable}
+            (${columnSql})
+          ${overridingSql}
+          SELECT
+            ${restoredSelectSql}
+          FROM restored
+          RETURNING *
+          `,
+          [JSON.stringify(recoveryCopy)]
+        );
+
+      restoredRow =
+        restoreResult.rows[0] || null;
+
+      if (!restoredRow) {
+        throw new Error(
+          "The deleted monument could not be restored"
+        );
+      }
+
+      await client.query(
+        `
+        UPDATE public.record_registry
+        SET
+          status = 'restored',
+          restored_at = now(),
+          restored_by_app_user_id = $2,
+          restored_by = $3,
+          restore_notes = $4
+        WHERE id = $1
+        `,
+        [
+          registryRow.id,
+          userId,
+          username,
+          restoreNotes
+        ]
+      );
+
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+
+      console.error(
+        "Monument reinstate failed:",
+        error
+      );
+
+      return res.status(500).json({
+        ok: false,
+        error: "Monument reinstate failed",
+        detail: error.message
+      });
+    } finally {
+      client.release();
+    }
+
+    try {
+      await reactivateResourceRelationsForRestoredRecord(
+        pool,
+        {
+          caalId: registryRow.caal_id,
+          deletedAt: registryRow.deleted_at,
+          sourceSchema: registryRow.source_schema,
+          sourceTable: registryRow.source_table,
+          currentSession
+        }
+      );
+    } catch (error) {
+      /*
+        The monument itself has already been restored.
+        Do not pretend the restore failed, but surface the
+        relation problem for diagnostics.
+      */
+      console.error(
+        "Monument restored but relation reactivation failed:",
+        error
+      );
+    }
+
+    const lang =
+      req.query.lang ||
+      currentSession.profile?.preferred_language ||
+      "en";
+
+    const sourceScope =
+      deletedMonumentSourceScope(
+        registryRow,
+        currentSession
+      );
+
+    const storageScope =
+      deletedMonumentStorageScope(
+        registryRow
+      );
+
+    const record = buildMonumentRecord(
+      {
+        ...restoredRow,
+        source_scope: sourceScope,
+        storage_scope: storageScope,
+        is_promoted:
+          storageScope === "public_caal",
+        is_editable: true
+      },
+      lang,
+      currentAppUserIdFromSession(
+        currentSession
+      ),
+      isCaalAdmin(currentSession)
+    );
+
+    record.source.is_deleted = false;
+
+    record.relations =
+      await getResourceRelations(
+        pool,
+        registryRow.caal_id
+      );
+
+    return res.json({
+      ok: true,
+      record,
+      cache_refresh_required:
+        storageScope === "public_caal"
+    });
+  }
+);
 
 module.exports = router;
