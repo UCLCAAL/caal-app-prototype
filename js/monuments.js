@@ -72,6 +72,21 @@ const cancelMonumentSpatialDrawBtn = document.getElementById(
   "cancelMonumentSpatialDrawBtn"
 );
 
+const monumentSpatialDrawMenu =
+  document.getElementById(
+    "monumentSpatialDrawMenu"
+  );
+
+const monumentSpatialRectangleOption =
+  document.getElementById(
+    "monumentSpatialRectangleOption"
+  );
+
+const monumentSpatialPolygonOption =
+  document.getElementById(
+    "monumentSpatialPolygonOption"
+);
+
 const monumentMeasurementPanel = document.getElementById(
   "monumentMeasurementPanel"
 );
@@ -89,6 +104,10 @@ const monumentMeasurementInstruction = document.getElementById(
 );
 const monumentMeasurementResult = document.getElementById(
   "monumentMeasurementResult"
+);
+
+const monumentMeasurePointBtn = document.getElementById(
+  "monumentMeasurePointBtn"
 );
 
 let clearActiveMonumentHoverPopup = () => {};
@@ -262,6 +281,12 @@ let activeMonumentMapSelection = null;
 let activeMapViewFilterBbox = null;
 let activeMonumentSpatialPolygon = null;
 
+let monumentCoordinateStatusBar = null;
+let monumentCoordinateStatusLngLat = null;
+
+let monumentLocateControlBtn = null;
+let monumentLocateMarker = null;
+
 let monumentSpatialDraw = null;
 let monumentSpatialDrawFeatureId = null;
 let monumentSpatialDrawIsActive = false;
@@ -285,6 +310,13 @@ let hoveredAdminBoundaryId = null;
 let nationalClusterFeatures = [];
 let nationalClusterMode = "points";
 let nationalClusterPointRecords = [];
+
+let monumentSpatialDrawMode = null;
+
+let monumentSpatialRectangleStart = null;
+let monumentSpatialRectanglePreview = null;
+let monumentSpatialRectangleEventsBound = false;
+let monumentSpatialRectangleDragPanWasEnabled = false;
 
 let centralAsiaBordersDebounceTimer = null;
 
@@ -1020,6 +1052,20 @@ function toggleMapOptionsPanel() {
   if (!mapOptionsPanel.hidden) {
     closeMapOptionsPanel();
     return;
+  }
+
+  if (
+    monumentMeasurementPanel &&
+    !monumentMeasurementPanel.hidden
+  ) {
+    closeMonumentMeasurementPanel();
+  }
+
+  if (
+    monumentLocatePanel &&
+    !monumentLocatePanel.hidden
+  ) {
+    closeMonumentLocatePanel();
   }
 
   updateMapOptionsState();
@@ -2163,7 +2209,7 @@ async function applyMapViewFilterFromCurrentMap() {
   const bbox = getCurrentMapViewBbox();
   if (!bbox) return;
 
-  cancelMonumentSpatialPolygonDrawing({
+  cancelActiveMonumentSpatialDrawing({
     clearCompletedPolygon: true
   });
 
@@ -2409,7 +2455,12 @@ function initialiseMonumentSpatialDraw() {
   });
 
   map.on("click", (event) => {
-    if (!monumentSpatialDrawIsActive) return;
+    if (
+      !monumentSpatialDrawIsActive ||
+      monumentSpatialDrawMode !== "polygon"
+    ) {
+      return;
+    }
 
     const coordinate = [
       Number(event.lngLat.lng.toFixed(6)),
@@ -2433,7 +2484,12 @@ function initialiseMonumentSpatialDraw() {
   });
 
   map.on("contextmenu", (event) => {
-    if (!monumentSpatialDrawIsActive) return;
+    if (
+      !monumentSpatialDrawIsActive ||
+      monumentSpatialDrawMode !== "polygon"
+    ) {
+      return;
+    }
 
     event.preventDefault?.();
     event.originalEvent?.preventDefault?.();
@@ -2443,7 +2499,11 @@ function initialiseMonumentSpatialDraw() {
 }
 
 async function finishMonumentSpatialPolygonWithRightClick() {
-  if (!monumentSpatialDrawIsActive || !monumentSpatialDraw) {
+  if (
+    !monumentSpatialDrawIsActive ||
+    monumentSpatialDrawMode !== "polygon" ||
+    !monumentSpatialDraw
+  ) {
     return;
   }
 
@@ -2598,6 +2658,19 @@ function setMonumentSpatialDrawMessage(visible) {
 
   monumentSpatialDrawMessage.hidden = !visible;
 
+  if (
+    monumentSpatialDrawMode ===
+    "rectangle"
+  ) {
+    monumentSpatialDrawMessageText.textContent =
+      t(
+        "viewer_spatial_rectangle_instruction",
+        "Click and drag to draw a rectangle."
+      );
+
+    return;
+  }
+
   if (monumentSpatialDrawMessageText && visible) {
     monumentSpatialDrawMessageText.textContent = t(
       "viewer_spatial_draw_instruction",
@@ -2633,6 +2706,12 @@ function updateMonumentSpatialPolygonButton() {
 function startMonumentSpatialPolygonDrawing() {
   if (!map || !monumentSpatialDraw) return;
 
+  setMonumentSpatialDrawMenuOpen(false);
+
+  cancelMonumentSpatialRectangleDrawing({
+    clearFilter: false
+  });
+
   if (monumentMeasurementIsActive) {
     cancelMonumentMeasurementDrawing();
   }
@@ -2643,6 +2722,7 @@ function startMonumentSpatialPolygonDrawing() {
   monumentSpatialDrawCoordinates = [];
   monumentSpatialDrawIsActive = true;
 
+  monumentSpatialDrawMode = "polygon";
   monumentSpatialDraw.setMode("polygon");
 
   closeMonumentMapPopupsForTool();
@@ -2659,6 +2739,7 @@ function cancelMonumentSpatialPolygonDrawing({
 } = {}) {
   monumentSpatialDrawIsActive = false;
   monumentSpatialDrawCoordinates = [];
+  monumentSpatialDrawMode = null;
 
   monumentSpatialDraw?.setMode("monument-spatial-render");
 
@@ -2705,6 +2786,20 @@ function toggleMonumentMeasurementPanel() {
 
   monumentMeasurementPanel.hidden = false;
 
+  if (
+    monumentLocatePanel &&
+    !monumentLocatePanel.hidden
+  ) {
+    closeMonumentLocatePanel();
+  }
+
+  if (
+    mapOptionsPanel &&
+    !mapOptionsPanel.hidden
+  ) {
+    closeMapOptionsPanel();
+  }
+
   monumentMeasurementControlBtn?.classList.add(
     "is-active"
   );
@@ -2716,15 +2811,11 @@ function toggleMonumentMeasurementPanel() {
 }
 
 function closeMonumentMeasurementPanel() {
-  /*
-    Closing Tools ends and removes the current
-    measurement rather than merely hiding it.
-  */
-  clearMonumentMeasurement();
-
   if (monumentMeasurementPanel) {
     monumentMeasurementPanel.hidden = true;
   }
+
+  clearMonumentMeasurement();
 
   monumentMeasurementControlBtn?.classList.remove(
     "is-active"
@@ -2783,6 +2874,994 @@ function addMonumentMeasurementControl() {
     new MonumentMeasurementControl(),
     "top-right"
   );
+}
+
+function monumentFormatMapCoordinate(value) {
+  const number = Number(value);
+
+  return Number.isFinite(number)
+    ? number.toFixed(6)
+    : "—";
+}
+
+function updateMonumentCoordinateStatusBar() {
+  if (
+    !monumentCoordinateStatusBar ||
+    !map
+  ) {
+    return;
+  }
+
+  const longitude =
+    monumentCoordinateStatusLngLat
+      ? monumentFormatMapCoordinate(
+          monumentCoordinateStatusLngLat.lng
+        )
+      : "—";
+
+  const latitude =
+    monumentCoordinateStatusLngLat
+      ? monumentFormatMapCoordinate(
+          monumentCoordinateStatusLngLat.lat
+        )
+      : "—";
+
+  monumentCoordinateStatusBar.innerHTML = `
+    <span>
+      ${escapeHtml(
+        t("longitude", "Longitude")
+      )}:
+      <strong>
+        ${escapeHtml(longitude)}
+      </strong>
+    </span>
+
+    <span>
+      ${escapeHtml(
+        t("latitude", "Latitude")
+      )}:
+      <strong>
+        ${escapeHtml(latitude)}
+      </strong>
+    </span>
+
+    <span class="viewer-coordinate-crs">
+      ${escapeHtml(
+        t(
+          "coordinate_reference_system",
+          "WGS 84 · EPSG:4326"
+        )
+      )}
+    </span>
+  `;
+}
+
+function addMonumentCoordinateStatusBar() {
+  if (
+    !map ||
+    monumentCoordinateStatusBar
+  ) {
+    return;
+  }
+
+  const bar =
+    document.createElement("div");
+
+  bar.className =
+    "viewer-map-coordinate-status";
+
+  bar.setAttribute(
+    "aria-live",
+    "off"
+  );
+
+  const container =
+    map.getContainer();
+
+  container.classList.add(
+    "has-coordinate-status"
+  );
+
+  container.appendChild(bar);
+
+  monumentCoordinateStatusBar = bar;
+
+  updateMonumentCoordinateStatusBar();
+
+  map.on("mousemove", (event) => {
+    monumentCoordinateStatusLngLat =
+      event.lngLat;
+
+    updateMonumentCoordinateStatusBar();
+  });
+
+  map.on("mouseout", () => {
+    monumentCoordinateStatusLngLat = null;
+
+    updateMonumentCoordinateStatusBar();
+  });
+}
+
+function clearMonumentLocateMarker() {
+  if (!monumentLocateMarker) return;
+
+  monumentLocateMarker.remove();
+  monumentLocateMarker = null;
+}
+
+function setMonumentLocateMarker(
+  longitude,
+  latitude,
+  {
+    userLocation = false
+  } = {}
+) {
+  if (!map) return;
+
+  clearMonumentLocateMarker();
+
+  const markerEl =
+    document.createElement("div");
+
+  markerEl.className =
+    `viewer-locate-marker${
+      userLocation
+        ? " is-user-location"
+        : ""
+    }`;
+
+  monumentLocateMarker =
+    new maplibregl.Marker({
+      element: markerEl,
+      anchor: "center"
+    })
+      .setLngLat([
+        longitude,
+        latitude
+      ])
+      .addTo(map);
+}
+
+function setMonumentLocateStatus(
+  message = "",
+  {
+    isError = false
+  } = {}
+) {
+  if (!monumentLocateStatus) return;
+
+  monumentLocateStatus.hidden =
+    !message;
+
+  monumentLocateStatus.textContent =
+    message;
+
+  monumentLocateStatus.classList.toggle(
+    "is-error",
+    isError
+  );
+}
+
+function closeMonumentLocatePanel({
+  clearMarker = true
+} = {}) {
+  if (monumentLocatePanel) {
+    monumentLocatePanel.hidden = true;
+  }
+
+  monumentLocateControlBtn?.classList.remove(
+    "is-active"
+  );
+
+  monumentLocateControlBtn?.setAttribute(
+    "aria-expanded",
+    "false"
+  );
+
+  if (clearMarker) {
+    clearMonumentLocateMarker();
+  }
+
+  setMonumentLocateStatus("");
+}
+
+function toggleMonumentLocatePanel() {
+  if (!monumentLocatePanel) return;
+
+  if (!monumentLocatePanel.hidden) {
+    closeMonumentLocatePanel();
+    return;
+  }
+
+  if (
+    monumentMeasurementPanel &&
+    !monumentMeasurementPanel.hidden
+  ) {
+    closeMonumentMeasurementPanel();
+  }
+
+  if (
+    mapOptionsPanel &&
+    !mapOptionsPanel.hidden
+  ) {
+    closeMapOptionsPanel();
+  }
+
+  monumentLocatePanel.hidden = false;
+
+  monumentLocateControlBtn?.classList.add(
+    "is-active"
+  );
+
+  monumentLocateControlBtn?.setAttribute(
+    "aria-expanded",
+    "true"
+  );
+
+  monumentLocateLongitude?.focus();
+}
+
+function monumentLocateCoordinatesAreValid(
+  longitude,
+  latitude
+) {
+  return (
+    Number.isFinite(longitude) &&
+    Number.isFinite(latitude) &&
+    longitude >= -180 &&
+    longitude <= 180 &&
+    latitude >= -90 &&
+    latitude <= 90
+  );
+}
+
+function goMonumentToCoordinates() {
+  if (!map) return;
+
+  const longitude =
+    Number(
+      monumentLocateLongitude?.value
+    );
+
+  const latitude =
+    Number(
+      monumentLocateLatitude?.value
+    );
+
+  if (
+    !monumentLocateCoordinatesAreValid(
+      longitude,
+      latitude
+    )
+  ) {
+    setMonumentLocateStatus(
+      t(
+        "coordinates_invalid",
+        "Enter a valid longitude and latitude."
+      ),
+      {
+        isError: true
+      }
+    );
+
+    return;
+  }
+
+  setMonumentLocateStatus("");
+
+  const lng =
+    Number(longitude.toFixed(6));
+
+  const lat =
+    Number(latitude.toFixed(6));
+
+  if (monumentLocateLongitude) {
+    monumentLocateLongitude.value =
+      lng.toFixed(6);
+  }
+
+  if (monumentLocateLatitude) {
+    monumentLocateLatitude.value =
+      lat.toFixed(6);
+  }
+
+  setMonumentLocateMarker(
+    lng,
+    lat
+  );
+
+  map.flyTo({
+    center: [lng, lat],
+    zoom: Math.max(
+      map.getZoom(),
+      12
+    ),
+    duration: 700
+  });
+}
+
+function goMonumentToMyLocation() {
+  if (!navigator.geolocation) {
+    setMonumentLocateStatus(
+      t(
+        "geolocation_unavailable",
+        "Location is not available in this browser."
+      ),
+      {
+        isError: true
+      }
+    );
+
+    return;
+  }
+
+  setMonumentLocateStatus(
+    t(
+      "finding_location",
+      "Finding your location..."
+    )
+  );
+
+  if (monumentMyLocationBtn) {
+    monumentMyLocationBtn.disabled = true;
+  }
+
+  navigator.geolocation.getCurrentPosition(
+    (position) => {
+      const longitude =
+        Number(
+          position.coords.longitude
+        );
+
+      const latitude =
+        Number(
+          position.coords.latitude
+        );
+
+      const accuracy =
+        Number(
+          position.coords.accuracy
+        );
+
+      if (
+        !monumentLocateCoordinatesAreValid(
+          longitude,
+          latitude
+        )
+      ) {
+        setMonumentLocateStatus(
+          t(
+            "geolocation_invalid",
+            "The browser returned an invalid location."
+          ),
+          {
+            isError: true
+          }
+        );
+
+        if (monumentMyLocationBtn) {
+          monumentMyLocationBtn.disabled =
+            false;
+        }
+
+        return;
+      }
+
+      const lng =
+        Number(
+          longitude.toFixed(6)
+        );
+
+      const lat =
+        Number(
+          latitude.toFixed(6)
+        );
+
+      if (monumentLocateLongitude) {
+        monumentLocateLongitude.value =
+          lng.toFixed(6);
+      }
+
+      if (monumentLocateLatitude) {
+        monumentLocateLatitude.value =
+          lat.toFixed(6);
+      }
+
+      setMonumentLocateMarker(
+        lng,
+        lat,
+        {
+          userLocation: true
+        }
+      );
+
+      map.flyTo({
+        center: [lng, lat],
+        zoom: Math.max(
+          map.getZoom(),
+          14
+        ),
+        duration: 700
+      });
+
+      const accuracyText =
+        Number.isFinite(accuracy)
+          ? t(
+              "location_accuracy",
+              "Approximate accuracy: ±{distance} m"
+            ).replace(
+              "{distance}",
+              Math.round(
+                accuracy
+              ).toLocaleString()
+            )
+          : "";
+
+      setMonumentLocateStatus(
+        accuracyText
+      );
+
+      if (monumentMyLocationBtn) {
+        monumentMyLocationBtn.disabled =
+          false;
+      }
+    },
+
+    (error) => {
+      let message =
+        t(
+          "geolocation_failed",
+          "Could not determine your location."
+        );
+
+      if (error?.code === 1) {
+        message =
+          t(
+            "geolocation_permission_denied",
+            "Location permission was denied."
+          );
+      } else if (error?.code === 2) {
+        message =
+          t(
+            "geolocation_position_unavailable",
+            "Your location could not be determined."
+          );
+      } else if (error?.code === 3) {
+        message =
+          t(
+            "geolocation_timeout",
+            "Finding your location timed out."
+          );
+      }
+
+      setMonumentLocateStatus(
+        message,
+        {
+          isError: true
+        }
+      );
+
+      if (monumentMyLocationBtn) {
+        monumentMyLocationBtn.disabled =
+          false;
+      }
+    },
+
+    {
+      enableHighAccuracy: true,
+      timeout: 10000,
+      maximumAge: 30000
+    }
+  );
+}
+
+function addMonumentLocateControl() {
+  if (!map) return;
+
+  class MonumentLocateControl {
+    onAdd(mapInstance) {
+      this._map =
+        mapInstance;
+
+      const container =
+        document.createElement("div");
+
+      container.className =
+        "maplibregl-ctrl map-custom-control viewer-locate-map-control";
+
+      const label =
+        t(
+          "locate",
+          "Locate"
+        );
+
+      const button =
+        createMapIconButton({
+          id:
+            "monumentLocateControlBtn",
+
+          title:
+            label,
+
+          className:
+            "viewer-locate-map-toggle",
+
+          html:
+            window.svgMapSearchIcon
+              ? window.svgMapSearchIcon({
+                  width: 18,
+                  height: 18
+                })
+              : "",
+
+          onClick:
+            toggleMonumentLocatePanel
+        });
+
+      button.setAttribute(
+        "aria-expanded",
+        "false"
+      );
+
+      button.setAttribute(
+        "aria-controls",
+        "monumentLocatePanel"
+      );
+
+      container.appendChild(
+        button
+      );
+
+      monumentLocateControlBtn =
+        button;
+
+      this._container =
+        container;
+
+      return container;
+    }
+
+    onRemove() {
+      this._container?.remove();
+
+      monumentLocateControlBtn =
+        null;
+
+      clearMonumentLocateMarker();
+
+      this._map = null;
+    }
+  }
+
+  map.addControl(
+    new MonumentLocateControl(),
+    "top-right"
+  );
+}
+
+function setMonumentSpatialDrawMenuOpen(
+  open
+) {
+  if (
+    !monumentSpatialDrawMenu ||
+    !drawMonumentSpatialPolygonBtn
+  ) {
+    return;
+  }
+
+  monumentSpatialDrawMenu.hidden =
+    !open;
+
+  drawMonumentSpatialPolygonBtn.setAttribute(
+    "aria-expanded",
+    open ? "true" : "false"
+  );
+}
+
+function toggleMonumentSpatialDrawMenu() {
+  if (!monumentSpatialDrawMenu) return;
+
+  setMonumentSpatialDrawMenuOpen(
+    monumentSpatialDrawMenu.hidden
+  );
+}
+
+function startMonumentSpatialRectangleDrawing() {
+  if (!map || !mapLoaded) return;
+
+  setMonumentSpatialDrawMenuOpen(
+    false
+  );
+
+  if (monumentMeasurementIsActive) {
+    cancelMonumentMeasurementDrawing();
+  }
+
+  if (
+    monumentSpatialDrawIsActive &&
+    monumentSpatialDrawMode === "polygon"
+  ) {
+    cancelMonumentSpatialPolygonDrawing({
+      clearCompletedPolygon: false
+    });
+  }
+
+  removeMonumentSpatialDrawFeature();
+
+  activeMonumentSpatialPolygon = null;
+  activeMapViewFilterBbox = null;
+
+  monumentSpatialDrawCoordinates = [];
+  monumentSpatialDrawMode =
+    "rectangle";
+
+  monumentSpatialDrawIsActive =
+    true;
+
+  closeMonumentMapPopupsForTool();
+
+  monumentSpatialRectangleDragPanWasEnabled =
+    map.dragPan?.isEnabled?.() ===
+    true;
+
+  map.dragPan?.disable?.();
+
+  updateMonumentMapToolCursor();
+  updateMonumentSpatialPolygonButton();
+  updateFilterToMapViewButton();
+  setMonumentSpatialDrawMessage(true);
+  renderActiveFilterChips();
+}
+
+function removeMonumentSpatialRectanglePreview() {
+  monumentSpatialRectanglePreview
+    ?.remove();
+
+  monumentSpatialRectanglePreview =
+    null;
+}
+
+function monumentRectangleLocalPoint(
+  clientX,
+  clientY
+) {
+  if (!map) return null;
+
+  const rect =
+    map
+      .getContainer()
+      .getBoundingClientRect();
+
+  return {
+    x: clientX - rect.left,
+    y: clientY - rect.top
+  };
+}
+
+function updateMonumentSpatialRectanglePreview(
+  start,
+  end
+) {
+  if (!map || !start || !end) {
+    return;
+  }
+
+  if (
+    !monumentSpatialRectanglePreview
+  ) {
+    const preview =
+      document.createElement("div");
+
+    preview.className =
+      "viewer-spatial-rectangle-preview";
+
+    map
+      .getContainer()
+      .appendChild(preview);
+
+    monumentSpatialRectanglePreview =
+      preview;
+  }
+
+  const left =
+    Math.min(start.x, end.x);
+
+  const top =
+    Math.min(start.y, end.y);
+
+  const width =
+    Math.abs(end.x - start.x);
+
+  const height =
+    Math.abs(end.y - start.y);
+
+  Object.assign(
+    monumentSpatialRectanglePreview.style,
+    {
+      left: `${left}px`,
+      top: `${top}px`,
+      width: `${width}px`,
+      height: `${height}px`
+    }
+  );
+}
+
+function monumentRectanglePolygonFromScreenPoints(
+  start,
+  end
+) {
+  if (!map || !start || !end) {
+    return null;
+  }
+
+  const minX =
+    Math.min(start.x, end.x);
+
+  const maxX =
+    Math.max(start.x, end.x);
+
+  const minY =
+    Math.min(start.y, end.y);
+
+  const maxY =
+    Math.max(start.y, end.y);
+
+  if (
+    maxX - minX < 5 ||
+    maxY - minY < 5
+  ) {
+    return null;
+  }
+
+  const nw =
+    map.unproject([
+      minX,
+      minY
+    ]);
+
+  const ne =
+    map.unproject([
+      maxX,
+      minY
+    ]);
+
+  const se =
+    map.unproject([
+      maxX,
+      maxY
+    ]);
+
+  const sw =
+    map.unproject([
+      minX,
+      maxY
+    ]);
+
+  return {
+    type: "Polygon",
+
+    coordinates: [[
+      [
+        Number(
+          nw.lng.toFixed(6)
+        ),
+        Number(
+          nw.lat.toFixed(6)
+        )
+      ],
+      [
+        Number(
+          ne.lng.toFixed(6)
+        ),
+        Number(
+          ne.lat.toFixed(6)
+        )
+      ],
+      [
+        Number(
+          se.lng.toFixed(6)
+        ),
+        Number(
+          se.lat.toFixed(6)
+        )
+      ],
+      [
+        Number(
+          sw.lng.toFixed(6)
+        ),
+        Number(
+          sw.lat.toFixed(6)
+        )
+      ],
+      [
+        Number(
+          nw.lng.toFixed(6)
+        ),
+        Number(
+          nw.lat.toFixed(6)
+        )
+      ]
+    ]]
+  };
+}
+
+function restoreMonumentSpatialRectangleMapPan() {
+  if (
+    map &&
+    monumentSpatialRectangleDragPanWasEnabled
+  ) {
+    map.dragPan?.enable?.();
+  }
+
+  monumentSpatialRectangleDragPanWasEnabled =
+    false;
+}
+
+function cancelMonumentSpatialRectangleDrawing({
+  clearFilter = false
+} = {}) {
+  monumentSpatialRectangleStart =
+    null;
+
+  removeMonumentSpatialRectanglePreview();
+  restoreMonumentSpatialRectangleMapPan();
+
+  if (
+    monumentSpatialDrawMode ===
+    "rectangle"
+  ) {
+    monumentSpatialDrawMode = null;
+  }
+
+  monumentSpatialDrawIsActive =
+    false;
+
+  if (clearFilter) {
+    activeMonumentSpatialPolygon =
+      null;
+  }
+
+  updateMonumentMapToolCursor();
+  updateMonumentSpatialPolygonButton();
+  setMonumentSpatialDrawMessage(false);
+  renderActiveFilterChips();
+}
+
+function bindMonumentSpatialRectangleEvents() {
+  if (
+    !map ||
+    monumentSpatialRectangleEventsBound
+  ) {
+    return;
+  }
+
+  monumentSpatialRectangleEventsBound =
+    true;
+
+  const canvas =
+    map.getCanvas();
+
+  canvas.addEventListener(
+    "mousedown",
+    (event) => {
+      if (
+        !monumentSpatialDrawIsActive ||
+        monumentSpatialDrawMode !==
+          "rectangle"
+      ) {
+        return;
+      }
+
+      if (event.button !== 0) {
+        return;
+      }
+
+      event.preventDefault();
+
+      monumentSpatialRectangleStart =
+        monumentRectangleLocalPoint(
+          event.clientX,
+          event.clientY
+        );
+
+      removeMonumentSpatialRectanglePreview();
+    }
+  );
+
+  window.addEventListener(
+    "mousemove",
+    (event) => {
+      if (
+        !monumentSpatialDrawIsActive ||
+        monumentSpatialDrawMode !==
+          "rectangle" ||
+        !monumentSpatialRectangleStart
+      ) {
+        return;
+      }
+
+      const current =
+        monumentRectangleLocalPoint(
+          event.clientX,
+          event.clientY
+        );
+
+      updateMonumentSpatialRectanglePreview(
+        monumentSpatialRectangleStart,
+        current
+      );
+    }
+  );
+
+  window.addEventListener(
+    "mouseup",
+    async (event) => {
+      if (
+        !monumentSpatialDrawIsActive ||
+        monumentSpatialDrawMode !==
+          "rectangle" ||
+        !monumentSpatialRectangleStart
+      ) {
+        return;
+      }
+
+      const start =
+        monumentSpatialRectangleStart;
+
+      const end =
+        monumentRectangleLocalPoint(
+          event.clientX,
+          event.clientY
+        );
+
+      monumentSpatialRectangleStart =
+        null;
+
+      const geometry =
+        monumentRectanglePolygonFromScreenPoints(
+          start,
+          end
+        );
+
+      removeMonumentSpatialRectanglePreview();
+      restoreMonumentSpatialRectangleMapPan();
+
+      if (!geometry) {
+        cancelMonumentSpatialRectangleDrawing({
+          clearFilter: false
+        });
+
+        return;
+      }
+
+      monumentSpatialDrawMode = null;
+
+      await applyCompletedMonumentSpatialPolygon(
+        null,
+        geometry
+      );
+    }
+  );
+}
+
+function cancelActiveMonumentSpatialDrawing({
+  clearCompletedPolygon = true
+} = {}) {
+  if (
+    monumentSpatialDrawMode ===
+    "rectangle"
+  ) {
+    cancelMonumentSpatialRectangleDrawing({
+      clearFilter:
+        clearCompletedPolygon
+    });
+
+    return;
+  }
+
+  cancelMonumentSpatialPolygonDrawing({
+    clearCompletedPolygon
+  });
 }
 
 function monumentDegreesToRadians(value) {
@@ -3027,6 +4106,165 @@ function updateMonumentMeasurementResult() {
   monumentMeasurementInstruction.hidden = false;
   monumentMeasurementResult.hidden = false;
 
+  if (monumentMeasurementMode === "point") {
+    monumentMeasurementInstruction.textContent =
+      monumentMeasurementIsActive
+        ? t(
+            "point_coordinates_instruction",
+            "Click a point on the map to read its coordinates."
+          )
+        : t(
+            "point_coordinates_complete",
+            "Point coordinates selected."
+          );
+
+    const coordinate =
+      monumentMeasurementCoordinates[0];
+
+    monumentMeasurementResult.hidden = false;
+
+    if (!coordinate) {
+      monumentMeasurementResult.innerHTML = `
+        <span class="viewer-measurement-placeholder">
+          ${escapeHtml(
+            t(
+              "point_coordinates_click_map",
+              "Click a point on the map."
+            )
+          )}
+        </span>
+      `;
+
+      return;
+    }
+
+    const longitude =
+      Number(coordinate[0]).toFixed(6);
+
+    const latitude =
+      Number(coordinate[1]).toFixed(6);
+
+    monumentMeasurementResult.innerHTML = `
+      <div class="viewer-coordinate-result">
+        <div class="viewer-coordinate-row">
+          <span>
+            ${escapeHtml(
+              t("longitude", "Longitude")
+            )}
+          </span>
+
+          <strong>
+            ${escapeHtml(longitude)}
+          </strong>
+        </div>
+
+        <div class="viewer-coordinate-row">
+          <span>
+            ${escapeHtml(
+              t("latitude", "Latitude")
+            )}
+          </span>
+
+          <strong>
+            ${escapeHtml(latitude)}
+          </strong>
+        </div>
+      </div>
+
+      <div class="viewer-coordinate-result-actions">
+        <button
+          type="button"
+          class="viewer-coordinate-icon-btn viewer-coordinate-clear-btn"
+          data-monument-clear-measurement
+          title="${escapeHtml(
+            t(
+              "clear_measurement",
+              "Clear measurement"
+            )
+          )}"
+          aria-label="${escapeHtml(
+            t(
+              "clear_measurement",
+              "Clear measurement"
+            )
+          )}"
+        >
+          ×
+        </button>
+
+        <button
+          type="button"
+          class="viewer-coordinate-icon-btn viewer-coordinate-copy-btn"
+          data-monument-copy-coordinate
+          title="${escapeHtml(
+            t(
+              "copy_coordinates",
+              "Copy coordinates"
+            )
+          )}"
+          aria-label="${escapeHtml(
+            t(
+              "copy_coordinates",
+              "Copy coordinates"
+            )
+          )}"
+        >
+          ${svgCopyIcon()}
+        </button>
+      </div>
+    `;
+
+    monumentMeasurementResult
+      .querySelector(
+        "[data-monument-copy-coordinate]"
+      )
+      ?.addEventListener(
+        "click",
+        async (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+
+          try {
+            await navigator.clipboard.writeText(
+              `${longitude}, ${latitude}`
+            );
+
+            if (
+              typeof showToast === "function"
+            ) {
+              showToast(
+                t(
+                  "coordinates_copied",
+                  "Coordinates copied"
+                )
+              );
+            }
+          } catch (error) {
+            console.warn(
+              "Could not copy coordinates:",
+              error
+            );
+          }
+        }
+      );
+
+    monumentMeasurementResult
+      .querySelector(
+        "[data-monument-clear-measurement]"
+      )
+      ?.addEventListener(
+        "click",
+        (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+
+          clearMonumentMeasurement();
+        }
+      );
+
+    return;
+  }
+
   if (!monumentMeasurementMode) {
     monumentMeasurementInstruction.textContent = t(
       "select_measurement_type",
@@ -3202,6 +4440,19 @@ function updateMonumentMeasurementButtons() {
     areaActive ? "true" : "false"
   );
 
+  const pointActive =
+    monumentMeasurementMode === "point";
+
+  monumentMeasurePointBtn?.classList.toggle(
+    "is-active",
+    pointActive
+  );
+
+  monumentMeasurePointBtn?.setAttribute(
+    "aria-pressed",
+    pointActive ? "true" : "false"
+  );
+
   monumentMeasurementControlBtn?.classList.toggle(
     "has-measurement",
     monumentMeasurementCoordinates.length > 0
@@ -3259,12 +4510,16 @@ function finishMonumentMeasurement() {
 }
 
 function startMonumentMeasurement(mode) {
-  if (!map || !mapLoaded || !["distance", "area"].includes(mode)) {
+  if (
+    !map ||
+    !mapLoaded ||
+    !["distance", "area", "point"].includes(mode)
+  ) {
     return;
   }
 
   if (monumentSpatialDrawIsActive) {
-    cancelMonumentSpatialPolygonDrawing({
+    cancelActiveMonumentSpatialDrawing({
       clearCompletedPolygon: false
     });
   }
@@ -3297,6 +4552,21 @@ function bindMonumentMeasurementMapEvents() {
       Number(event.lngLat.lng.toFixed(6)),
       Number(event.lngLat.lat.toFixed(6))
     ];
+
+    if (monumentMeasurementMode === "point") {
+      monumentMeasurementCoordinates = [
+        coordinate
+      ];
+
+      monumentMeasurementIsActive = false;
+
+      updateMonumentMapToolCursor();
+      updateMonumentMeasurementLayers();
+      updateMonumentMeasurementButtons();
+      updateMonumentMeasurementResult();
+
+      return;
+    }
 
     const previous =
       monumentMeasurementCoordinates[
@@ -3880,6 +5150,8 @@ function updateBorderStyleOptionsVisibility() {
 
   borderStyleOptions.hidden = !showCentralAsiaBordersCheckbox.checked;
 }
+
+
 
 function updateMapOptionsState() {
   updateBorderStyleOptionsVisibility();
@@ -12595,7 +13867,12 @@ function refreshMapLibreControlTooltips() {
     "#monumentMeasurementControlBtn": t(
       "measurement_tools",
       "Measurement tools"
-    )
+    ),
+    "#monumentLocateControlBtn":
+      t(
+        "locate",
+        "Locate"
+      )
   };
 
   Object.entries(labels).forEach(([selector, label]) => {
@@ -16993,25 +18270,84 @@ async function monumentDeleteCurrentRecord() {
 
 function renderMonumentMeasurementButtonLabels() {
   if (monumentMeasureDistanceBtn) {
-    monumentMeasureDistanceBtn.removeAttribute("data-i18n");
+    const label =
+      t(
+        "measure_distance",
+        "Measure distance"
+      );
+
+    monumentMeasureDistanceBtn.removeAttribute(
+      "data-i18n"
+    );
 
     monumentMeasureDistanceBtn.innerHTML = `
-      <span class="measurement-button-icon" aria-hidden="true">
+      <span
+        class="measurement-button-icon"
+        aria-hidden="true"
+      >
         ${svgMeasureDistanceToolIcon()}
       </span>
-      <span>${escapeHtml(t("measure_distance", "Measure distance"))}</span>
     `;
+
+    monumentMeasureDistanceBtn.title = label;
+    monumentMeasureDistanceBtn.setAttribute(
+      "aria-label",
+      label
+    );
   }
 
   if (monumentMeasureAreaBtn) {
-    monumentMeasureAreaBtn.removeAttribute("data-i18n");
+    const label =
+      t(
+        "measure_area",
+        "Measure area"
+      );
+
+    monumentMeasureAreaBtn.removeAttribute(
+      "data-i18n"
+    );
 
     monumentMeasureAreaBtn.innerHTML = `
-      <span class="measurement-button-icon" aria-hidden="true">
+      <span
+        class="measurement-button-icon"
+        aria-hidden="true"
+      >
         ${svgMeasureAreaToolIcon()}
       </span>
-      <span>${escapeHtml(t("measure_area", "Measure area"))}</span>
     `;
+
+    monumentMeasureAreaBtn.title = label;
+    monumentMeasureAreaBtn.setAttribute(
+      "aria-label",
+      label
+    );
+  }
+
+  if (monumentMeasurePointBtn) {
+    const label =
+      t(
+        "point_coordinates",
+        "Point coordinates"
+      );
+
+    monumentMeasurePointBtn.removeAttribute(
+      "data-i18n"
+    );
+
+    monumentMeasurePointBtn.innerHTML = `
+      <span
+        class="measurement-button-icon"
+        aria-hidden="true"
+      >
+        ${svgTargetIcon()}
+      </span>
+    `;
+
+    monumentMeasurePointBtn.title = label;
+    monumentMeasurePointBtn.setAttribute(
+      "aria-label",
+      label
+    );
   }
 }
 
@@ -17096,19 +18432,105 @@ if (filterToMapViewBtn) {
 }
 
 if (drawMonumentSpatialPolygonBtn) {
-  drawMonumentSpatialPolygonBtn.addEventListener("click", () => {
-    activeMonumentMapSelection = null;
-    startMonumentSpatialPolygonDrawing();
-  });
+  drawMonumentSpatialPolygonBtn.addEventListener(
+    "click",
+    (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+
+      toggleMonumentSpatialDrawMenu();
+    }
+  );
 }
 
-if (cancelMonumentSpatialDrawBtn) {
-  cancelMonumentSpatialDrawBtn.addEventListener("click", () => {
+monumentSpatialPolygonOption?.addEventListener("click", () => {
     activeMonumentMapSelection = null;
-    cancelMonumentSpatialPolygonDrawing({
-      clearCompletedPolygon: true
-    });
-  });
+
+    startMonumentSpatialPolygonDrawing();
+  }
+);
+
+monumentSpatialRectangleOption?.addEventListener("click", () => {
+    activeMonumentMapSelection = null;
+
+    startMonumentSpatialRectangleDrawing();
+  }
+);
+
+document.addEventListener("click", (event) => {
+    if (
+      event.target.closest(
+        ".viewer-spatial-draw-choice"
+      )
+    ) {
+      return;
+    }
+
+    setMonumentSpatialDrawMenuOpen(
+      false
+    );
+  }
+);
+
+if (cancelMonumentSpatialDrawBtn) {
+  cancelMonumentSpatialDrawBtn?.addEventListener(
+    "click",
+    () => {
+      cancelActiveMonumentSpatialDrawing({
+        clearCompletedPolygon: true
+      });
+    }
+  );
+}
+
+monumentMeasurePointBtn?.addEventListener("click", () => {
+  startMonumentMeasurement("point");
+});
+
+closeMonumentLocatePanelBtn?.addEventListener("click", () => {
+    closeMonumentLocatePanel();
+  }
+);
+
+monumentGoToCoordinateBtn?.addEventListener("click", () => {
+    goMonumentToCoordinates();
+  }
+);
+
+monumentMyLocationBtn?.addEventListener("click",() => {
+    goMonumentToMyLocation();
+  }
+);
+
+[
+  monumentLocateLongitude,
+  monumentLocateLatitude
+].forEach((input) => {
+  input?.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter") {
+        return;
+      }
+
+      event.preventDefault();
+
+      goMonumentToCoordinates();
+    }
+  );
+});
+
+if (monumentGoToCoordinateBtn) {
+  monumentGoToCoordinateBtn.innerHTML =
+    svgTargetIcon();
+}
+
+if (monumentMyLocationIcon) {
+  monumentMyLocationIcon.innerHTML =
+    window.svgGeolocateIcon
+      ? window.svgGeolocateIcon({
+          width: 17,
+          height: 17
+        })
+      : "";
 }
 
 renderMonumentMeasurementButtonLabels();
@@ -17349,9 +18771,17 @@ document.addEventListener("keydown", async (event) => {
     }
 
     if (monumentSpatialDrawIsActive) {
-      cancelMonumentSpatialPolygonDrawing({
+      cancelActiveMonumentSpatialDrawing({
         clearCompletedPolygon: true
       });
+      return;
+    }
+
+    if (
+      monumentLocatePanel &&
+      !monumentLocatePanel.hidden
+    ) {
+      closeMonumentLocatePanel();
       return;
     }
 
@@ -17362,13 +18792,18 @@ document.addEventListener("keydown", async (event) => {
       return;
     }
 
-    if (monumentPreviewModal && !monumentPreviewModal.hidden) {
+    if (
+      monumentPreviewModal &&
+      !monumentPreviewModal.hidden
+    ) {
       closeMonumentPreviewModal();
       return;
     }
   }
 
-  if (monumentIsEditMode) return;
+  if (monumentIsEditMode) {
+    return;
+  }
 
   if (event.key === "ArrowDown") {
     event.preventDefault();
@@ -17835,12 +19270,16 @@ document.addEventListener("DOMContentLoaded", async () => {
 
     addMapResetControl();
     addMapDownloadControl();
+
+    addMonumentLocateControl();
     addMonumentMeasurementControl();
+
     addMapOptionsControl();
 
     refreshMapLibreControlTooltips();
 
     addMonumentLegendControl();
+    addMonumentCoordinateStatusBar();
 
     map.on("click", (event) => {
       if (monumentMapInteractionToolIsActive()) return;
@@ -17872,8 +19311,12 @@ document.addEventListener("DOMContentLoaded", async () => {
       updateAddModeUI();
 
       initialiseMonumentSpatialDraw();
+
       ensureMonumentMeasurementLayers();
       bindMonumentMeasurementMapEvents();
+
+      bindMonumentSpatialRectangleEvents();
+
       updateMonumentMeasurementResult();
 
       ensureCentralAsiaBordersLayer();
