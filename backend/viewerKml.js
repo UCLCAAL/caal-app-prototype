@@ -15,6 +15,8 @@
 // Relationship LineStrings are emitted only when relationshipLines is on.
 // ============================================================
 
+const { EXPORT_SPECS } = require("./viewerFieldMap");
+
 const KML_STYLES = {
   // record_type -> icon colour (KML aabbggrr). Tuned to read distinctly in Google Earth
   rs3_poly:    "ff4b9e2f", // green
@@ -99,10 +101,17 @@ function descriptionHtml(row, relations) {
   push("CAAL ID", row.caal_id);
   push("Type", row.record_type);
   push("Dataset", row.dataset_label);
-  push("Country", row.country);
-  push("Monument types", row.monument_types);
-  push("Condition", row.condition_levels);
-  push("Risk", row.risk_levels);
+
+  const spec = EXPORT_SPECS[row.record_type];
+  if (spec && spec.kmlFields) {
+    for (const f of spec.kmlFields) push(f.label, row[f.column]);
+  } else {
+    push("Country", row.country);
+    push("Monument types", row.monument_types);
+    push("Condition", row.condition_levels);
+    push("Risk", row.risk_levels);
+  }
+
   if (relations && relations.length) {
     lines.push("<b>Related:</b>");
     for (const rel of relations) {

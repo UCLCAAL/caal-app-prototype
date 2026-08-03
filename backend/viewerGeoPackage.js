@@ -20,18 +20,16 @@ const WGS84_DEFINITION =
   'UNIT["degree",0.0174532925199433,AUTHORITY["EPSG","9122"]],' +
   'AUTHORITY["EPSG","4326"]]';
 
-// Attribute columns carried on every feature layer and on the
-// non-spatial table. Order matters: reused for INSERT statements.
-const RECORD_COLUMNS = [
-  "caal_id", "export_role", "record_type", "dataset_label", "display_label",
-  "country", "monument_types", "condition_levels", "deterioration_causes",
-  "risk_levels", "source_schema", "source_table", "source_row_id",
-  "centroid_lon", "centroid_lat"
-];
-
 const RECORD_COLUMN_TYPES = {
   centroid_lon: "REAL",
-  centroid_lat: "REAL"
+  centroid_lat: "REAL",
+  cultural_periods_date_from: "INTEGER",
+  cultural_periods_date_to: "INTEGER",
+  measurement_value_1: "REAL",
+  measurement_value_2: "REAL",
+  measurement_value_3: "REAL",
+  measurement_value_4: "REAL",
+  digital_files_count: "INTEGER"
 };
 
 const RELATIONSHIP_COLUMNS = [
@@ -50,6 +48,22 @@ function safeTableName(value, fallback = "records") {
 
 function columnDefinition(name) {
   return `"${name}" ${RECORD_COLUMN_TYPES[name] || "TEXT"}`;
+}
+
+/**
+ * Coerce a pg value into something node:sqlite can bind.
+ * SQLite has no native date or boolean type, so dates become ISO strings
+ * and booleans become 0/1 — both readable in QGIS.
+ */
+function bindValue(value) {
+  if (value === undefined || value === null) return null;
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === "boolean") return value ? 1 : 0;
+  if (typeof value === "number" || typeof value === "string") return value;
+  if (Buffer.isBuffer(value)) return value;
+  if (typeof value === "bigint") return value.toString();
+  if (typeof value === "object") return JSON.stringify(value);
+  return String(value);
 }
 
 /**
@@ -104,8 +118,8 @@ CREATE TABLE gpkg_geometry_columns (
           "longitude/latitude on WGS 84");
 }
 
-function createFeatureLayer(db, tableName, description, rows) {
-  const columns = RECORD_COLUMNS.map(columnDefinition).join(",\n  ");
+function createFeatureLayer(db, tableName, description, rows, recordColumns) {
+  const columns = recordColumns.map(columnDefinition).join(",\n  ");
   db.exec(`
 CREATE TABLE "${tableName}" (
   fid INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -114,15 +128,15 @@ CREATE TABLE "${tableName}" (
 );`);
 
   const insert = db.prepare(
-    `INSERT INTO "${tableName}" (geom, ${RECORD_COLUMNS.map(c => `"${c}"`).join(", ")})
-     VALUES (${new Array(RECORD_COLUMNS.length + 1).fill("?").join(", ")})`
+    `INSERT INTO "${tableName}" (geom, ${recordColumns.map(c => `"${c}"`).join(", ")})
+     VALUES (${new Array(recordColumns.length + 1).fill("?").join(", ")})`
   );
 
   let minX = null, minY = null, maxX = null, maxY = null;
   for (const row of rows) {
     insert.run(
       gpkgGeomBlob(row.geom_wkb),
-      ...RECORD_COLUMNS.map(c => (row[c] === undefined ? null : row[c]))
+      ...recordColumns.map(c => bindValue(row[c]))
     );
     if (row.min_x !== null && row.min_x !== undefined) {
       minX = minX === null ? row.min_x : Math.min(minX, row.min_x);
@@ -163,11 +177,7 @@ CREATE TABLE "${tableName}" (
        VALUES (${new Array(columns.length).fill("?").join(", ")})`
     );
     for (const row of rows) {
-      insert.run(...columns.map(c => {
-        const value = row[c];
-        if (value === undefined || value === null) return null;
-        return typeof value === "number" ? value : String(value);
-      }));
+      insert.run(...columns.map(c => bindValue(row[c])));
     }
   }
 
@@ -181,45 +191,34 @@ CREATE TABLE "${tableName}" (
 /**
  * Build the GeoPackage at filePath.
  *
- * recordRows       rows from exportRecordsGpkgSql (geom_wkb + min/max bounds)
- * relationshipRows rows from exportRelationshipsSql (may be empty)
- * infoRows         [{ key, value }] for the export_information table
+ * layers            [{ recordType, columns, rows }] — one entry per record
+ *                   type, columns already resolved by the caller (spec
+ *                   columns where a spec exists, common columns otherwise).
+ *                   Rows carry geom_wkb + min/max bounds for spatial types.
+ * relationshipRows  rows from exportRelationshipsSql (may be empty)
+ * infoRows          [{ key, value }] for the export_information table
+ *
+ * A record type becomes a feature layer if any of its rows has geometry,
+ * and an attribute table otherwise — decided per type rather than per row,
+ * so one geometry-less record cannot split a type across two tables with
+ * the same name.
  */
-function writeGeoPackage({ filePath, recordRows, relationshipRows, infoRows }) {
+function writeGeoPackage({ filePath, layers, relationshipRows, infoRows }) {
   const db = new DatabaseSync(filePath);
   try {
     createSkeleton(db);
 
-    const spatial = new Map();      // record_type -> rows with geometry
-    const nonSpatial = [];
+    for (const layer of layers) {
+      if (!layer.rows.length) continue;
+      const tableName = safeTableName(layer.recordType);
+      const description = `CAAL ${layer.recordType} records`;
+      const hasGeometry = layer.rows.some(r => r.geom_wkb);
 
-    for (const row of recordRows) {
-      if (row.geom_wkb) {
-        const key = row.record_type || "records";
-        if (!spatial.has(key)) spatial.set(key, []);
-        spatial.get(key).push(row);
+      if (hasGeometry) {
+        createFeatureLayer(db, tableName, description, layer.rows, layer.columns);
       } else {
-        nonSpatial.push(row);
+        createAttributeTable(db, tableName, description, layer.columns, layer.rows);
       }
-    }
-
-    for (const [recordType, rows] of spatial) {
-      createFeatureLayer(
-        db,
-        safeTableName(recordType),
-        `CAAL ${recordType} records`,
-        rows
-      );
-    }
-
-    if (nonSpatial.length) {
-      createAttributeTable(
-        db,
-        "non_spatial_records",
-        "Records without geometry (archives, datasets and similar)",
-        RECORD_COLUMNS,
-        nonSpatial
-      );
     }
 
     if (relationshipRows.length) {
@@ -244,4 +243,4 @@ function writeGeoPackage({ filePath, recordRows, relationshipRows, infoRows }) {
   }
 }
 
-module.exports = { writeGeoPackage, RECORD_COLUMNS, RELATIONSHIP_COLUMNS };
+module.exports = { writeGeoPackage, RELATIONSHIP_COLUMNS };

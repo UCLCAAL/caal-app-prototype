@@ -98,6 +98,9 @@ let mapOptionsBtn = document.getElementById("mapOptionsBtn");
 let resetMapBtn = document.getElementById("resetMapBtn");
 let downloadMapBtn = document.getElementById("downloadMapBtn");
 
+let viewerCoordinateStatusBar = null;
+let viewerCoordinateStatusLngLat = null;
+
 const closeMapOptionsBtn = document.getElementById("closeMapOptionsBtn");
 const mapOptionsPanel = document.getElementById("mapOptionsPanel");
 
@@ -139,6 +142,21 @@ const viewerSpatialDrawMessageText = document.getElementById(
   "viewerSpatialDrawMessageText"
 );
 
+const viewerSpatialDrawMenu =
+  document.getElementById(
+    "viewerSpatialDrawMenu"
+  );
+
+const viewerSpatialRectangleOption =
+  document.getElementById(
+    "viewerSpatialRectangleOption"
+  );
+
+const viewerSpatialPolygonOption =
+  document.getElementById(
+    "viewerSpatialPolygonOption"
+  );
+
 const cancelViewerSpatialDrawBtn = document.getElementById(
   "cancelViewerSpatialDrawBtn"
 );
@@ -160,6 +178,10 @@ const viewerMeasureAreaBtn = document.getElementById(
   "viewerMeasureAreaBtn"
 );
 
+const viewerMeasurePointBtn = document.getElementById(
+  "viewerMeasurePointBtn"
+);
+
 const viewerMeasurementInstruction = document.getElementById(
   "viewerMeasurementInstruction"
 );
@@ -174,6 +196,50 @@ let viewerMeasurementMode = null;
 let viewerMeasurementCoordinates = [];
 let viewerMeasurementIsActive = false;
 let viewerMeasurementEventsBound = false;
+
+// locate / coordinate navigation
+const viewerLocatePanel =
+  document.getElementById(
+    "viewerLocatePanel"
+  );
+
+const closeViewerLocatePanelBtn =
+  document.getElementById(
+    "closeViewerLocatePanelBtn"
+  );
+
+const viewerLocateLongitude =
+  document.getElementById(
+    "viewerLocateLongitude"
+  );
+
+const viewerLocateLatitude =
+  document.getElementById(
+    "viewerLocateLatitude"
+  );
+
+const viewerGoToCoordinateBtn =
+  document.getElementById(
+    "viewerGoToCoordinateBtn"
+  );
+
+const viewerMyLocationBtn =
+  document.getElementById(
+    "viewerMyLocationBtn"
+  );
+
+const viewerMyLocationIcon =
+  document.getElementById(
+    "viewerMyLocationIcon"
+  );
+
+const viewerLocateStatus =
+  document.getElementById(
+    "viewerLocateStatus"
+  );
+
+let viewerLocateControlBtn = null;
+let viewerLocateMarker = null;
 
 const VIEWER_MEASUREMENT_SOURCE_ID =
   "viewer-measurement-source";
@@ -2598,6 +2664,14 @@ let viewerSpatialDraw = null;
 let viewerSpatialDrawFeatureId = null;
 let viewerSpatialDrawIsActive = false;
 let viewerSpatialDrawCoordinates = [];
+
+let viewerSpatialDrawMode = null;
+
+let viewerSpatialRectangleStart = null;
+let viewerSpatialRectanglePreview = null;
+
+let viewerSpatialRectangleEventsBound = false;
+let viewerSpatialRectangleDragPanWasEnabled = false;
 
 let viewerPopup = null;
 
@@ -7647,6 +7721,8 @@ function refreshMapLibreControlTooltips() {
     ".maplibregl-ctrl-fullscreen": t("map_enter_fullscreen", "Enter fullscreen"),
     ".maplibregl-ctrl-shrink": t("map_exit_fullscreen", "Exit fullscreen"),
     "#resetMapBtn": t("reset_map", "Reset map"),
+    "#viewerLocateControlBtn":
+      t("locate", "Locate"),
     "#mapOptionsBtn": t("map_options", "Map options")
   };
 
@@ -7655,6 +7731,104 @@ function refreshMapLibreControlTooltips() {
       button.title = label;
       button.setAttribute("aria-label", label);
     });
+  });
+}
+
+function viewerFormatMapCoordinate(value) {
+  const number = Number(value);
+
+  return Number.isFinite(number)
+    ? number.toFixed(6)
+    : "—";
+}
+
+function updateViewerCoordinateStatusBar() {
+  if (
+    !viewerCoordinateStatusBar ||
+    !viewerMap
+  ) {
+    return;
+  }
+
+  const longitude =
+    viewerCoordinateStatusLngLat
+      ? viewerFormatMapCoordinate(
+          viewerCoordinateStatusLngLat.lng
+        )
+      : "—";
+
+  const latitude =
+    viewerCoordinateStatusLngLat
+      ? viewerFormatMapCoordinate(
+          viewerCoordinateStatusLngLat.lat
+        )
+      : "—";
+
+  viewerCoordinateStatusBar.innerHTML = `
+    <span>
+      ${escapeHtml(t("longitude", "Longitude"))}:
+      <strong>${escapeHtml(longitude)}</strong>
+    </span>
+
+    <span>
+      ${escapeHtml(t("latitude", "Latitude"))}:
+      <strong>${escapeHtml(latitude)}</strong>
+    </span>
+
+    <span class="viewer-coordinate-crs">
+      ${escapeHtml(
+        t(
+          "coordinate_reference_system",
+          "WGS 84 · EPSG:4326"
+        )
+      )}
+    </span>
+  `;
+}
+
+function addViewerCoordinateStatusBar() {
+  if (
+    !viewerMap ||
+    viewerCoordinateStatusBar
+  ) {
+    return;
+  }
+
+  const bar =
+    document.createElement("div");
+
+  bar.className =
+    "viewer-map-coordinate-status";
+
+  bar.setAttribute(
+    "aria-live",
+    "off"
+  );
+
+  const container =
+    viewerMap.getContainer();
+
+  container.classList.add(
+    "has-coordinate-status"
+  );
+
+  container.appendChild(bar);
+
+  viewerCoordinateStatusBar = bar;
+
+  updateViewerCoordinateStatusBar();
+
+  viewerMap.on("mousemove", (event) => {
+    viewerCoordinateStatusLngLat =
+      event.lngLat;
+
+    updateViewerCoordinateStatusBar();
+  });
+
+  viewerMap.on("mouseout", () => {
+    viewerCoordinateStatusLngLat = null;
+
+    updateViewerCoordinateStatusBar();
   });
 }
 
@@ -7693,9 +7867,13 @@ function initViewerMap() {
 
   addMapResetControl();
   addMapDownloadControl();
+
+  addViewerLocateControl();
   addViewerMeasurementControl();
+
   addMapOptionsControl();
   addViewerLegendControl();
+  addViewerCoordinateStatusBar();
 
   viewerMap.addControl(
     new maplibregl.ScaleControl({
@@ -7713,6 +7891,7 @@ function initViewerMap() {
     initialiseViewerSpatialDraw();
     ensureViewerMeasurementLayers();
     bindViewerMeasurementMapEvents();
+    bindViewerSpatialRectangleEvents();
 
     try {
       await reloadViewer({
@@ -7787,6 +7966,7 @@ function initViewerMap() {
 
       viewerMap.once("style.load", async () => {
       viewerMapLoaded = true;
+      ensureViewerMeasurementLayers();
       initialiseViewerSpatialDraw();
       viewerLayerEventsBound = new Set();
       viewerCentroidEventsBound = false;
@@ -9449,6 +9629,30 @@ function getViewerOverviewRepresentedCount() {
 // --------------------------------------------------------
 // SPATIAL POLYGON DRAWING
 // --------------------------------------------------------
+function setViewerSpatialDrawMenuOpen(open) {
+  if (
+    !viewerSpatialDrawMenu ||
+    !drawViewerSpatialPolygonBtn
+  ) {
+    return;
+  }
+
+  viewerSpatialDrawMenu.hidden = !open;
+
+  drawViewerSpatialPolygonBtn.setAttribute(
+    "aria-expanded",
+    open ? "true" : "false"
+  );
+}
+
+function toggleViewerSpatialDrawMenu() {
+  if (!viewerSpatialDrawMenu) return;
+
+  setViewerSpatialDrawMenuOpen(
+    viewerSpatialDrawMenu.hidden
+  );
+}
+
 async function applyCompletedViewerSpatialPolygon(
   featureId,
   geometry
@@ -9487,6 +9691,8 @@ async function applyCompletedViewerSpatialPolygon(
 
   viewerSpatialDrawIsActive = false;
   viewerSpatialDrawCoordinates = [];
+
+  viewerSpatialDrawMode = null;
 
   if (viewerSpatialDraw) {
     viewerSpatialDraw.setMode(
@@ -9630,7 +9836,12 @@ function initialiseViewerSpatialDraw() {
   });
 
   viewerMap.on("click", (event) => {
-    if (!viewerSpatialDrawIsActive) return;
+    if (
+      !viewerSpatialDrawIsActive ||
+      viewerSpatialDrawMode !== "polygon"
+    ) {
+      return;
+    }
 
     const coordinate = [
       Number(event.lngLat.lng.toFixed(6)),
@@ -9655,7 +9866,12 @@ function initialiseViewerSpatialDraw() {
   });
 
   viewerMap.on("contextmenu", (event) => {
-    if (!viewerSpatialDrawIsActive) return;
+    if (
+      !viewerSpatialDrawIsActive ||
+      viewerSpatialDrawMode !== "polygon"
+    ) {
+      return;
+    }
 
     // Prevent the browser context menu while drawing only.
     event.preventDefault?.();
@@ -9844,6 +10060,363 @@ function normaliseViewerSpatialPolygon(geometry) {
   };
 }
 
+function startViewerSpatialRectangleDrawing() {
+  if (!viewerMap || !viewerMapLoaded) {
+    return;
+  }
+
+  setViewerSpatialDrawMenuOpen(false);
+
+  if (viewerMeasurementIsActive) {
+    cancelViewerMeasurementDrawing();
+  }
+
+  if (
+    viewerSpatialDrawIsActive &&
+    viewerSpatialDrawMode === "polygon"
+  ) {
+    cancelViewerSpatialPolygonDrawing({
+      clearCompletedPolygon: false
+    });
+  }
+
+  removeViewerSpatialDrawFeature();
+
+  activeViewerSpatialPolygon = null;
+  activeMapViewFilterBbox = null;
+
+  viewerSpatialDrawCoordinates = [];
+  viewerSpatialDrawMode = "rectangle";
+  viewerSpatialDrawIsActive = true;
+
+  closeViewerMapPopupsForTool();
+
+  /*
+    Rectangle drawing uses mouse drag, so disable map panning
+    until the rectangle is finished/cancelled.
+  */
+  viewerSpatialRectangleDragPanWasEnabled =
+    viewerMap.dragPan?.isEnabled?.() === true;
+
+  viewerMap.dragPan?.disable?.();
+
+  updateViewerMapToolCursor();
+
+  updateViewerSpatialPolygonButton();
+  updateFilterToMapViewButton();
+
+  setViewerSpatialDrawMessage(true);
+
+  renderViewerActiveFilterChips();
+}
+
+function removeViewerSpatialRectanglePreview() {
+  viewerSpatialRectanglePreview?.remove();
+
+  viewerSpatialRectanglePreview = null;
+}
+
+function viewerRectangleLocalPoint(
+  clientX,
+  clientY
+) {
+  if (!viewerMap) return null;
+
+  const rect =
+    viewerMap
+      .getContainer()
+      .getBoundingClientRect();
+
+  return {
+    x: clientX - rect.left,
+    y: clientY - rect.top
+  };
+}
+
+function updateViewerSpatialRectanglePreview(
+  start,
+  end
+) {
+  if (!viewerMap || !start || !end) {
+    return;
+  }
+
+  if (!viewerSpatialRectanglePreview) {
+    const preview =
+      document.createElement("div");
+
+    preview.className =
+      "viewer-spatial-rectangle-preview";
+
+    viewerMap
+      .getContainer()
+      .appendChild(preview);
+
+    viewerSpatialRectanglePreview =
+      preview;
+  }
+
+  const left =
+    Math.min(start.x, end.x);
+
+  const top =
+    Math.min(start.y, end.y);
+
+  const width =
+    Math.abs(end.x - start.x);
+
+  const height =
+    Math.abs(end.y - start.y);
+
+  Object.assign(
+    viewerSpatialRectanglePreview.style,
+    {
+      left: `${left}px`,
+      top: `${top}px`,
+      width: `${width}px`,
+      height: `${height}px`
+    }
+  );
+}
+
+//convert into json polygon
+function viewerRectanglePolygonFromScreenPoints(
+  start,
+  end
+) {
+  if (!viewerMap || !start || !end) {
+    return null;
+  }
+
+  const minX =
+    Math.min(start.x, end.x);
+
+  const maxX =
+    Math.max(start.x, end.x);
+
+  const minY =
+    Math.min(start.y, end.y);
+
+  const maxY =
+    Math.max(start.y, end.y);
+
+  /*
+    Reject accidental clicks/tiny drags.
+  */
+  if (
+    maxX - minX < 5 ||
+    maxY - minY < 5
+  ) {
+    return null;
+  }
+
+  /*
+    Unproject all four screen corners rather than just two.
+    This remains correct if map bearing is ever changed.
+  */
+  const nw = viewerMap.unproject([
+    minX,
+    minY
+  ]);
+
+  const ne = viewerMap.unproject([
+    maxX,
+    minY
+  ]);
+
+  const se = viewerMap.unproject([
+    maxX,
+    maxY
+  ]);
+
+  const sw = viewerMap.unproject([
+    minX,
+    maxY
+  ]);
+
+  return {
+    type: "Polygon",
+    coordinates: [[
+      [
+        Number(nw.lng.toFixed(6)),
+        Number(nw.lat.toFixed(6))
+      ],
+      [
+        Number(ne.lng.toFixed(6)),
+        Number(ne.lat.toFixed(6))
+      ],
+      [
+        Number(se.lng.toFixed(6)),
+        Number(se.lat.toFixed(6))
+      ],
+      [
+        Number(sw.lng.toFixed(6)),
+        Number(sw.lat.toFixed(6))
+      ],
+      [
+        Number(nw.lng.toFixed(6)),
+        Number(nw.lat.toFixed(6))
+      ]
+    ]]
+  };
+}
+
+// bind drag events once
+function bindViewerSpatialRectangleEvents() {
+  if (
+    !viewerMap ||
+    viewerSpatialRectangleEventsBound
+  ) {
+    return;
+  }
+
+  viewerSpatialRectangleEventsBound = true;
+
+  const canvas =
+    viewerMap.getCanvas();
+
+  canvas.addEventListener(
+    "mousedown",
+    (event) => {
+      if (
+        !viewerSpatialDrawIsActive ||
+        viewerSpatialDrawMode !== "rectangle"
+      ) {
+        return;
+      }
+
+      if (event.button !== 0) {
+        return;
+      }
+
+      event.preventDefault();
+
+      viewerSpatialRectangleStart =
+        viewerRectangleLocalPoint(
+          event.clientX,
+          event.clientY
+        );
+
+      removeViewerSpatialRectanglePreview();
+    }
+  );
+
+  window.addEventListener(
+    "mousemove",
+    (event) => {
+      if (
+        !viewerSpatialDrawIsActive ||
+        viewerSpatialDrawMode !== "rectangle" ||
+        !viewerSpatialRectangleStart
+      ) {
+        return;
+      }
+
+      const current =
+        viewerRectangleLocalPoint(
+          event.clientX,
+          event.clientY
+        );
+
+      updateViewerSpatialRectanglePreview(
+        viewerSpatialRectangleStart,
+        current
+      );
+    }
+  );
+
+  window.addEventListener(
+    "mouseup",
+    async (event) => {
+      if (
+        !viewerSpatialDrawIsActive ||
+        viewerSpatialDrawMode !== "rectangle" ||
+        !viewerSpatialRectangleStart
+      ) {
+        return;
+      }
+
+      const start =
+        viewerSpatialRectangleStart;
+
+      const end =
+        viewerRectangleLocalPoint(
+          event.clientX,
+          event.clientY
+        );
+
+      viewerSpatialRectangleStart = null;
+
+      const geometry =
+        viewerRectanglePolygonFromScreenPoints(
+          start,
+          end
+        );
+
+      removeViewerSpatialRectanglePreview();
+
+      restoreViewerSpatialRectangleMapPan();
+
+      if (!geometry) {
+        cancelViewerSpatialRectangleDrawing({
+          clearFilter: false
+        });
+
+        return;
+      }
+
+      /*
+        From this point onwards rectangle and polygon use
+        exactly the same spatial-filter pipeline.
+      */
+      viewerSpatialDrawMode = null;
+
+      await applyCompletedViewerSpatialPolygon(
+        null,
+        geometry
+      );
+    }
+  );
+}
+
+function restoreViewerSpatialRectangleMapPan() {
+  if (
+    viewerMap &&
+    viewerSpatialRectangleDragPanWasEnabled
+  ) {
+    viewerMap.dragPan?.enable?.();
+  }
+
+  viewerSpatialRectangleDragPanWasEnabled =
+    false;
+}
+
+function cancelViewerSpatialRectangleDrawing({
+  clearFilter = false
+} = {}) {
+  viewerSpatialRectangleStart = null;
+
+  removeViewerSpatialRectanglePreview();
+  restoreViewerSpatialRectangleMapPan();
+
+  if (
+    viewerSpatialDrawMode === "rectangle"
+  ) {
+    viewerSpatialDrawMode = null;
+  }
+
+  viewerSpatialDrawIsActive = false;
+
+  if (clearFilter) {
+    activeViewerSpatialPolygon = null;
+  }
+
+  updateViewerMapToolCursor();
+  updateViewerSpatialPolygonButton();
+  setViewerSpatialDrawMessage(false);
+  renderViewerActiveFilterChips();
+}
+
 function removeViewerSpatialDrawFeature() {
   if (!viewerSpatialDraw || viewerSpatialDrawFeatureId === null) {
     viewerSpatialDrawFeatureId = null;
@@ -9864,14 +10437,34 @@ function removeViewerSpatialDrawFeature() {
 function setViewerSpatialDrawMessage(visible) {
   if (!viewerSpatialDrawMessage) return;
 
-  viewerSpatialDrawMessage.hidden = !visible;
+  viewerSpatialDrawMessage.hidden =
+    !visible;
 
-  if (viewerSpatialDrawMessageText && visible) {
-    viewerSpatialDrawMessageText.textContent = t(
+  if (
+    !viewerSpatialDrawMessageText ||
+    !visible
+  ) {
+    return;
+  }
+
+  if (
+    viewerSpatialDrawMode ===
+    "rectangle"
+  ) {
+    viewerSpatialDrawMessageText.textContent =
+      t(
+        "viewer_spatial_rectangle_instruction",
+        "Click and drag to draw a rectangle."
+      );
+
+    return;
+  }
+
+  viewerSpatialDrawMessageText.textContent =
+    t(
       "viewer_spatial_draw_instruction",
       "Click to add points. Click the first point or right-click anywhere on the map to finish."
     );
-  }
 }
 
 function updateViewerSpatialPolygonButton() {
@@ -9899,11 +10492,21 @@ function updateViewerSpatialPolygonButton() {
 }
 
 function startViewerSpatialPolygonDrawing() {
-  if (!viewerMap || !viewerSpatialDraw) return;
+  if (!viewerMap || !viewerSpatialDraw) {
+    return;
+  }
+
+  setViewerSpatialDrawMenuOpen(false);
 
   if (viewerMeasurementIsActive) {
     cancelViewerMeasurementDrawing();
   }
+
+  cancelViewerSpatialRectangleDrawing({
+    clearFilter: false
+  });
+
+  viewerSpatialDrawMode = "polygon";
 
   removeViewerSpatialDrawFeature();
 
@@ -9912,14 +10515,11 @@ function startViewerSpatialPolygonDrawing() {
   viewerSpatialDrawCoordinates = [];
 
   viewerSpatialDrawIsActive = true;
+
   viewerSpatialDraw.setMode("polygon");
+
   closeViewerMapPopupsForTool();
   updateViewerMapToolCursor();
-
-  if (viewerPopup) {
-    viewerPopup.remove();
-    viewerPopup = null;
-  }
 
   updateViewerSpatialPolygonButton();
   updateFilterToMapViewButton();
@@ -9927,11 +10527,35 @@ function startViewerSpatialPolygonDrawing() {
   renderViewerActiveFilterChips();
 }
 
+function cancelActiveViewerSpatialDrawing({
+  clearCompletedPolygon = true
+} = {}) {
+  if (
+    viewerSpatialDrawMode === "rectangle"
+  ) {
+    cancelViewerSpatialRectangleDrawing({
+      clearFilter: clearCompletedPolygon
+    });
+
+    return;
+  }
+
+  cancelViewerSpatialPolygonDrawing({
+    clearCompletedPolygon
+  });
+}
+
 function cancelViewerSpatialPolygonDrawing({
   clearCompletedPolygon = false
 } = {}) {
   viewerSpatialDrawIsActive = false;
   viewerSpatialDrawCoordinates = [];
+
+  if (
+    viewerSpatialDrawMode === "polygon"
+  ) {
+    viewerSpatialDrawMode = null;
+  }
 
   if (viewerSpatialDraw) {
     viewerSpatialDraw.setMode("viewer-spatial-render");
@@ -10484,28 +11108,498 @@ function addMapResetControl() {
   viewerMap.addControl(new MapResetControl(), "top-right");
 }
 
+// ========================================================
+// LOCATE / COORDINATE NAVIGATION
+// ========================================================
+
+function clearViewerLocateMarker() {
+  if (viewerLocateMarker) {
+    viewerLocateMarker.remove();
+    viewerLocateMarker = null;
+  }
+}
+
+function setViewerLocateMarker(
+  longitude,
+  latitude,
+  {
+    userLocation = false
+  } = {}
+) {
+  if (!viewerMap) return;
+
+  clearViewerLocateMarker();
+
+  const markerEl =
+    document.createElement("div");
+
+  markerEl.className =
+    `viewer-locate-marker${
+      userLocation
+        ? " is-user-location"
+        : ""
+    }`;
+
+  viewerLocateMarker =
+    new maplibregl.Marker({
+      element: markerEl,
+      anchor: "center"
+    })
+      .setLngLat([
+        longitude,
+        latitude
+      ])
+      .addTo(viewerMap);
+}
+
+function setViewerLocateStatus(
+  message = "",
+  {
+    isError = false
+  } = {}
+) {
+  if (!viewerLocateStatus) return;
+
+  viewerLocateStatus.hidden =
+    !message;
+
+  viewerLocateStatus.textContent =
+    message;
+
+  viewerLocateStatus.classList.toggle(
+    "is-error",
+    isError
+  );
+}
+
+function closeViewerLocatePanel({
+  clearMarker = true
+} = {}) {
+  if (viewerLocatePanel) {
+    viewerLocatePanel.hidden = true;
+  }
+
+  viewerLocateControlBtn?.classList.remove(
+    "is-active"
+  );
+
+  viewerLocateControlBtn?.setAttribute(
+    "aria-expanded",
+    "false"
+  );
+
+  if (clearMarker) {
+    clearViewerLocateMarker();
+  }
+
+  setViewerLocateStatus("");
+}
+
+function toggleViewerLocatePanel() {
+  if (!viewerLocatePanel) return;
+
+  if (!viewerLocatePanel.hidden) {
+    closeViewerLocatePanel();
+    return;
+  }
+
+  /*
+    Locate and Measurement use the same map-side
+    panel position, so only one should be open.
+  */
+  if (
+    viewerMeasurementPanel &&
+    !viewerMeasurementPanel.hidden
+  ) {
+    closeViewerMeasurementPanel();
+  }
+
+  if (
+    mapOptionsPanel &&
+    !mapOptionsPanel.hidden
+  ) {
+    closeMapOptionsPanel();
+  }
+
+  viewerLocatePanel.hidden = false;
+
+  viewerLocateControlBtn?.classList.add(
+    "is-active"
+  );
+
+  viewerLocateControlBtn?.setAttribute(
+    "aria-expanded",
+    "true"
+  );
+
+  viewerLocateLongitude?.focus();
+}
+
+function viewerLocateCoordinatesAreValid(
+  longitude,
+  latitude
+) {
+  return (
+    Number.isFinite(longitude) &&
+    Number.isFinite(latitude) &&
+    longitude >= -180 &&
+    longitude <= 180 &&
+    latitude >= -90 &&
+    latitude <= 90
+  );
+}
+
+function goViewerToCoordinates() {
+  if (!viewerMap) return;
+
+  const longitude =
+    Number(viewerLocateLongitude?.value);
+
+  const latitude =
+    Number(viewerLocateLatitude?.value);
+
+  if (
+    !viewerLocateCoordinatesAreValid(
+      longitude,
+      latitude
+    )
+  ) {
+    setViewerLocateStatus(
+      t(
+        "coordinates_invalid",
+        "Enter a valid longitude and latitude."
+      ),
+      {
+        isError: true
+      }
+    );
+
+    return;
+  }
+
+  setViewerLocateStatus("");
+
+  const lng =
+    Number(longitude.toFixed(6));
+
+  const lat =
+    Number(latitude.toFixed(6));
+
+  if (viewerLocateLongitude) {
+    viewerLocateLongitude.value =
+      lng.toFixed(6);
+  }
+
+  if (viewerLocateLatitude) {
+    viewerLocateLatitude.value =
+      lat.toFixed(6);
+  }
+
+  setViewerLocateMarker(
+    lng,
+    lat
+  );
+
+  /*
+    Do not suppress the normal map reload.
+    Once navigation completes, the Viewer should
+    load the resources around the new location.
+  */
+  viewerMap.flyTo({
+    center: [
+      lng,
+      lat
+    ],
+    zoom: Math.max(
+      viewerMap.getZoom(),
+      12
+    ),
+    duration: 700
+  });
+}
+
+function goViewerToMyLocation() {
+  if (!navigator.geolocation) {
+    setViewerLocateStatus(
+      t(
+        "geolocation_unavailable",
+        "Location is not available in this browser."
+      ),
+      {
+        isError: true
+      }
+    );
+
+    return;
+  }
+
+  setViewerLocateStatus(
+    t(
+      "finding_location",
+      "Finding your location..."
+    )
+  );
+
+  if (viewerMyLocationBtn) {
+    viewerMyLocationBtn.disabled = true;
+  }
+
+  navigator.geolocation.getCurrentPosition(
+    (position) => {
+      const longitude =
+        Number(
+          position.coords.longitude
+        );
+
+      const latitude =
+        Number(
+          position.coords.latitude
+        );
+
+      const accuracy =
+        Number(
+          position.coords.accuracy
+        );
+
+      if (
+        !viewerLocateCoordinatesAreValid(
+          longitude,
+          latitude
+        )
+      ) {
+        setViewerLocateStatus(
+          t(
+            "geolocation_invalid",
+            "The browser returned an invalid location."
+          ),
+          {
+            isError: true
+          }
+        );
+
+        if (viewerMyLocationBtn) {
+          viewerMyLocationBtn.disabled =
+            false;
+        }
+
+        return;
+      }
+
+      const lng =
+        Number(
+          longitude.toFixed(6)
+        );
+
+      const lat =
+        Number(
+          latitude.toFixed(6)
+        );
+
+      if (viewerLocateLongitude) {
+        viewerLocateLongitude.value =
+          lng.toFixed(6);
+      }
+
+      if (viewerLocateLatitude) {
+        viewerLocateLatitude.value =
+          lat.toFixed(6);
+      }
+
+      setViewerLocateMarker(
+        lng,
+        lat,
+        {
+          userLocation: true
+        }
+      );
+
+      viewerMap.flyTo({
+        center: [
+          lng,
+          lat
+        ],
+        zoom: Math.max(
+          viewerMap.getZoom(),
+          14
+        ),
+        duration: 700
+      });
+
+      const accuracyText =
+        Number.isFinite(accuracy)
+          ? t(
+              "location_accuracy",
+              "Approximate accuracy: ±{distance} m"
+            ).replace(
+              "{distance}",
+              Math.round(accuracy).toLocaleString()
+            )
+          : "";
+
+      setViewerLocateStatus(
+        accuracyText
+      );
+
+      if (viewerMyLocationBtn) {
+        viewerMyLocationBtn.disabled =
+          false;
+      }
+    },
+
+    (error) => {
+      let message =
+        t(
+          "geolocation_failed",
+          "Could not determine your location."
+        );
+
+      if (error?.code === 1) {
+        message =
+          t(
+            "geolocation_permission_denied",
+            "Location permission was denied."
+          );
+      } else if (error?.code === 2) {
+        message =
+          t(
+            "geolocation_position_unavailable",
+            "Your location could not be determined."
+          );
+      } else if (error?.code === 3) {
+        message =
+          t(
+            "geolocation_timeout",
+            "Finding your location timed out."
+          );
+      }
+
+      setViewerLocateStatus(
+        message,
+        {
+          isError: true
+        }
+      );
+
+      if (viewerMyLocationBtn) {
+        viewerMyLocationBtn.disabled =
+          false;
+      }
+    },
+
+    {
+      enableHighAccuracy: true,
+      timeout: 10000,
+      maximumAge: 30000
+    }
+  );
+}
+
+function addViewerLocateControl() {
+  if (!viewerMap) return;
+
+  class ViewerLocateControl {
+    onAdd(mapInstance) {
+      this._map = mapInstance;
+
+      const container =
+        document.createElement("div");
+
+      container.className =
+        "maplibregl-ctrl map-custom-control viewer-locate-map-control";
+
+      const label =
+        t(
+          "locate",
+          "Locate"
+        );
+
+      const button =
+        createMapIconButton({
+          id: "viewerLocateControlBtn",
+          title: label,
+          className:
+            "viewer-locate-map-toggle",
+          html:
+            window.svgMapSearchIcon
+              ? window.svgMapSearchIcon({
+                  width: 18,
+                  height: 18
+                })
+              : "",
+          onClick:
+            toggleViewerLocatePanel
+        });
+
+      button.setAttribute(
+        "aria-expanded",
+        "false"
+      );
+
+      button.setAttribute(
+        "aria-controls",
+        "viewerLocatePanel"
+      );
+
+      container.appendChild(button);
+
+      viewerLocateControlBtn =
+        button;
+
+      this._container =
+        container;
+
+      return container;
+    }
+
+    onRemove() {
+      this._container?.remove();
+
+      viewerLocateControlBtn = null;
+
+      clearViewerLocateMarker();
+
+      this._map = null;
+    }
+  }
+
+  viewerMap.addControl(
+    new ViewerLocateControl(),
+    "top-right"
+  );
+}
 
 // MEASUREMENT TOOL FUNCTIONS
 
 function toggleViewerMeasurementPanel() {
   if (!viewerMeasurementPanel) return;
 
-  const willOpen = viewerMeasurementPanel.hidden;
+  if (!viewerMeasurementPanel.hidden) {
+    closeViewerMeasurementPanel();
+    return;
+  }
 
-  viewerMeasurementPanel.hidden = !willOpen;
+  if (
+    viewerLocatePanel &&
+    !viewerLocatePanel.hidden
+  ) {
+    closeViewerLocatePanel();
+  }
 
-  viewerMeasurementControlBtn?.classList.toggle(
-    "is-active",
-    willOpen
+  viewerMeasurementPanel.hidden = false;
+
+  viewerMeasurementControlBtn?.classList.add(
+    "is-active"
   );
 
   viewerMeasurementControlBtn?.setAttribute(
     "aria-expanded",
-    willOpen ? "true" : "false"
+    "true"
   );
 }
 
 function closeViewerMeasurementPanel() {
+  clearViewerMeasurement();
+
   if (viewerMeasurementPanel) {
     viewerMeasurementPanel.hidden = true;
   }
@@ -10917,6 +12011,141 @@ function updateViewerMeasurementResult() {
     return;
   }
 
+  if (viewerMeasurementMode === "point") {
+    viewerMeasurementInstruction.textContent =
+      viewerMeasurementIsActive
+        ? t(
+            "point_coordinates_instruction",
+            "Click a point on the map to read its coordinates."
+          )
+        : t(
+            "point_coordinates_complete",
+            "Point coordinates selected."
+          );
+
+    const coordinate =
+      viewerMeasurementCoordinates[0];
+
+    viewerMeasurementResult.hidden = false;
+
+    if (!coordinate) {
+      viewerMeasurementResult.innerHTML = `
+        <span class="viewer-measurement-placeholder">
+          ${escapeHtml(
+            t(
+              "point_coordinates_click_map",
+              "Click a point on the map."
+            )
+          )}
+        </span>
+      `;
+
+      return;
+    }
+
+    const longitude =
+      Number(coordinate[0]).toFixed(6);
+
+    const latitude =
+      Number(coordinate[1]).toFixed(6);
+
+    viewerMeasurementResult.innerHTML = `
+      <div class="viewer-coordinate-result">
+        <div class="viewer-coordinate-row">
+          <span>
+            ${escapeHtml(
+              t("longitude", "Longitude")
+            )}
+          </span>
+
+          <strong>
+            ${escapeHtml(longitude)}
+          </strong>
+        </div>
+
+        <div class="viewer-coordinate-row">
+          <span>
+            ${escapeHtml(
+              t("latitude", "Latitude")
+            )}
+          </span>
+
+          <strong>
+            ${escapeHtml(latitude)}
+          </strong>
+        </div>
+      </div>
+
+      <div class="viewer-coordinate-result-actions">
+        <button
+          type="button"
+          class="viewer-coordinate-icon-btn viewer-coordinate-clear-btn"
+          data-viewer-clear-measurement
+          title="${escapeHtml(
+            t("clear_measurement", "Clear measurement")
+          )}"
+          aria-label="${escapeHtml(
+            t("clear_measurement", "Clear measurement")
+          )}"
+        >
+          ×
+        </button>
+
+        <button
+          type="button"
+          class="viewer-coordinate-icon-btn viewer-coordinate-copy-btn"
+          data-viewer-copy-coordinate
+          title="${escapeHtml(
+            t("copy_coordinates", "Copy coordinates")
+          )}"
+          aria-label="${escapeHtml(
+            t("copy_coordinates", "Copy coordinates")
+          )}"
+        >
+          ${svgCopyIcon()}
+        </button>
+      </div>
+    `;
+
+    viewerMeasurementResult
+      .querySelector("[data-viewer-copy-coordinate]")
+      ?.addEventListener("click", async (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+
+        try {
+          await navigator.clipboard.writeText(
+            `${longitude}, ${latitude}`
+          );
+
+          if (typeof showToast === "function") {
+            showToast(
+              t(
+                "coordinates_copied",
+                "Coordinates copied"
+              )
+            );
+          }
+        } catch (error) {
+          console.warn(
+            "Could not copy coordinates:",
+            error
+          );
+        }
+      });
+
+    viewerMeasurementResult
+      .querySelector("[data-viewer-clear-measurement]")
+      ?.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+
+        clearViewerMeasurement();
+      });
+
+    return;
+  }
+
   if (viewerMeasurementMode === "distance") {
     viewerMeasurementInstruction.textContent =
       viewerMeasurementIsActive
@@ -11092,6 +12321,9 @@ function updateViewerMeasurementButtons() {
   const areaActive =
     viewerMeasurementMode === "area";
 
+  const pointActive =
+    viewerMeasurementMode === "point";
+
   viewerMeasureDistanceBtn?.classList.toggle(
     "is-active",
     distanceActive
@@ -11110,6 +12342,16 @@ function updateViewerMeasurementButtons() {
   viewerMeasureAreaBtn?.setAttribute(
     "aria-pressed",
     areaActive ? "true" : "false"
+  );
+
+  viewerMeasurePointBtn?.classList.toggle(
+    "is-active",
+    pointActive
+  );
+
+  viewerMeasurePointBtn?.setAttribute(
+    "aria-pressed",
+    pointActive ? "true" : "false"
   );
 
   viewerMeasurementControlBtn?.classList.toggle(
@@ -11212,7 +12454,7 @@ function closeViewerMapPopupsForTool() {
 function startViewerMeasurement(mode) {
   if (!viewerMap || !viewerMapLoaded) return;
 
-  if (!["distance", "area"].includes(mode)) {
+  if (!["distance", "area", "point"].includes(mode)) {
     return;
   }
 
@@ -11221,9 +12463,20 @@ function startViewerMeasurement(mode) {
     applied spatial filter polygon.
   */
   if (viewerSpatialDrawIsActive) {
-    cancelViewerSpatialPolygonDrawing({
-      clearCompletedPolygon: false
-    });
+    if (
+      viewerSpatialDrawMode ===
+      "rectangle"
+    ) {
+      cancelViewerSpatialRectangleDrawing({
+        clearFilter: false
+      });
+    } else {
+      cancelViewerSpatialPolygonDrawing({
+        clearCompletedPolygon: true
+      });
+    }
+
+    return;
   }
 
   viewerMeasurementMode = mode;
@@ -11251,12 +12504,26 @@ function bindViewerMeasurementMapEvents() {
   viewerMeasurementEventsBound = true;
 
   viewerMap.on("click", (event) => {
-    if (!viewerMeasurementIsActive) return;
+    if (!viewerMeasurementIsActive) {
+      return;
+    }
 
     const coordinate = [
       Number(event.lngLat.lng.toFixed(6)),
       Number(event.lngLat.lat.toFixed(6))
     ];
+
+    if (viewerMeasurementMode === "point") {
+      viewerMeasurementCoordinates = [coordinate];
+      viewerMeasurementIsActive = false;
+
+      updateViewerMapToolCursor();
+      updateViewerMeasurementLayers();
+      updateViewerMeasurementButtons();
+      updateViewerMeasurementResult();
+
+      return;
+    }
 
     const previous =
       viewerMeasurementCoordinates[
@@ -11307,6 +12574,11 @@ function bindViewerMeasurementMapEvents() {
 
     event.preventDefault?.();
     event.originalEvent?.preventDefault?.();
+
+    if (viewerMeasurementMode === "point") {
+      clearViewerMeasurement();
+      return;
+    }
 
     finishViewerMeasurement();
   });
@@ -12911,6 +14183,12 @@ function toggleMapOptionsPanel() {
   }
 
   updateMapOptionsState();
+  if (
+    viewerLocatePanel &&
+    !viewerLocatePanel.hidden
+  ) {
+    closeViewerLocatePanel();
+  }
   mapOptionsPanel.hidden = false;
 
   if (mapOptionsBtn) {
@@ -13227,7 +14505,7 @@ function getCurrentViewerMapLegendItems() {
     items.push({
       label: t("viewer_layer_monument", "Monuments"),
       color: VIEWER_COLOURS.monument,
-      type: "fill"
+      type: "circle"
     });
   }
 
@@ -13793,25 +15071,42 @@ async function applyMapViewFilterFromCurrentMap() {
 
 function renderViewerMeasurementButtonLabels() {
   if (viewerMeasureDistanceBtn) {
-    viewerMeasureDistanceBtn.removeAttribute("data-i18n");
+    const label = t("measure_distance", "Measure distance");
 
+    viewerMeasureDistanceBtn.removeAttribute("data-i18n");
     viewerMeasureDistanceBtn.innerHTML = `
       <span class="measurement-button-icon" aria-hidden="true">
         ${svgMeasureDistanceToolIcon()}
       </span>
-      <span>${escapeHtml(t("measure_distance", "Measure distance"))}</span>
     `;
+    viewerMeasureDistanceBtn.title = label;
+    viewerMeasureDistanceBtn.setAttribute("aria-label", label);
   }
 
   if (viewerMeasureAreaBtn) {
-    viewerMeasureAreaBtn.removeAttribute("data-i18n");
+    const label = t("measure_area", "Measure area");
 
+    viewerMeasureAreaBtn.removeAttribute("data-i18n");
     viewerMeasureAreaBtn.innerHTML = `
       <span class="measurement-button-icon" aria-hidden="true">
         ${svgMeasureAreaToolIcon()}
       </span>
-      <span>${escapeHtml(t("measure_area", "Measure area"))}</span>
     `;
+    viewerMeasureAreaBtn.title = label;
+    viewerMeasureAreaBtn.setAttribute("aria-label", label);
+  }
+
+  if (viewerMeasurePointBtn) {
+    const label = t("point_coordinates", "Point coordinates");
+
+    viewerMeasurePointBtn.removeAttribute("data-i18n");
+    viewerMeasurePointBtn.innerHTML = `
+      <span class="measurement-button-icon" aria-hidden="true">
+        ${svgTargetIcon()}
+      </span>
+    `;
+    viewerMeasurePointBtn.title = label;
+    viewerMeasurePointBtn.setAttribute("aria-label", label);
   }
 }
 
@@ -14040,17 +15335,109 @@ function wireViewerEvents() {
   }
   // map draw polygon
   if (drawViewerSpatialPolygonBtn) {
-    drawViewerSpatialPolygonBtn.addEventListener("click", () => {
+    drawViewerSpatialPolygonBtn.addEventListener(
+      "click",
+      (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+
+        toggleViewerSpatialDrawMenu();
+      }
+    );
+  }
+
+  viewerSpatialPolygonOption?.addEventListener(
+    "click",
+    () => {
       startViewerSpatialPolygonDrawing();
-    });
+    }
+  );
+
+  viewerSpatialRectangleOption?.addEventListener(
+    "click",
+    () => {
+      startViewerSpatialRectangleDrawing();
+    }
+  );
+
+  document.addEventListener(
+    "click",
+    (event) => {
+      if (
+        event.target.closest(
+          ".viewer-spatial-draw-choice"
+        )
+      ) {
+        return;
+      }
+
+      setViewerSpatialDrawMenuOpen(false);
+    }
+  );
+
+  closeViewerLocatePanelBtn?.addEventListener(
+    "click",
+    () => {
+      closeViewerLocatePanel();
+    }
+  );
+
+  viewerGoToCoordinateBtn?.addEventListener(
+    "click",
+    () => {
+      goViewerToCoordinates();
+    }
+  );
+
+  viewerMyLocationBtn?.addEventListener(
+    "click",
+    () => {
+      goViewerToMyLocation();
+    }
+  );
+
+  [
+    viewerLocateLongitude,
+    viewerLocateLatitude
+  ].forEach((input) => {
+    input?.addEventListener(
+      "keydown",
+      (event) => {
+        if (event.key !== "Enter") {
+          return;
+        }
+
+        event.preventDefault();
+
+        goViewerToCoordinates();
+      }
+    );
+  });
+
+  if (viewerGoToCoordinateBtn) {
+    viewerGoToCoordinateBtn.innerHTML =
+      svgTargetIcon();
+  }
+
+  if (viewerMyLocationIcon) {
+    viewerMyLocationIcon.innerHTML =
+      window.svgGeolocateIcon
+        ? window.svgGeolocateIcon({
+            width: 17,
+            height: 17
+          })
+        : "";
   }
 
   if (cancelViewerSpatialDrawBtn) {
-    cancelViewerSpatialDrawBtn.addEventListener("click", () => {
-      cancelViewerSpatialPolygonDrawing({
-        clearCompletedPolygon: true
-      });
-    });
+    cancelViewerSpatialDrawBtn.addEventListener(
+      "click",
+      () => {
+        cancelActiveViewerSpatialDrawing({
+          clearCompletedPolygon: true
+        });
+      }
+    );
   }
 
   renderViewerMeasurementButtonLabels();
@@ -14066,6 +15453,13 @@ function wireViewerEvents() {
     "click",
     () => {
       startViewerMeasurement("area");
+    }
+  );
+
+  viewerMeasurePointBtn?.addEventListener(
+    "click",
+    () => {
+      startViewerMeasurement("point");
     }
   );
 
@@ -14085,9 +15479,11 @@ function wireViewerEvents() {
     }
 
     if (viewerSpatialDrawIsActive) {
-      cancelViewerSpatialPolygonDrawing({
+      cancelActiveViewerSpatialDrawing({
         clearCompletedPolygon: true
       });
+
+      return;
     }
   });
 }

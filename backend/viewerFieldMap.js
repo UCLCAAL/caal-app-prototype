@@ -52,14 +52,15 @@ const CONDITIONAL_FIELDS = Object.freeze({
   risk_levels: Object.freeze(["rs3_poly", "rs3_line"])
 });
 
-// Where conditional fields sit relative to the common ones in a file.
-// Everything not named here is appended after the common block.
-const FIELD_ORDER = Object.freeze([
+// Order within a file. Identity leads, then the record's own fields, then
+// export/database metadata. 
+const LEADING_FIELDS = Object.freeze([
   "caal_id",
-  "export_role",
-  "record_type",
-  "dataset_label",
-  "display_label",
+  "display_label"
+]);
+
+// Common fields that trail the record's own columns, in this order.
+const TRAILING_FIELDS = Object.freeze([
   "country",
   "monument_types",
   "condition_levels",
@@ -69,10 +70,24 @@ const FIELD_ORDER = Object.freeze([
   "centroid_lat",
   "geometry_wkt",
   "geometry_truncated",
+  "export_role",
+  "record_type",
+  "dataset_label",
   "source_schema",
   "source_table",
   "source_row_id"
 ]);
+
+const FIELD_ORDER = Object.freeze([...LEADING_FIELDS, ...TRAILING_FIELDS]);
+
+/** Split a common-column list into the part that leads a file and the part
+ *  that trails it, so per-type specs can sit between the two. */
+function splitCommonFields(fields) {
+  return {
+    leading: fields.filter(f => LEADING_FIELDS.includes(f)),
+    trailing: fields.filter(f => !LEADING_FIELDS.includes(f))
+  };
+}
 
 // Fields a given format does not carry, whatever the record type.
 // GPKG stores geometry as a WKB blob, so the WKT pair is redundant there.
@@ -609,8 +624,7 @@ const EXPORT_SPECS = Object.freeze({
         base: "script_material",                           export: "script_of_material" },
       { kind: "lang",  raw: "Writing System",
         base: "writing_system",                            export: "writing_system" },
-      { kind: "lang",  raw: "still_under_copyright",
-        base: "copyright_status",                          export: "copyright_status" },
+      { kind: "lang",  base: "copyright_status",           export: "copyright_status" },
       { kind: "plain", raw: "Copyright Holder Name",       export: "copyright_holder_name" },
       { kind: "plain", raw: "Copyright Attribution",       export: "copyright_attribution" },
       { kind: "plain", raw: "Digital Folder Name",         export: "digital_folder_name" },
@@ -623,13 +637,191 @@ const EXPORT_SPECS = Object.freeze({
       { kind: "lang",  raw: "Colour", base: "colour",      export: "colour" },
       { kind: "plain", raw: "Resolution",                  export: "resolution" },
       { kind: "plain", raw: "Archive Recorder",            export: "recorder" },
-      { kind: "plain", raw: "Tstamp",                      export: "updated_at" },
+      { kind: "plain", raw: "Date of Recording",           export: "date_of_recording" },
       { kind: "plain", raw: "Resource",                    export: "resource" }
     ]),
  
-    // Archives have no geometry, so they never reach a KML placemark.
-    // Listed for completeness if that ever changes.
+    // Archive has no geometry, so never reaches a KML placemark.
+    // Listed for completeness.
     kmlFields: Object.freeze([])
+  }),
+
+  // ============================================================
+// RS export specs — add these three keys inside EXPORT_SPECS,
+// after `archive`. Remember the trailing comma on archive's `})`.
+//
+// No new spec mechanism: ui.v_rs3_*_export already emits the
+// <base>_<lang> columns, so kind:"lang" resolves them through the
+// existing langChain fallback.
+// ============================================================
+
+  rs3_poly: Object.freeze({
+    source: "ui.v_rs3_poly_export",
+    alias: "rs",
+    keyColumn: "id",
+    vocabArrays: Object.freeze([]),   // view resolves types itself
+
+    columns: Object.freeze([
+      { kind: "plain", raw: 'Gridcode', export: 'gridcode' },
+      { kind: "lang",  base: 'country', export: 'country' },
+      { kind: "plain", raw: 'Region', export: 'region' },
+      { kind: "plain", raw: 'Digitised Dataset', export: 'digitised_dataset' },
+      { kind: "lang",  base: 'visibility', export: 'visibility' },
+      { kind: "lang",  base: 'anomaly_types', export: 'anomaly_types' },
+      { kind: "lang",  base: 'origin', export: 'origin' },
+      { kind: "lang",  base: 'monument_types', export: 'monument_types' },
+      { kind: "plain", raw: 'monument_types_concept_ids', export: 'monument_types_concept_ids' },
+      { kind: "plain", raw: 'Interpretation', export: 'interpretation' },
+      { kind: "lang",  base: 'certainty', export: 'certainty' },
+      { kind: "plain", raw: 'Comments', export: 'comments' },
+      { kind: "lang",  base: 'merit_ground_truthing', export: 'merit_ground_truthing' },
+      { kind: "plain", raw: 'Ground-truthed', export: 'ground_truthed' },
+
+      // Condition: integer sorts, label reads.
+      { kind: "plain", raw: 'overall_condition', export: 'overall_condition' },
+      { kind: "lang",  base: 'condition', export: 'overall_condition_label' },
+      { kind: "plain", raw: 'Notes on Condition', export: 'notes_on_condition' },
+
+      // 11 booleans -> one list; 11 levels -> "label: level", level >= 2.
+      { kind: "lang",  base: 'deterioration_causes', export: 'deterioration_causes' },
+      { kind: "plain", raw: 'deterioration_causes_count', export: 'deterioration_cause_count' },
+      { kind: "lang",  base: 'risks', export: 'risks' },
+      { kind: "plain", raw: 'max_risk_level', export: 'max_risk_level' },
+      { kind: "plain", raw: 'Notes on Risk', export: 'notes_on_risk' },
+
+      // Measurements: type/unit resolved tolerantly in the view.
+      // Rows storing numeric codes (408 / 815) come out NULL.
+      { kind: "plain", raw: 'measurement_value_1', export: 'measurement_value_1' },
+      { kind: "lang",  base: 'measurement_unit_1', export: 'measurement_unit_1' },
+      { kind: "lang",  base: 'measurement_type_1', export: 'measurement_type_1' },
+      { kind: "plain", raw: 'measurement_value_2', export: 'measurement_value_2' },
+      { kind: "lang",  base: 'measurement_unit_2', export: 'measurement_unit_2' },
+      { kind: "lang",  base: 'measurement_type_2', export: 'measurement_type_2' },
+      { kind: "plain", raw: 'measurement_value_3', export: 'measurement_value_3' },
+      { kind: "lang",  base: 'measurement_unit_3', export: 'measurement_unit_3' },
+      { kind: "lang",  base: 'measurement_type_3', export: 'measurement_type_3' },
+      { kind: "plain", raw: 'measurement_value_4', export: 'measurement_value_4' },
+      { kind: "lang",  base: 'measurement_unit_4', export: 'measurement_unit_4' },
+      { kind: "lang",  base: 'measurement_type_4', export: 'measurement_type_4' },
+
+      { kind: "plain", raw: 'Date of Recording', export: 'date_of_recording' },
+      { kind: "plain", raw: 'Date of assessment (GE image)', export: 'date_of_assessment' },
+      { kind: "plain", raw: 'Recorder', export: 'recorder' },
+      { kind: "plain", raw: 'Tstamp', export: 'updated_at' },
+    ]),
+
+    kmlFields: Object.freeze([
+      { column: 'interpretation', label: 'Interpretation' },
+      { column: 'monument_types', label: 'Monument types' },
+      { column: 'certainty', label: 'Certainty' },
+      { column: 'comments', label: 'Comments' },
+      { column: 'overall_condition_label', label: 'Condition' },
+      { column: 'notes_on_condition', label: 'Notes on condition' },
+      { column: 'deterioration_causes', label: 'Causes of deterioration' },
+      { column: 'risks', label: 'Risks' },
+      { column: 'notes_on_risk', label: 'Notes on risk' },
+      { column: 'visibility', label: 'Visible on' },
+      { column: 'anomaly_types', label: 'Anomaly types' },
+      { column: 'origin', label: 'Origin' },
+    ])
+  }),
+
+  rs3_line: Object.freeze({
+    source: "ui.v_rs3_line_export",
+    alias: "rs",
+    keyColumn: "id",
+    vocabArrays: Object.freeze([]),   // view resolves types itself
+
+    columns: Object.freeze([
+      { kind: "plain", raw: 'Gridcode', export: 'gridcode' },
+      { kind: "lang",  base: 'country', export: 'country' },
+      { kind: "plain", raw: 'Region', export: 'region' },
+      { kind: "plain", raw: 'Digitised Dataset', export: 'digitised_dataset' },
+      { kind: "lang",  base: 'visibility', export: 'visibility' },
+      { kind: "lang",  base: 'anomaly_types', export: 'anomaly_types' },
+      { kind: "lang",  base: 'origin', export: 'origin' },
+      { kind: "lang",  base: 'monument_types', export: 'monument_types' },
+      { kind: "plain", raw: 'monument_types_concept_ids', export: 'monument_types_concept_ids' },
+      { kind: "plain", raw: 'Interpretation', export: 'interpretation' },
+      { kind: "lang",  base: 'certainty', export: 'certainty' },
+      { kind: "plain", raw: 'Comments', export: 'comments' },
+      { kind: "lang",  base: 'merit_ground_truthing', export: 'merit_ground_truthing' },
+      { kind: "plain", raw: 'Ground-truthed', export: 'ground_truthed' },
+
+      // Condition: integer sorts, label reads.
+      { kind: "plain", raw: 'overall_condition', export: 'overall_condition' },
+      { kind: "lang",  base: 'condition', export: 'overall_condition_label' },
+      { kind: "plain", raw: 'Notes on Condition', export: 'notes_on_condition' },
+
+      // 11 booleans -> one list; 11 levels -> "label: level", level >= 2.
+      { kind: "lang",  base: 'deterioration_causes', export: 'deterioration_causes' },
+      { kind: "plain", raw: 'deterioration_causes_count', export: 'deterioration_cause_count' },
+      { kind: "lang",  base: 'risks', export: 'risks' },
+      { kind: "plain", raw: 'max_risk_level', export: 'max_risk_level' },
+      { kind: "plain", raw: 'Notes on Risk', export: 'notes_on_risk' },
+
+      // Measurements: type/unit resolved tolerantly in the view.
+      // Rows storing numeric codes (408 / 815) come out NULL.
+      { kind: "plain", raw: 'measurement_value_1', export: 'measurement_value_1' },
+      { kind: "lang",  base: 'measurement_unit_1', export: 'measurement_unit_1' },
+      { kind: "lang",  base: 'measurement_type_1', export: 'measurement_type_1' },
+      { kind: "plain", raw: 'measurement_value_2', export: 'measurement_value_2' },
+      { kind: "lang",  base: 'measurement_unit_2', export: 'measurement_unit_2' },
+      { kind: "lang",  base: 'measurement_type_2', export: 'measurement_type_2' },
+      { kind: "plain", raw: 'measurement_value_3', export: 'measurement_value_3' },
+      { kind: "lang",  base: 'measurement_unit_3', export: 'measurement_unit_3' },
+      { kind: "lang",  base: 'measurement_type_3', export: 'measurement_type_3' },
+      { kind: "plain", raw: 'measurement_value_4', export: 'measurement_value_4' },
+      { kind: "lang",  base: 'measurement_unit_4', export: 'measurement_unit_4' },
+      { kind: "lang",  base: 'measurement_type_4', export: 'measurement_type_4' },
+
+      { kind: "plain", raw: 'Date of Recording', export: 'date_of_recording' },
+      { kind: "plain", raw: 'Date of assessment (GE image)', export: 'date_of_assessment' },
+      { kind: "plain", raw: 'Recorder', export: 'recorder' },
+      { kind: "plain", raw: 'Tstamp', export: 'updated_at' },
+    ]),
+
+    kmlFields: Object.freeze([
+      { column: 'interpretation', label: 'Interpretation' },
+      { column: 'monument_types', label: 'Monument types' },
+      { column: 'certainty', label: 'Certainty' },
+      { column: 'comments', label: 'Comments' },
+      { column: 'overall_condition_label', label: 'Condition' },
+      { column: 'notes_on_condition', label: 'Notes on condition' },
+      { column: 'deterioration_causes', label: 'Causes of deterioration' },
+      { column: 'risks', label: 'Risks' },
+      { column: 'notes_on_risk', label: 'Notes on risk' },
+      { column: 'visibility', label: 'Visible on' },
+      { column: 'anomaly_types', label: 'Anomaly types' },
+      { column: 'origin', label: 'Origin' },
+    ])
+  }),
+
+  rs3_group: Object.freeze({
+    source: "ui.v_rs3_group_export",
+    alias: "rs",
+    keyColumn: "id",
+    vocabArrays: Object.freeze([]),
+
+    columns: Object.freeze([
+      { kind: "lang",  base: 'country', export: 'country' },
+      { kind: "plain", raw: 'Region', export: 'region' },
+      { kind: "lang",  base: 'monument_types', export: 'monument_types' },
+      { kind: "plain", raw: 'monument_types_concept_ids', export: 'monument_types_concept_ids' },
+      { kind: "plain", raw: 'Interpretation', export: 'interpretation' },
+      { kind: "lang",  base: 'certainty', export: 'certainty' },
+      { kind: "plain", raw: 'Comments', export: 'comments' },
+      { kind: "plain", raw: 'Date of Recording', export: 'date_of_recording' },
+      { kind: "plain", raw: 'Recorder', export: 'recorder' },
+      { kind: "plain", raw: 'Tstamp', export: 'updated_at' },
+    ]),
+
+    kmlFields: Object.freeze([
+      { column: 'interpretation', label: 'Interpretation' },
+      { column: 'monument_types', label: 'Monument types' },
+      { column: 'certainty', label: 'Certainty' },
+      { column: 'comments', label: 'Comments' },
+    ])
   })
 });
 
@@ -644,28 +836,42 @@ const EXPORT_SPECS = Object.freeze({
  * Types with no spec are not handled here; the caller falls back to
  * slicing the existing picked rows, so nothing regresses.
  */
-function exportTypeRecordsSql({ ctes, pickedSql, recordType, lang, commonCols }) {
-  const built = buildTypeExportColumns(recordType, lang);
+function exportTypeRecordsSql({
+  ctes, pickedSql, recordType, lang, commonCols, format = "csv"
+}) {
+  const built = buildTypeExportColumns(recordType, lang, format);
   if (!built) return null;
- 
+
   const { spec, alias, joinSql, selectSql, columns } = built;
-  const commonSelect = commonCols
-    .map(c => `p."${c}"`)
-    .join(",\n       ");
- 
+
+  // Identity first, then the record's own fields, then metadata.
+  const { leading, trailing } = splitCommonFields(commonCols);
+  const commonSelect = cols => cols.map(c => `p."${c}"`).join(",\n       ");
+
+  /*
+    GPKG needs the geometry as WKB plus per-row bounds, which the CSV path
+    has no use for. These are passthrough columns consumed by
+    viewerGeoPackage.js — they are deliberately NOT in `columns`, so they
+    never become attribute columns in the output file.
+  */
+  const geometrySelect = format === "gpkg"
+    ? `,\n       p."geom_wkb", p."min_x", p."min_y", p."max_x", p."max_y"`
+    : "";
+
   return {
     sql: `${ctes}
     , picked AS (${pickedSql})
     SELECT
-       ${commonSelect},
-       ${selectSql}
+       ${commonSelect(leading)},
+       ${selectSql},
+       ${commonSelect(trailing)}${geometrySelect}
     FROM picked p
-    JOIN ${spec.source} ${alias}
+    LEFT JOIN ${spec.source} ${alias}
       ON ${alias}."${spec.keyColumn}"::text = p.source_row_id::text
 ${joinSql}
     WHERE p.record_type = '${recordType}'
     ORDER BY p.export_role, p.caal_id`,
-    columns: [...commonCols, ...columns]
+    columns: [...leading, ...columns, ...trailing]
   };
 }
  
@@ -679,7 +885,7 @@ ${joinSql}
  * emitted here; they come from the existing export query so that
  * records.csv and the per-type files agree on them.
  */
-function buildTypeExportColumns(recordType, lang) {
+function buildTypeExportColumns(recordType, lang, format = "csv") {
   const spec = EXPORT_SPECS[recordType];
   if (!spec) return null;
 
@@ -733,7 +939,10 @@ module.exports = {
   RECORD_TYPES,
   COMMON_FIELDS,
   CONDITIONAL_FIELDS,
+  LEADING_FIELDS,
+  TRAILING_FIELDS,
   FIELD_ORDER,
+  splitCommonFields,
   appliesTo,
   fieldsForRecordType,
   commonFields,

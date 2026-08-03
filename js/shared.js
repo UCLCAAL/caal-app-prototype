@@ -2060,6 +2060,85 @@ function renderReadOnlyItem(label, value, fullWidth = false) {
   `;
 }
 
+function svgMapSearchIcon({
+  width = 20,
+  height = 20
+} = {}) {
+  return `
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      width="${width}"
+      height="${height}"
+      focusable="false"
+    >
+      <circle
+        cx="10.5"
+        cy="10.5"
+        r="6"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+      />
+
+      <path
+        d="M15 15l5 5"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+      />
+    </svg>
+  `;
+}
+
+function svgGeolocateIcon({
+  width = 18,
+  height = 18
+} = {}) {
+  return `
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      width="${width}"
+      height="${height}"
+      focusable="false"
+    >
+      <circle
+        cx="12"
+        cy="12"
+        r="4"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+      />
+
+      <path
+        d="
+          M12 2v3
+          M12 19v3
+          M2 12h3
+          M19 12h3
+        "
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+      />
+
+      <circle
+        cx="12"
+        cy="12"
+        r="1.5"
+        fill="currentColor"
+      />
+    </svg>
+  `;
+}
+
+window.svgGeolocateIcon = svgGeolocateIcon;
+window.svgMapSearchIcon = svgMapSearchIcon;
+
 function renderSelectInput(fieldName, label, fieldKey, propertyValue, fullWidth = false) {
   const inputId = makeFieldId(fieldName);
   const fullWidthClass = fullWidth ? " full-width" : "";

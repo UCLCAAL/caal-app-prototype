@@ -1455,6 +1455,7 @@ const EXPORT_BASE_CACHE_KEY = "resource_viewer_base_cache";
 
 function csvCell(value) {
   if (value === null || value === undefined) return "";
+  if (value instanceof Date) return value.toISOString();
   let s = String(value);
   // Formula-injection guard: neutralise leading =, +, -, @, tab, CR
   if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;
@@ -1625,9 +1626,8 @@ function exportRelationshipsSql(ctes, sfx) {
     ORDER BY p.edge_id`;
 }
 
-function exportRecordsGpkgSql(ctes, sfx) {
-  return `${ctes}
-    , picked AS (
+function pickedGpkgCteBody(sfx) {
+  return `
       SELECT DISTINCT ON (v.caal_id_norm, v.record_type, v.source_schema)
         v.caal_id, v.caal_id_norm, v.record_type, v.dataset_label,
         v.display_label,
@@ -1667,7 +1667,12 @@ function exportRecordsGpkgSql(ctes, sfx) {
       FROM ${VIEWER_BASE_MV} v
       JOIN export_set es ON es.caal_id_norm = v.caal_id_norm
       ORDER BY v.caal_id_norm, v.record_type, v.source_schema, v.source_row_id
-    )
+  `;
+}
+
+function exportRecordsGpkgSql(ctes, sfx) {
+  return `${ctes}
+    , picked AS (${pickedGpkgCteBody(sfx)})
     SELECT * FROM picked
     ORDER BY export_role, record_type, caal_id`;
 }
@@ -1779,7 +1784,69 @@ router.get("/export", async (req, res) => {
         ? (await pool.query(exportRelationshipsSql(ctes, sfx), values)).rows
         : [];
  
-      let refreshedAt = null;
+      // ---- per-type layers, mirroring the CSV bundle ----
+      // Record types with an export spec get their full column set from the
+      // per-type MV; the rest keep the thin common+applicable columns. A
+      // failed spec query falls back rather than failing the whole export.
+      const gpkgCommonCols = commonFields("gpkg");
+      const byRecordType = new Map();
+      for (const row of recordRows) {
+        const t = row.record_type || "records";
+        if (!byRecordType.has(t)) byRecordType.set(t, []);
+        byRecordType.get(t).push(row);
+      }
+
+      const layers = [];
+      for (const [recordType, rows] of [...byRecordType.entries()]
+        .sort((a, b) => a[0].localeCompare(b[0]))) {
+
+        let layer = null;
+
+        if (EXPORT_SPECS[recordType]) {
+          try {
+            const typeQuery = exportTypeRecordsSql({
+              ctes,
+              pickedSql: pickedGpkgCteBody(sfx),
+              recordType,
+              lang,
+              commonCols: gpkgCommonCols,
+              format: "gpkg"
+            });
+            const typeRows = (await pool.query(typeQuery.sql, values)).rows;
+
+            const dropped = rows.length - typeRows.length;
+            if (dropped !== 0) {
+              console.warn(
+                `[viewer/export] gpkg ${recordType}: spec query returned ` +
+                `${typeRows.length} of ${rows.length} rows (${dropped} unmatched)`
+              );
+            }
+
+            layer = {
+              recordType,
+              columns: typeQuery.columns,
+              rows: typeRows
+            };
+          } catch (err) {
+            console.warn(
+              `[viewer/export] gpkg ${recordType}: spec query failed, ` +
+              `falling back to common columns — ${err.message}`
+            );
+          }
+        }
+
+        if (!layer) {
+          layer = {
+            recordType,
+            columns: fieldsForRecordType(recordType, "gpkg"),
+            rows
+          };
+        }
+
+        layers.push(layer);
+      }
+
+        let refreshedAt = null;
       try {
         const cache = await pool.query(
           `SELECT COALESCE(checked_at, refreshed_at) AS at
@@ -1814,7 +1881,7 @@ router.get("/export", async (req, res) => {
  
       try {
         writeGeoPackage({
-          filePath: tmpPath, recordRows, relationshipRows, infoRows
+          filePath: tmpPath, layers, relationshipRows, infoRows
         });
       } catch (buildError) {
         fs.rm(tmpPath, { force: true }, () => {});
@@ -1919,7 +1986,7 @@ router.get("/export", async (req, res) => {
     // 4. Compose the CSV bundle.
     //    records.csv  - common columns only, every row
     //    <type>.csv   - one per record type present, with that type's columns
-    //    manifest.csv - what is in the zip and what each file's columns are
+    //    contents.csv - what is in the zip and what each file's columns are
     const commonCols = commonFields("csv");
     const recordsCsv = csvFile(
       commonCols,
@@ -1936,7 +2003,7 @@ router.get("/export", async (req, res) => {
     // Record types with an export spec get the full column set from their
     // own MV; everything else keeps the thin common+applicable columns.
     // A failed rich query falls back rather than failing the whole export,
-    // and the manifest records which path each file took.
+    // and the contents records which path each file took.
     const layerFiles = [];
     for (const [recordType, rows] of [...byRecordType.entries()]
       .sort((a, b) => a[0].localeCompare(b[0]))) {
@@ -1965,7 +2032,7 @@ router.get("/export", async (req, res) => {
           }
 
           file = {
-            name: `${recordType}.csv`,
+            name: `${recordType}_${lang}.csv`,
             recordType,
             columns: typeQuery.columns,
             rowCount: typeRows.length,
@@ -1986,7 +2053,7 @@ router.get("/export", async (req, res) => {
       if (!file) {
         const cols = fieldsForRecordType(recordType, "csv");
         file = {
-          name: `${recordType}.csv`,
+          name: `${recordType}_${lang}.csv`,
           recordType,
           columns: cols,
           rowCount: rows.length,
@@ -2030,18 +2097,19 @@ router.get("/export", async (req, res) => {
     const manifestCsv = csvFile(
       ["file", "record_type", "row_count", "column_count", "columns_source", "columns"],
       [
-        ["records.csv", "(all types)", String(records.length),
-         String(commonCols.length), commonCols.join("; ")],
+        [`records_${lang}.csv`, "(all types)", String(records.length),
+         String(commonCols.length), "common", commonCols.join("; ")],
         ...layerFiles.map(f => [
           f.name, f.recordType, String(f.rowCount),
           String(f.columns.length), f.columnsSource, f.columns.join("; ")
         ]),
         ...(includeRelated ? [[
-          "relationships.csv", "(edges)", String(relationships.length),
-          String(RELATIONSHIP_HEADER.length), RELATIONSHIP_HEADER.join("; ")
+          `relationships_${lang}.csv`, "(edges)", String(relationships.length),
+          String(RELATIONSHIP_HEADER.length), "common",
+          RELATIONSHIP_HEADER.join("; ")
         ]] : []),
         ["export_information.csv", "(provenance)", String(infoRows.length),
-         "2", "key; value"]
+         "2", "common", "key; value"]
       ]
     );
 
@@ -2054,10 +2122,10 @@ router.get("/export", async (req, res) => {
     const zip = archiver("zip", { zlib: { level: 6 } });
     zip.on("error", err => { throw err; });
     zip.pipe(res);
-    zip.append(manifestCsv, { name: "manifest.csv" });
-    zip.append(recordsCsv, { name: "records.csv" });
+    zip.append(manifestCsv, { name: "contents.csv" });
+    zip.append(recordsCsv, { name: `records_${lang}.csv` });
     for (const f of layerFiles) zip.append(f.content, { name: f.name });
-    if (includeRelated) zip.append(relationshipsCsv, { name: "relationships.csv" });
+    if (includeRelated) zip.append(relationshipsCsv, { name: `relationships_${lang}.csv` });
     zip.append(infoCsv, { name: "export_information.csv" });
     await zip.finalize();
 
