@@ -110,6 +110,47 @@ const monumentMeasurePointBtn = document.getElementById(
   "monumentMeasurePointBtn"
 );
 
+// locate / coordinate navigation
+const monumentLocatePanel =
+  document.getElementById(
+    "monumentLocatePanel"
+  );
+
+const closeMonumentLocatePanelBtn =
+  document.getElementById(
+    "closeMonumentLocatePanelBtn"
+  );
+
+const monumentLocateLongitude =
+  document.getElementById(
+    "monumentLocateLongitude"
+  );
+
+const monumentLocateLatitude =
+  document.getElementById(
+    "monumentLocateLatitude"
+  );
+
+const monumentGoToCoordinateBtn =
+  document.getElementById(
+    "monumentGoToCoordinateBtn"
+  );
+
+const monumentMyLocationBtn =
+  document.getElementById(
+    "monumentMyLocationBtn"
+  );
+
+const monumentMyLocationIcon =
+  document.getElementById(
+    "monumentMyLocationIcon"
+  );
+
+const monumentLocateStatus =
+  document.getElementById(
+    "monumentLocateStatus"
+  );
+
 let clearActiveMonumentHoverPopup = () => {};
 
 const relationshipMapOptions = document.getElementById("relationshipMapOptions");
