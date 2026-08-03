@@ -2433,6 +2433,81 @@ async function loadBoundarySummaryIntoPopup(thisPopup, boundaryId) {
   }
 }
 
+function extendViewerBoundsFromCoordinates(
+  bounds,
+  coordinates
+) {
+  if (!Array.isArray(coordinates)) {
+    return;
+  }
+
+  const longitude =
+    Number(coordinates[0]);
+
+  const latitude =
+    Number(coordinates[1]);
+
+  if (
+    coordinates.length >= 2 &&
+    Number.isFinite(longitude) &&
+    Number.isFinite(latitude)
+  ) {
+    bounds.extend([
+      longitude,
+      latitude
+    ]);
+
+    return;
+  }
+
+  coordinates.forEach(
+    (childCoordinates) => {
+      extendViewerBoundsFromCoordinates(
+        bounds,
+        childCoordinates
+      );
+    }
+  );
+}
+
+function zoomViewerToBoundaryFeature(
+  feature
+) {
+  if (
+    !viewerMap ||
+    !feature?.geometry?.coordinates
+  ) {
+    return;
+  }
+
+  const bounds =
+    new maplibregl.LngLatBounds();
+
+  extendViewerBoundsFromCoordinates(
+    bounds,
+    feature.geometry.coordinates
+  );
+
+  if (bounds.isEmpty()) {
+    return;
+  }
+
+  viewerMap.fitBounds(
+    bounds,
+    {
+      padding: {
+        top: 60,
+        right: 60,
+        bottom: 60,
+        left: 60
+      },
+
+      maxZoom: 9,
+      duration: 700
+    }
+  );
+}
+
 function showViewerReferencePopup(feature, lngLat) {
   if (viewerMapInteractionToolIsActive()) {
     return;
@@ -2467,28 +2542,117 @@ function showViewerReferencePopup(feature, lngLat) {
     const boundaryName =
       props.admin_name ||
       props.boundary_id ||
-      "";
+      t(
+        "selected_region",
+        "Selected region"
+      );
 
     bodyHtml = `
-      <div class="map-popup viewer-single-map-popup-card viewer-boundary-popup-card">
-        <div class="map-popup-title-btn viewer-map-popup-open-title">
-          ${escapeHtml(boundaryName)}
+      <div
+        class="
+          map-popup
+          viewer-single-map-popup-card
+          viewer-boundary-popup-card
+        "
+      >
+        <div class="region-mini-popup-header">
+          <div>
+            <h3 class="viewer-boundary-popup-title">
+              ${escapeHtml(boundaryName)}
+            </h3>
+
+            <div
+              class="
+                map-popup-meta
+                viewer-popup-id-line
+              "
+            >
+              <span
+                class="
+                  ${viewerLayerIconClass(
+                    "admin_boundary"
+                  )}
+                  viewer-popup-type-icon
+                "
+                aria-hidden="true"
+              >
+                ${viewerLayerIcon(
+                  "admin_boundary"
+                )}
+              </span>
+
+              <span>
+                ${escapeHtml(
+                  t(
+                    "admin_boundary",
+                    "Administrative boundary"
+                  )
+                )}
+              </span>
+            </div>
+
+            <div class="map-popup-meta">
+              ${escapeHtml(
+                t(
+                  "admin_level",
+                  "Admin level"
+                )
+              )}:
+              ${escapeHtml(
+                props.admin_level || ""
+              )}
+            </div>
+          </div>
+
+          <button
+            type="button"
+            class="
+              icon-action-btn
+              region-zoom-btn
+              js-zoom-viewer-boundary
+            "
+            title="${escapeHtml(
+              t(
+                "zoom_to_region",
+                "Zoom to region"
+              )
+            )}"
+            aria-label="${escapeHtml(
+              t(
+                "zoom_to_region",
+                "Zoom to region"
+              )
+            )}"
+          >
+            ${svgTargetIcon()}
+          </button>
         </div>
 
-        <div class="map-popup-meta viewer-popup-id-line">
-          <span class="${viewerLayerIconClass("admin_boundary")} viewer-popup-type-icon" aria-hidden="true">
-            ${viewerLayerIcon("admin_boundary")}
-          </span>
-          <span>${escapeHtml(t("admin_boundary", "Administrative boundary"))}</span>
+        <div
+          class="
+            viewer-popup-related-line
+            viewer-boundary-summary-line
+          "
+          data-boundary-summary
+        >
+          <span class="mini-spinner"></span>
         </div>
 
-        <div class="map-popup-meta">
-          ${escapeHtml(t("admin_level", "Admin level"))}: ${escapeHtml(props.admin_level || "")}
-        </div>
-
-        <div class="viewer-popup-related-line viewer-boundary-summary-line" data-boundary-summary>
-          <button type="button" class="action-btn subtle js-load-boundary-summary">
-            ${escapeHtml(t("show_region_summary", "Show region summary"))}
+        <div class="region-mini-popup-actions">
+          <button
+            type="button"
+            class="
+              action-btn
+              primary
+              js-filter-viewer-boundary
+            "
+          >
+            ${escapeHtml(
+              t(
+                "filter_to_this_region",
+                "Filter to this region"
+              )
+            )}
           </button>
         </div>
       </div>
@@ -2515,16 +2679,59 @@ function showViewerReferencePopup(feature, lngLat) {
   
   if (type === "admin_boundary") {
     setViewerSelectedBoundary(props.boundary_id || null);
-    viewerPopup.on("close", () => setViewerSelectedBoundary(null));
+    viewerPopup.on("close",() => {setViewerSelectedBoundary(
+      activeViewerAdminBoundary
+        ?.boundary_id ||
+      null
+    );});
 
     const thisPopup = viewerPopup;
     const boundaryId = props.boundary_id || "";
 
-    thisPopup.getElement()
-      ?.querySelector(".js-load-boundary-summary")
-      ?.addEventListener("click", async () => {
-        await loadBoundarySummaryIntoPopup(thisPopup, boundaryId);
-      });
+    const boundaryName =
+      props.admin_name ||
+      props.boundary_id ||
+      t(
+        "selected_region",
+        "Selected region"
+      );
+
+    thisPopup
+      .getElement()
+      ?.querySelector(
+        ".js-zoom-viewer-boundary"
+      )
+      ?.addEventListener(
+        "click",
+        (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+
+          thisPopup.remove();
+
+          zoomViewerToBoundaryFeature(
+            feature
+          );
+        }
+      );
+
+    thisPopup
+      .getElement()
+      ?.querySelector(
+        ".js-filter-viewer-boundary"
+      )
+      ?.addEventListener(
+        "click",
+        async (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+
+          await applyViewerAdminBoundaryFilter({
+            boundaryId,
+            boundaryName
+          });
+        }
+      );
 
     // Auto-load, so it behaves more like the monument popup summary.
     loadBoundarySummaryIntoPopup(thisPopup, boundaryId);
@@ -2659,6 +2866,8 @@ let viewerLayerEventsBound = new Set();
 
 let activeMapViewFilterBbox = null;
 let activeViewerSpatialPolygon = null;
+
+let activeViewerAdminBoundary = null;
 
 let viewerSpatialDraw = null;
 let viewerSpatialDrawFeatureId = null;
@@ -3364,6 +3573,17 @@ function buildViewerQueryParams({
 } = {}) {
   const params = new URLSearchParams();
 
+  if (
+    activeViewerAdminBoundary?.boundary_id
+  ) {
+    params.set(
+      "adminBoundaryId",
+      String(
+        activeViewerAdminBoundary.boundary_id
+      )
+    );
+  }
+
   const lang =
     (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
     window.appSession?.profile?.preferred_language ||
@@ -3635,6 +3855,79 @@ function viewerSetScopeNote(container, scopeInfo) {
  
   note.hidden = false;
   note.textContent = viewerFilterScopeSentence(scopeInfo.scope);
+}
+
+async function applyViewerAdminBoundaryFilter({
+  boundaryId,
+  boundaryName = ""
+} = {}) {
+  const id =
+    String(boundaryId || "").trim();
+
+  if (!id) return;
+
+  /*
+    A named administrative region replaces other spatial
+    restrictions so the user does not silently get:
+    region AND previous map extent/drawn area.
+  */
+  activeMapViewFilterBbox = null;
+  activeViewerSpatialPolygon = null;
+
+  removeViewerSpatialDrawFeature?.();
+  updateFilterToMapViewButton?.();
+
+  activeViewerAdminBoundary = {
+    boundary_id: id,
+    admin_name:
+      String(boundaryName || "").trim() ||
+      t(
+        "selected_region",
+        "Selected region"
+      )
+  };
+
+  viewerPageOffset = 0;
+
+  Object.keys(
+    viewerOffsetsByType
+  ).forEach((recordType) => {
+    viewerOffsetsByType[recordType] = 0;
+  });
+
+  renderViewerActiveFilterChips?.();
+
+  if (viewerPopup) {
+    viewerPopup.remove();
+    viewerPopup = null;
+  }
+
+  await reloadViewer({
+    includeMap: true
+  });
+
+  /*
+    Reapply after the map layers have been refreshed.
+  */
+  setViewerSelectedBoundary(id);
+}
+
+async function clearViewerAdminBoundaryFilter() {
+  activeViewerAdminBoundary = null;
+
+  viewerPageOffset = 0;
+
+  Object.keys(
+    viewerOffsetsByType
+  ).forEach((recordType) => {
+    viewerOffsetsByType[recordType] = 0;
+  });
+
+  setViewerSelectedBoundary(null);
+  renderViewerActiveFilterChips?.();
+
+  await loadViewerRecords();
+  await loadViewerMap();
 }
  
 function updateViewerFilterApplicability() {
@@ -4014,6 +4307,28 @@ function viewerAdvancedTreeItemHtml(item) {
     : "";
 
   return `${base}${disambiguation}${date}`;
+}
+
+function updateViewerAdvancedFiltersButtonState() {
+  if (
+    !toggleViewerFiltersBtn ||
+    !viewerFiltersPanel
+  ) {
+    return;
+  }
+
+  const isOpen =
+    !viewerFiltersPanel.hidden;
+
+  toggleViewerFiltersBtn.classList.toggle(
+    "is-active",
+    isOpen
+  );
+
+  toggleViewerFiltersBtn.setAttribute(
+    "aria-expanded",
+    isOpen ? "true" : "false"
+  );
 }
 
 function renderViewerAdvancedFilterTreePicker({
@@ -4470,6 +4785,29 @@ function renderViewerActiveFilterChips() {
     });
   }
 
+  if (
+    activeViewerAdminBoundary?.boundary_id
+  ) {
+    chips.push({
+      kind: "admin_boundary",
+
+      label:
+        activeViewerAdminBoundary.admin_name ||
+        t(
+          "selected_region",
+          "Selected region"
+        ),
+
+      title: t(
+        "region_filter",
+        "Region filter"
+      ),
+
+      className:
+        "active-filter-chip-region"
+    });
+  }
+
   viewerActiveFilterStrip.hidden = chips.length === 0;
   viewerActiveFilterChips.innerHTML = "";
 
@@ -4538,8 +4876,19 @@ async function removeViewerActiveFilterChip(chip) {
     });
   }
 
+  if (chip.kind === "admin_boundary") {
+    activeViewerAdminBoundary = null;
+
+    setViewerSelectedBoundary(null);
+  }
+
   viewerPageOffset = 0;
-  await reloadViewer({ includeMap: true });
+
+  renderViewerActiveFilterChips();
+
+  await reloadViewer({
+    includeMap: true
+  });
 }
 
 function updateFilterToMapViewButton() {
@@ -8986,6 +9335,134 @@ function ensureViewerMixedGeometryResourceLayers(recordType) {
   );
 }
 
+function getViewerAdminBoundaryPaint(
+  style = "filled"
+) {
+  if (style === "dark") {
+    return {
+      fill: {
+        "fill-color": "#ffffff",
+        "fill-opacity": 0
+      },
+
+      line: {
+        "line-color": "#374151",
+        "line-opacity": 0.75,
+        "line-width": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          2, 0.6,
+          5, 1,
+          8, 1.5,
+          12, 2
+        ]
+      }
+    };
+  }
+
+  if (style === "subtle") {
+    return {
+      fill: {
+        "fill-color": "#ffffff",
+        "fill-opacity": 0
+      },
+
+      line: {
+        "line-color": "#4b5563",
+        "line-opacity": 0.38,
+        "line-width": [
+          "interpolate",
+          ["linear"],
+          ["zoom"],
+          2, 0.35,
+          5, 0.55,
+          8, 0.9,
+          12, 1.2
+        ]
+      }
+    };
+  }
+
+  return {
+    fill: {
+      "fill-color": "#2f6f5f",
+      "fill-opacity": 0.06
+    },
+
+    line: {
+      "line-color": "#2f6f5f",
+      "line-opacity": 0.58,
+      "line-width": [
+        "interpolate",
+        ["linear"],
+        ["zoom"],
+        2, 0.5,
+        5, 0.8,
+        8, 1.2,
+        12, 1.6
+      ]
+    }
+  };
+}
+
+function applyViewerAdminBoundaryStyle() {
+  if (!viewerMap) {
+    return;
+  }
+
+  const style =
+    borderStyleSelect?.value ||
+    "filled";
+
+  const paint =
+    getViewerAdminBoundaryPaint(
+      style
+    );
+
+  if (
+    viewerMap.getLayer(
+      "viewer-admin-boundary-fill"
+    )
+  ) {
+    viewerMap.setPaintProperty(
+      "viewer-admin-boundary-fill",
+      "fill-color",
+      paint.fill["fill-color"]
+    );
+
+    viewerMap.setPaintProperty(
+      "viewer-admin-boundary-fill",
+      "fill-opacity",
+      paint.fill["fill-opacity"]
+    );
+  }
+
+  if (
+    viewerMap.getLayer(
+      "viewer-admin-boundary-outline"
+    )
+  ) {
+    viewerMap.setPaintProperty(
+      "viewer-admin-boundary-outline",
+      "line-color",
+      paint.line["line-color"]
+    );
+
+    viewerMap.setPaintProperty(
+      "viewer-admin-boundary-outline",
+      "line-opacity",
+      paint.line["line-opacity"]
+    );
+
+    viewerMap.setPaintProperty(
+      "viewer-admin-boundary-outline",
+      "line-width",
+      paint.line["line-width"]
+    );
+  }
+}
+
 function ensureViewerStyleLayers(recordType) {
   if (!viewerMap || !viewerMapLoaded) return;
 
@@ -8996,16 +9473,18 @@ function ensureViewerStyleLayers(recordType) {
 
   // Reference overlay: administrative boundaries
   if (recordType === "admin_boundary") {
+    const boundaryPaint =
+      getViewerAdminBoundaryPaint(
+        borderStyleSelect?.value ||
+        "filled"
+      );
     if (!viewerMap.getLayer(ids.fill)) {
       viewerMap.addLayer({
         id: ids.fill,
         type: "fill",
         source: ids.source,
         filter: VIEWER_POLYGON_GEOMETRY_FILTER,
-        paint: {
-          "fill-color": VIEWER_COLOURS.admin_boundary,
-          "fill-opacity": 0.06
-        }
+        paint: boundaryPaint.fill
       });
     }
 
@@ -9049,18 +9528,7 @@ function ensureViewerStyleLayers(recordType) {
         type: "line",
         source: ids.source,
         filter: VIEWER_POLYGON_GEOMETRY_FILTER,
-        paint: {
-          "line-color": VIEWER_COLOURS.admin_boundary,
-          "line-width": [
-            "interpolate",
-            ["linear"],
-            ["zoom"],
-            11, 1.8,
-            13, 2.5,
-            16, 3.2
-          ],
-          "line-opacity": 0.75
-        }
+        paint: boundaryPaint.line
       });
     }
 
@@ -15037,6 +15505,14 @@ async function clearViewerFilters() {
 
   activeMapViewFilterBbox = null;
   activeViewerSpatialPolygon = null;
+  activeViewerAdminBoundary = null;
+
+  setViewerSelectedBoundary(null);
+
+  if (viewerPopup) {
+    viewerPopup.remove();
+    viewerPopup = null;
+  }
 
   cancelViewerSpatialPolygonDrawing({
     clearCompletedPolygon: true
@@ -15145,10 +15621,21 @@ function wireViewerEvents() {
     });
   }
 
-  if (toggleViewerFiltersBtn && viewerFiltersPanel) {
-    toggleViewerFiltersBtn.addEventListener("click", () => {
-      viewerFiltersPanel.hidden = !viewerFiltersPanel.hidden;
-    });
+  if (
+    toggleViewerFiltersBtn &&
+    viewerFiltersPanel
+  ) {
+    updateViewerAdvancedFiltersButtonState();
+
+    toggleViewerFiltersBtn.addEventListener(
+      "click",
+      () => {
+        viewerFiltersPanel.hidden =
+          !viewerFiltersPanel.hidden;
+
+        updateViewerAdvancedFiltersButtonState();
+      }
+    );
   }
 
   if (clearViewerFiltersBtn) {
@@ -15310,6 +15797,19 @@ function wireViewerEvents() {
         console.error("Admin boundary layer reload failed:", error);
       }
     });
+  }
+
+  if (borderStyleSelect) {
+    borderStyleSelect.value =
+      borderStyleSelect.value ||
+      "filled";
+
+    borderStyleSelect.addEventListener(
+      "change",
+      () => {
+        applyViewerAdminBoundaryStyle();
+      }
+    );
   }
 
   if (showMapLabelsCheckbox) {

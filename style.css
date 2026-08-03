@@ -2325,6 +2325,12 @@ svg {
   color: #3f5059;
 }
 
+#toggleViewerFiltersBtn.is-active {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
 .viewer-filter-scope {
   margin: 0 0 0.15rem;
   padding-left: 0.5rem;
