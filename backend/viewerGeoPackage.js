@@ -105,7 +105,57 @@ CREATE TABLE gpkg_geometry_columns (
   z TINYINT NOT NULL, m TINYINT NOT NULL,
   PRIMARY KEY (table_name, column_name)
 );
+
+CREATE TABLE gpkg_extensions (
+  table_name TEXT,
+  column_name TEXT,
+  extension_name TEXT NOT NULL,
+  definition TEXT NOT NULL,
+  scope TEXT NOT NULL,
+  CONSTRAINT ge_tce UNIQUE (
+    table_name,
+    column_name,
+    extension_name
+  )
+);
+
+CREATE TABLE gpkg_data_columns (
+  table_name TEXT NOT NULL,
+  column_name TEXT NOT NULL,
+  name TEXT,
+  title TEXT,
+  description TEXT,
+  mime_type TEXT,
+  constraint_name TEXT,
+  CONSTRAINT pk_gdc PRIMARY KEY (
+    table_name,
+    column_name
+  ),
+  CONSTRAINT gdc_tn UNIQUE (
+    table_name,
+    name
+  )
+);
 `);
+
+  db.prepare(
+    `
+    INSERT INTO gpkg_extensions (
+      table_name,
+      column_name,
+      extension_name,
+      definition,
+      scope
+    )
+    VALUES (
+      'gpkg_data_columns',
+      NULL,
+      'gpkg_schema',
+      'http://www.geopackage.org/spec/#extension_schema',
+      'read-write'
+    )
+    `
+  ).run();
 
   const srs = db.prepare(
     `INSERT INTO gpkg_spatial_ref_sys
@@ -116,6 +166,71 @@ CREATE TABLE gpkg_geometry_columns (
   srs.run("Undefined geographic SRS", 0, "NONE", 0, "undefined", "");
   srs.run("WGS 84", SRS_ID, "EPSG", 4326, WGS84_DEFINITION,
           "longitude/latitude on WGS 84");
+}
+
+function addColumnAliases(
+  db,
+  tableName,
+  columns,
+  columnAliases
+) {
+  if (!columnAliases) return;
+
+  const insert = db.prepare(
+    `
+    INSERT INTO gpkg_data_columns (
+      table_name,
+      column_name,
+      name,
+      title,
+      description,
+      mime_type,
+      constraint_name
+    )
+    VALUES (?, ?, ?, ?, NULL, NULL, NULL)
+    `
+  );
+
+  const usedNames = new Set();
+
+  for (const column of columns) {
+    const exactTitle =
+      String(
+        columnAliases.get(column) ||
+        column
+      )
+        .replace(/\s+/g, " ")
+        .trim();
+
+    let aliasName = exactTitle;
+    let suffix = 2;
+
+    /*
+      gpkg_data_columns requires name to be unique
+      within a table. Preserve the exact translation
+      in title, while disambiguating name if necessary.
+    */
+    while (
+      usedNames.has(
+        aliasName.toLocaleLowerCase()
+      )
+    ) {
+      aliasName = `${exactTitle} (${suffix})`;
+
+      suffix += 1;
+    }
+
+    usedNames.add(
+      aliasName.toLocaleLowerCase()
+    );
+
+    insert.run(
+      tableName,
+      column,
+      aliasName,
+      exactTitle
+    );
+  }
 }
 
 function createFeatureLayer(db, tableName, description, rows, recordColumns) {
@@ -203,22 +318,60 @@ CREATE TABLE "${tableName}" (
  * so one geometry-less record cannot split a type across two tables with
  * the same name.
  */
-function writeGeoPackage({ filePath, layers, relationshipRows, infoRows }) {
-  const db = new DatabaseSync(filePath);
+function writeGeoPackage({
+  filePath,
+  layers,
+  relationshipRows,
+  infoRows
+}) {
+  const db =
+    new DatabaseSync(filePath);
+
   try {
     createSkeleton(db);
 
     for (const layer of layers) {
-      if (!layer.rows.length) continue;
-      const tableName = safeTableName(layer.recordType);
-      const description = `CAAL ${layer.recordType} records`;
-      const hasGeometry = layer.rows.some(r => r.geom_wkb);
+      if (!layer.rows.length) {
+        continue;
+      }
+
+      const tableName =
+        safeTableName(
+          layer.recordType
+        );
+
+      const description =
+        `CAAL ${layer.recordType} records`;
+
+      const hasGeometry =
+        layer.rows.some(
+          (row) => row.geom_wkb
+        );
 
       if (hasGeometry) {
-        createFeatureLayer(db, tableName, description, layer.rows, layer.columns);
+        createFeatureLayer(
+          db,
+          tableName,
+          description,
+          layer.rows,
+          layer.columns
+        );
       } else {
-        createAttributeTable(db, tableName, description, layer.columns, layer.rows);
+        createAttributeTable(
+          db,
+          tableName,
+          description,
+          layer.columns,
+          layer.rows
+        );
       }
+
+      addColumnAliases(
+        db,
+        tableName,
+        layer.columns,
+        layer.columnAliases
+      );
     }
 
     if (relationshipRows.length) {

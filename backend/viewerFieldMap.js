@@ -463,17 +463,20 @@ const EXPORT_SPECS = Object.freeze({
       Object.freeze({
         arrayColumn: "monument_types_arr",
         vocab: "site_types",
-        exportPrefix: "monument_types"
+        exportPrefix: "monument_types",
+        labelKey: "Monument Type"
       }),
       Object.freeze({
         arrayColumn: "cultural_periods_arr",
         vocab: "cultural_periods",
-        exportPrefix: "cultural_periods"
+        exportPrefix: "cultural_periods",
+        labelKey: "Cultural Period"
       }),
       Object.freeze({
         arrayColumn: "religions_arr",
         vocab: "religion",
-        exportPrefix: "religions"
+        exportPrefix: "religions",
+        labelKey: "Religion"
       })
     ]),
 
@@ -662,13 +665,14 @@ const EXPORT_SPECS = Object.freeze({
     labelView: null,   // no label view yet
     alias: "rs",
     keyColumn: "id",
+    keyType: "integer",
     vocabArrays: Object.freeze([]),   // view resolves types itself
 
     columns: Object.freeze([
       { kind: "plain", raw: 'Gridcode', export: 'gridcode' },
       { kind: "lang",  base: 'country', export: 'country' },
       { kind: "plain", raw: 'Region', export: 'region' },
-      { kind: "plain", raw: 'Digitised Dataset', export: 'digitised_dataset' },
+      { kind: "plain", raw: 'Digitised dataset', export: 'digitised_dataset' },
       { kind: "lang",  base: 'visibility', export: 'visibility' },
       { kind: "lang",  base: 'anomaly_types', export: 'anomaly_types' },
       { kind: "lang",  base: 'origin', export: 'origin' },
@@ -734,6 +738,7 @@ const EXPORT_SPECS = Object.freeze({
     labelView: null,   // no label view yet
     alias: "rs",
     keyColumn: "id",
+    keyType: "integer",
     vocabArrays: Object.freeze([]),   // view resolves types itself
 
     columns: Object.freeze([
@@ -806,6 +811,7 @@ const EXPORT_SPECS = Object.freeze({
     labelView: null,   // no label view yet
     alias: "rs",
     keyColumn: "id",
+    keyType: "integer",
     vocabArrays: Object.freeze([]),
 
     columns: Object.freeze([
@@ -912,21 +918,73 @@ function exportTypeRecordsSql({
         ? `,\n       p."caal_id_norm"`
         : "";
 
-  return {
-    sql: `${ctes}
-    , picked AS (${pickedSql})
-    SELECT
-       ${commonSelect(leading)},
-       ${selectSql},
-       ${commonSelect(trailing)}${passthroughSelect}
-    FROM picked p
-    LEFT JOIN ${spec.source} ${alias}
-      ON ${alias}."${spec.keyColumn}"::text = p.source_row_id::text
+  let sourceJoinSql;
+
+  switch (spec.keyType) {
+    case "integer":
+      sourceJoinSql = `
+        ${alias}."${spec.keyColumn}" =
+        NULLIF(
+          p.source_row_id::text,
+          ''
+        )::integer
+      `;
+      break;
+
+    case "bigint":
+      sourceJoinSql = `
+        ${alias}."${spec.keyColumn}" =
+        NULLIF(
+          p.source_row_id::text,
+          ''
+        )::bigint
+      `;
+      break;
+
+    case "uuid":
+      sourceJoinSql = `
+        ${alias}."${spec.keyColumn}" =
+        NULLIF(
+          p.source_row_id::text,
+          ''
+        )::uuid
+      `;
+      break;
+
+    default:
+      sourceJoinSql = `
+        ${alias}."${spec.keyColumn}"::text =
+        p.source_row_id::text
+      `;
+  }
+
+  const selectParts = [
+  commonSelect(leading),
+  selectSql,
+  commonSelect(trailing)
+].filter(
+  (part) =>
+    part &&
+    part.trim()
+);
+
+return {
+  sql: `${ctes}
+  , picked AS (${pickedSql})
+  SELECT
+     ${selectParts.join(",\n       ")}${passthroughSelect}
+  FROM picked p
+  LEFT JOIN ${spec.source} ${alias}
+    ON ${sourceJoinSql}
 ${joinSql}
-    WHERE p.record_type = '${recordType}'
-    ORDER BY p.export_role, p.caal_id`,
-    columns: [...leading, ...columns, ...trailing]
-  };
+  WHERE p.record_type = '${recordType}'
+  ORDER BY p.export_role, p.caal_id`,
+  columns: [
+    ...leading,
+    ...columns,
+    ...trailing
+  ]
+};
 }
  
 
@@ -947,7 +1005,22 @@ function buildTypeExportColumns(recordType, lang, format = "csv") {
   const parts = [];
   const scalarJoins = [];
 
-  spec.columns.forEach((col) => {
+  const requestedColumns =
+    format === "kml"
+      ? new Set(
+          (spec.kmlFields || [])
+            .map((field) => field.column)
+        )
+      : null;
+
+  const scalarColumns =
+    requestedColumns
+      ? spec.columns.filter((column) =>
+          requestedColumns.has(column.export)
+        )
+      : spec.columns;
+
+  scalarColumns.forEach((col) => {
     let expr;
     if (col.kind === "plain") {
       expr = `${alias}."${col.raw}"`;
@@ -974,7 +1047,26 @@ function buildTypeExportColumns(recordType, lang, format = "csv") {
     parts.push({ expr, export: col.export });
   });
 
-  const vocab = vocabArrayJoinsFor(spec, alias, lang);
+  const vocabSpec =
+    requestedColumns
+      ? {
+          ...spec,
+
+          vocabArrays:
+            (spec.vocabArrays || [])
+              .filter((entry) =>
+                requestedColumns.has(
+                  entry.exportPrefix
+                )
+              )
+        }
+      : spec;
+
+  const vocab = vocabArrayJoinsFor(
+    vocabSpec,
+    alias,
+    lang
+  );
   parts.push(...vocab.selectColumns);
 
   return {
@@ -1004,6 +1096,7 @@ module.exports = {
   rowValues,
   notApplicableSql,
   scopeFilterSql,
+
   // vocabulary arrays
   VALUE_SEPARATOR,
   LOOKUP_LANGS,
@@ -1017,8 +1110,13 @@ module.exports = {
   mvLangValueSql,
   scalarLookupDisplaySql,
   langNumberedSql,
+
   // per-type export specs
   EXPORT_SPECS,
   buildTypeExportColumns,
-  exportTypeRecordsSql
+  exportTypeRecordsSql,
+
+  // export labels
+  labelKeysForRecordType,
+  prettifyExportName
 };

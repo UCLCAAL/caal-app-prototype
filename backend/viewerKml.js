@@ -106,7 +106,7 @@ function polygonXml(rings) {
 
 // ---- description block ----
 
-function descriptionHtml(row, relations) {
+function descriptionHtml(row, relations, labels) {
   const lines = [];
   const push = (label, value) => {
     if (value !== null && value !== undefined && String(value).trim() !== "") {

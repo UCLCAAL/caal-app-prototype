@@ -1369,6 +1369,126 @@ router.get("/export/estimate", async (req, res) => {
   }
 });
 
+// EXPORT HELPERS
+// CACHE LABELS IN NODE (RARELY CHANGE)
+const EXPORT_LABEL_CACHE_TTL_MS =
+  5 * 60 * 1000;
+
+const exportLabelCache = new Map();
+
+async function loadColumnLabelsCached(
+  pool,
+  recordType,
+  lang
+) {
+  const cacheKey =
+    `${recordType}:${lang}`;
+
+  const cached =
+    exportLabelCache.get(
+      cacheKey
+    );
+
+  const now =
+    Date.now();
+
+  if (
+    cached &&
+    now - cached.loadedAt <
+      EXPORT_LABEL_CACHE_TTL_MS
+  ) {
+    return cached.labels;
+  }
+
+  const labels =
+    await loadColumnLabels(
+      pool,
+      recordType,
+      lang
+    );
+
+  exportLabelCache.set(
+    cacheKey,
+    {
+      labels,
+      loadedAt: now
+    }
+  );
+
+  return labels;
+}
+
+function exportColumnAliasMap(
+  columns,
+  labels
+) {
+  const displayNames =
+    exportDisplayNames(
+      columns,
+      labels,
+      ["fid", "geom"]
+    );
+
+  return new Map(
+    columns.map(
+      (column, index) => [
+        column,
+        displayNames[index]
+      ]
+    )
+  );
+}
+
+function exportDisplayNames(
+  columns,
+  labels,
+  reservedNames = []
+) {
+  const used = new Set(
+    reservedNames.map((name) =>
+      String(name).toLocaleLowerCase()
+    )
+  );
+
+  return columns.map((column) => {
+    const translated =
+      labels?.get(column);
+
+    const base =
+      String(
+        translated ||
+        prettifyExportName(column) ||
+        column
+      )
+        .replace(/\s+/g, " ")
+        .trim() || column;
+
+    let candidate = base;
+    let suffix = 2;
+
+    /*
+      Duplicate translated labels are possible, particularly for
+      repeated measurements or administrative subdivisions.
+    */
+    while (
+      used.has(
+        candidate.toLocaleLowerCase()
+      )
+    ) {
+      candidate =
+        `${base} (${suffix})`;
+
+      suffix += 1;
+    }
+
+    used.add(
+      candidate.toLocaleLowerCase()
+    );
+
+    return candidate;
+  });
+}
+
 // ============================================================
 // RESULT EXTENT endpoint — true bounds of the filtered result set,
 // independent of the current viewport. Powers "zoom to all results".
@@ -1438,9 +1558,17 @@ const { writeGeoPackage } = require("./viewerGeoPackage");
 const { buildKml } = require("./viewerKml");
 
 const {
-  COMMON_FIELDS, fieldsForRecordType, commonFields, rowValues,
-  CONDITIONAL_FIELDS, scopeFilterSql, vocabArrayJoinsFor,
-  EXPORT_SPECS, exportTypeRecordsSql
+  COMMON_FIELDS,
+  fieldsForRecordType,
+  commonFields,
+  rowValues,
+  CONDITIONAL_FIELDS,
+  scopeFilterSql,
+  vocabArrayJoinsFor,
+  EXPORT_SPECS,
+  exportTypeRecordsSql,
+  labelKeysForRecordType,
+  prettifyExportName
 } = require("./viewerFieldMap");
 
 const EXPORT_LANG_SUFFIXES = {
@@ -1468,6 +1596,55 @@ function csvFile(headerCells, rows) {
   for (const row of rows) lines.push(row.map(csvCell).join(","));
   // BOM so Excel opens UTF-8 (Cyrillic/Chinese) correctly
   return "\uFEFF" + lines.join("\r\n") + "\r\n";
+}
+
+async function timedExportQuery(
+  queryable,
+  label,
+  sql,
+  values,
+  requestId
+) {
+  const startedAt = process.hrtime.bigint();
+
+  try {
+    const result = await queryable.query(
+      sql,
+      values
+    );
+
+    const elapsedMs =
+      Number(
+        process.hrtime.bigint() -
+        startedAt
+      ) / 1_000_000;
+
+    console.log(
+      `[viewer/export timing] ` +
+      `request=${requestId} ` +
+      `phase=${label} ` +
+      `rows=${result.rowCount ?? result.rows?.length ?? 0} ` +
+      `ms=${elapsedMs.toFixed(1)}`
+    );
+
+    return result;
+  } catch (error) {
+    const elapsedMs =
+      Number(
+        process.hrtime.bigint() -
+        startedAt
+      ) / 1_000_000;
+
+    console.error(
+      `[viewer/export timing] ` +
+      `request=${requestId} ` +
+      `phase=${label} ` +
+      `failed=true ` +
+      `ms=${elapsedMs.toFixed(1)}`
+    );
+
+    throw error;
+  }
 }
 
 // ---------- SQL builders ----------
@@ -1677,7 +1854,14 @@ function exportRecordsGpkgSql(ctes, sfx) {
     ORDER BY export_role, record_type, caal_id`;
 }
 
-function pickedKmlCteBody(sfx) {
+function pickedKmlCteBody(sfx, centroidsOnly = false) {
+  const geometrySelect =
+    centroidsOnly
+      ? `NULL::text AS geom_geojson`
+      : `ST_AsGeoJSON(
+          v.geom_4326
+        ) AS geom_geojson`;
+
   return `
       SELECT DISTINCT ON (v.caal_id_norm, v.record_type, v.source_schema)
         v.caal_id, v.caal_id_norm, v.record_type, v.dataset_label,
@@ -1705,7 +1889,7 @@ function pickedKmlCteBody(sfx) {
           ELSE v.filter_risk_levels #>> '{}'
         END                                                 AS risk_levels,
         v.source_schema, v.source_table, v.source_row_id,
-        ST_AsGeoJSON(v.geom_4326)                           AS geom_geojson,
+        ${geometrySelect},
         CASE WHEN v.centroid_4326 IS NOT NULL THEN ST_X(v.centroid_4326) END AS centroid_lon,
         CASE WHEN v.centroid_4326 IS NOT NULL THEN ST_Y(v.centroid_4326) END AS centroid_lat,
         CASE WHEN v.caal_id_norm IN (SELECT caal_id_norm FROM sel_dedup)
@@ -1716,11 +1900,19 @@ function pickedKmlCteBody(sfx) {
   `;
 }
 
-function exportRecordsKmlSql(ctes, sfx) {
+function exportRecordsKmlSql(ctes, sfx, centroidsOnly = false) {
   return `${ctes}
-    , picked AS (${pickedKmlCteBody(sfx)})
-    SELECT * FROM picked
-    ORDER BY export_role, record_type, caal_id`;
+    , picked AS (
+      ${pickedKmlCteBody(
+        sfx,
+        centroidsOnly
+      )}
+    )
+    SELECT *
+    FROM picked
+    ORDER BY
+      export_role, record_type, caal_id
+    `;
 }
 
 
@@ -1734,36 +1926,94 @@ function exportRecordsKmlSql(ctes, sfx) {
  * Falls back to a prettified export name for anything unmatched, which
  * means a record type with no label view still reads sensibly.
  */
-async function loadColumnLabels(pool, recordType, lang) {
-  const spec = EXPORT_SPECS[recordType];
-  const keys = labelKeysForRecordType(recordType);
-  const labels = new Map();
- 
+async function loadColumnLabels(
+  pool,
+  recordType,
+  lang
+) {
+  const spec =
+    EXPORT_SPECS[recordType];
+
+  const keys =
+    labelKeysForRecordType(
+      recordType
+    );
+
+  const labels =
+    new Map();
+
   let rows = [];
-  if (spec && spec.labelView) {
-    const sfx = EXPORT_LANG_SUFFIXES[lang] || "en";
+
+  if (
+    spec &&
+    spec.labelView &&
+    keys.length
+  ) {
+    const sfx =
+      EXPORT_LANG_SUFFIXES[lang] ||
+      "en";
+
+    const requiredLabelNames =
+      [...new Set(
+        keys
+          .map(({ labelKey }) =>
+            labelKey
+          )
+          .filter(Boolean)
+      )];
+
     try {
-      rows = (await pool.query(
-        `SELECT label_name,
-                COALESCE(display_${sfx}, display_en, label_name) AS label
-         FROM ${spec.labelView}`
-      )).rows;
+      rows = (
+        await pool.query(
+          `
+          SELECT
+            label_name,
+            COALESCE(
+              display_${sfx},
+              display_en,
+              label_name
+            ) AS label
+          FROM ${spec.labelView}
+          WHERE label_name =
+                ANY($1::text[])
+          `,
+          [requiredLabelNames]
+        )
+      ).rows;
     } catch (err) {
       console.warn(
-        `[viewer/export] labels ${recordType}: ${err.message} — ` +
+        `[viewer/export] labels ` +
+        `${recordType}: ` +
+        `${err.message} - ` +
         `falling back to prettified names`
       );
     }
   }
- 
+
   const byName = new Map();
-  for (const r of rows) {
-    byName.set(r.label_name, String(r.label || "").replace(/\s+/g, " ").trim());
+
+  for (const row of rows) {
+    byName.set(
+      row.label_name,
+      String(row.label || "")
+        .replace(/\s+/g, " ")
+        .trim()
+    );
   }
- 
-  for (const { column, labelKey } of keys) {
-    labels.set(column, byName.get(labelKey) || prettifyExportName(column));
+
+  for (
+    const {
+      column,
+      labelKey
+    } of keys
+  ) {
+    labels.set(
+      column,
+      byName.get(labelKey) ||
+        prettifyExportName(column)
+    );
   }
+
   return labels;
 }
 
@@ -1775,12 +2025,22 @@ router.get("/export", async (req, res) => {
   if (!requireExportCapability(req, res, session)) return;
 
   const startedMs = Date.now();
+  const requestId =
+    `${Date.now().toString(36)}-` +
+    `${Math.random().toString(36).slice(2, 8)}`;
+
   const lang = viewerLangFromReq(req, session);
   const sfx = EXPORT_LANG_SUFFIXES[lang] || "en";
   const includeRelated = String(req.query.includeRelated || "true") !== "false";
   const centroidsOnly = String(req.query.centroidsOnly || "false") === "true";
   const relationshipLines = String(req.query.relationshipLines || "false") === "true";
   const format = String(req.query.format || "csv").toLowerCase();
+
+  console.log(
+    `[viewer/export timing] ` +
+    `request=${requestId} ` +
+    `started format=${format}`
+  );
 
   if (format !== "csv" && format !== "gpkg" && format !== "kml") {
     return res.status(400).json({
@@ -1808,7 +2068,17 @@ router.get("/export", async (req, res) => {
     const estimateSql = buildExportEstimateSql({
       whereSql: filter.whereSql, scopesParam, includeRelated
     });
-    const est = (await pool.query(estimateSql, values)).rows[0] || {};
+    const estimateResult =
+    await timedExportQuery(
+      pool,
+      "estimate",
+      estimateSql,
+      values,
+      requestId
+    );
+
+  const est =
+    estimateResult.rows[0] || {};
     const selected = Number(est.selected_record_count || 0);
     const total = selected + Number(est.related_record_count || 0);
     if (!selected) {
@@ -1871,9 +2141,23 @@ router.get("/export", async (req, res) => {
               );
             }
 
+            const labels =
+              await loadColumnLabelsCached(
+                pool,
+                recordType,
+                lang
+              );
+
+            const columnAliases =
+              exportColumnAliasMap(
+                typeQuery.columns,
+                labels
+              );
+
             layer = {
               recordType,
               columns: typeQuery.columns,
+              columnAliases,
               rows: typeRows
             };
           } catch (err) {
@@ -1885,13 +2169,32 @@ router.get("/export", async (req, res) => {
         }
 
         if (!layer) {
+          const columns =
+            fieldsForRecordType(
+              recordType,
+              "gpkg"
+            );
+
+          const labels =
+            EXPORT_SPECS[recordType]
+              ? await loadColumnLabelsCached(
+                  pool,
+                  recordType,
+                  lang
+                )
+              : new Map();
+
           layer = {
             recordType,
-            columns: fieldsForRecordType(recordType, "gpkg"),
+            columns,
+            columnAliases:
+              exportColumnAliasMap(
+                columns,
+                labels
+              ),
             rows
           };
         }
-
         layers.push(layer);
       }
 
@@ -1958,11 +2261,43 @@ router.get("/export", async (req, res) => {
       const ctes = exportCtesSql({
         whereSql: filter.whereSql, scopesParam, includeRelated
       });
+      const kmlRecordsSql =
+        exportRecordsKmlSql(
+          ctes,
+          sfx,
+          centroidsOnly
+        );
+
+      const recordResult =
+        await timedExportQuery(
+          pool,
+          "kml-records",
+          kmlRecordsSql,
+          values,
+          requestId
+        );
+
       const recordRows =
-        (await pool.query(exportRecordsKmlSql(ctes, sfx), values)).rows;
-      const relationshipRows = includeRelated
-        ? (await pool.query(exportRelationshipsSql(ctes, sfx), values)).rows
-        : [];
+        recordResult.rows;
+      
+      let relationshipRows = [];
+
+      if (includeRelated) {
+        const relationshipResult =
+          await timedExportQuery(
+            pool,
+            "kml-relationships",
+            exportRelationshipsSql(
+              ctes,
+              sfx
+            ),
+            values,
+            requestId
+          );
+
+        relationshipRows =
+          relationshipResult.rows;
+      }
  
       // Unlike CSV and GPKG, KML keeps ONE flat list of records — buildKml
       // groups them into folders itself. So rather than building separate
@@ -1974,18 +2309,37 @@ router.get("/export", async (req, res) => {
         recordRows.map(r => r.record_type).filter(Boolean)
       )].sort();
 
+      // enrichment route
       for (const recordType of recordTypesPresent) {
-        if (!EXPORT_SPECS[recordType]) continue;
+        const spec = EXPORT_SPECS[recordType];
+
+        if (
+          !spec ||
+          !Array.isArray(spec.kmlFields) ||
+          spec.kmlFields.length === 0
+        ) {
+          continue;
+        }
         try {
           const typeQuery = exportTypeRecordsSql({
             ctes,
-            pickedSql: pickedKmlCteBody(sfx),
+            pickedSql: pickedKmlCteBody(sfx, centroidsOnly),
             recordType,
             lang,
             commonCols: kmlCommonCols,
             format: "kml"
           });
-          const typeRows = (await pool.query(typeQuery.sql, values)).rows;
+          const typeResult =
+            await timedExportQuery(
+              pool,
+              `kml-enrich-${recordType}`,
+              typeQuery.sql,
+              values,
+              requestId
+            );
+
+          const typeRows =
+            typeResult.rows;
 
           const byKey = new Map();
           for (const row of typeRows) byKey.set(row.caal_id_norm, row);
@@ -2013,6 +2367,48 @@ router.get("/export", async (req, res) => {
         }
       }
 
+      const labelsByType = new Map();
+
+      for (const recordType of recordTypesPresent) {
+         const spec = EXPORT_SPECS[recordType];
+
+          if (
+            !spec ||
+            !Array.isArray(spec.kmlFields) ||
+            spec.kmlFields.length === 0
+          ) {
+            continue;
+          }
+
+        const labelsStartedAt =
+          process.hrtime.bigint();
+
+        const labels =
+          await loadColumnLabelsCached(
+            pool,
+            recordType,
+            lang
+          );
+
+        const labelsElapsedMs =
+          Number(
+            process.hrtime.bigint() -
+            labelsStartedAt
+          ) / 1_000_000;
+
+        console.log(
+          `[viewer/export timing] ` +
+          `request=${requestId} ` +
+          `phase=kml-labels-${recordType} ` +
+          `ms=${labelsElapsedMs.toFixed(1)}`
+        );
+
+        labelsByType.set(
+          recordType,
+          labels
+        );
+}
+
       // Recompute mode with the same rule the estimate used, honouring centroidsOnly.
       const membership = Number(est.membership_count || 0);
       const relationFolders = Number(est.relation_folder_count || 0);
@@ -2034,26 +2430,65 @@ router.get("/export", async (req, res) => {
         refreshedAt = cache.rows[0] ? cache.rows[0].at : null;
       } catch (e) { /* non-fatal */ }
  
+      const kmlBuildStartedAt =
+        process.hrtime.bigint();
+
       const kml = buildKml({
         recordRows,
         relationshipRows,
         mode,
-        options: { centroidsOnly, relationshipLines },
+        options: {
+          centroidsOnly,
+          relationshipLines
+        },
         meta: {
           lang,
           selected,
-          related: Number(est.related_record_count || 0),
-          refreshedAt: refreshedAt ? new Date(refreshedAt).toISOString() : null
-        }
+          related:
+            Number(
+              est.related_record_count || 0
+            ),
+          refreshedAt:
+            refreshedAt
+              ? new Date(
+                  refreshedAt
+                ).toISOString()
+              : null
+        },
+        labelsByType
       });
+
+      const kmlBuildElapsedMs =
+        Number(
+          process.hrtime.bigint() -
+          kmlBuildStartedAt
+        ) / 1_000_000;
+
+      console.log(
+        `[viewer/export timing] ` +
+        `request=${requestId} ` +
+        `phase=kml-build ` +
+        `records=${recordRows.length} ` +
+        `relationships=${relationshipRows.length} ` +
+        `characters=${kml.length} ` +
+        `ms=${kmlBuildElapsedMs.toFixed(1)}`
+      );
  
       const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "");
       const filename = `caal_export_${lang}_${stamp}.kml`;
  
       console.log(
-        `[viewer export] kml lang=${lang} mode=${mode} centroids=${centroidsOnly} ` +
-        `lines=${relationshipLines} records=${recordRows.length} ` +
-        `edges=${relationshipRows.length} ms=${Date.now() - startedMs}`
+        `[viewer export] ` +
+        `request=${requestId} ` +
+        `kml ` +
+        `lang=${lang} ` +
+        `mode=${mode} ` +
+        `centroids=${centroidsOnly} ` +
+        `lines=${relationshipLines} ` +
+        `records=${recordRows.length} ` +
+        `edges=${relationshipRows.length} ` +
+        `characters=${kml.length} ` +
+        `total_ms=${Date.now() - startedMs}`
       );
  
       res.setHeader("Content-Type", "application/vnd.google-earth.kml+xml");
@@ -2119,6 +2554,19 @@ router.get("/export", async (req, res) => {
           });
           const typeRows = (await pool.query(typeQuery.sql, values)).rows;
 
+          const labels =
+            await loadColumnLabelsCached(
+              pool,
+              recordType,
+              lang
+            );
+
+          const displayHeaders =
+            exportDisplayNames(
+              typeQuery.columns,
+              labels
+            );
+
           // An inner join to the per-type MV can silently drop rows the
           // thin query found — e.g. a workspace whose MV does not exist.
           const dropped = rows.length - typeRows.length;
@@ -2132,13 +2580,19 @@ router.get("/export", async (req, res) => {
           file = {
             name: `${recordType}_${lang}.csv`,
             recordType,
+            /* Stable machine keys used to retrieve row values. */
             columns: typeQuery.columns,
+            /* Requested-language labels written into the first row of the CSV.*/
+            displayHeaders,
             rowCount: typeRows.length,
-            columnsSource: dropped === 0 ? "spec" : `spec (${dropped} rows unmatched)`,
-            content: csvFile(
-              typeQuery.columns,
-              typeRows.map(r => rowValues(r, typeQuery.columns))
-            )
+            columnsSource:
+              dropped === 0
+                ? "spec"
+                : `spec (${dropped} rows unmatched)`,
+
+            content: csvFile(displayHeaders,            // visible CSV header
+              typeRows.map((row) =>
+                    rowValues(row, typeQuery.columns))) // data lookup
           };
         } catch (err) {
           console.warn(
@@ -2149,14 +2603,28 @@ router.get("/export", async (req, res) => {
       }
 
       if (!file) {
-        const cols = fieldsForRecordType(recordType, "csv");
+        const columns = fieldsForRecordType(recordType, "csv");
+
+        const labels =
+          EXPORT_SPECS[recordType]
+            ? await loadColumnLabelsCached(
+                pool,
+                recordType,
+                lang
+              )
+            : new Map();
+
+        const displayHeaders = exportDisplayNames(columns, labels);
+
         file = {
           name: `${recordType}_${lang}.csv`,
           recordType,
-          columns: cols,
+          columns,
+          displayHeaders,
           rowCount: rows.length,
           columnsSource: "common",
-          content: csvFile(cols, rows.map(r => rowValues(r, cols)))
+          content: csvFile(displayHeaders, rows.map((row) =>
+                  rowValues(row, columns)))
         };
       }
 
@@ -2193,21 +2661,35 @@ router.get("/export", async (req, res) => {
     const infoCsv = csvFile(["key", "value"], infoRows);
 
     const manifestCsv = csvFile(
-      ["file", "record_type", "row_count", "column_count", "columns_source", "columns"],
+      [ "file",
+        "record_type",
+        "row_count",
+        "column_count",
+        "columns_source",
+        "machine_columns",
+        "display_headers"
+      ],
       [
         [`records_${lang}.csv`, "(all types)", String(records.length),
-         String(commonCols.length), "common", commonCols.join("; ")],
-        ...layerFiles.map(f => [
-          f.name, f.recordType, String(f.rowCount),
-          String(f.columns.length), f.columnsSource, f.columns.join("; ")
-        ]),
+         String(commonCols.length), "common", commonCols.join("; "), commonCols.join("; ")],
+        ...layerFiles.map(
+          (file) => [
+            file.name,
+            file.recordType,
+            String(file.rowCount),
+            String(file.columns.length),
+            file.columnsSource,
+            file.columns.join("; "),
+            file.displayHeaders.join("; ")
+          ]
+        ),
         ...(includeRelated ? [[
           `relationships_${lang}.csv`, "(edges)", String(relationships.length),
           String(RELATIONSHIP_HEADER.length), "common",
-          RELATIONSHIP_HEADER.join("; ")
+          RELATIONSHIP_HEADER.join("; "), RELATIONSHIP_HEADER.join("; ")
         ]] : []),
         ["export_information.csv", "(provenance)", String(infoRows.length),
-         "2", "common", "key; value"]
+         "2", "common", "key; value", "key; value"]
       ]
     );
 
