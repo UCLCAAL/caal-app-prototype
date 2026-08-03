@@ -1677,10 +1677,9 @@ function exportRecordsGpkgSql(ctes, sfx) {
     ORDER BY export_role, record_type, caal_id`;
 }
 
-function exportRecordsKmlSql(ctes, sfx) {
-  return `${ctes}
-    , picked AS (
-      SELECT DISTINCT ON (v.caal_id_norm)
+function pickedKmlCteBody(sfx) {
+  return `
+      SELECT DISTINCT ON (v.caal_id_norm, v.record_type, v.source_schema)
         v.caal_id, v.caal_id_norm, v.record_type, v.dataset_label,
         v.display_label,
         COALESCE(v.filter_country_${sfx}, v.filter_country_en,
@@ -1705,6 +1704,7 @@ function exportRecordsKmlSql(ctes, sfx) {
                FROM jsonb_array_elements_text(v.filter_risk_levels) AS t(elem))
           ELSE v.filter_risk_levels #>> '{}'
         END                                                 AS risk_levels,
+        v.source_schema, v.source_table, v.source_row_id,
         ST_AsGeoJSON(v.geom_4326)                           AS geom_geojson,
         CASE WHEN v.centroid_4326 IS NOT NULL THEN ST_X(v.centroid_4326) END AS centroid_lon,
         CASE WHEN v.centroid_4326 IS NOT NULL THEN ST_Y(v.centroid_4326) END AS centroid_lat,
@@ -1712,10 +1712,59 @@ function exportRecordsKmlSql(ctes, sfx) {
              THEN 'selected' ELSE 'related' END AS export_role
       FROM ${VIEWER_BASE_MV} v
       JOIN export_set es ON es.caal_id_norm = v.caal_id_norm
-      ORDER BY v.caal_id_norm, v.record_type
-    )
+      ORDER BY v.caal_id_norm, v.record_type, v.source_schema, v.source_row_id
+  `;
+}
+
+function exportRecordsKmlSql(ctes, sfx) {
+  return `${ctes}
+    , picked AS (${pickedKmlCteBody(sfx)})
     SELECT * FROM picked
     ORDER BY export_role, record_type, caal_id`;
+}
+
+
+/**
+ * Map of export column name -> localised label for one record type.
+ *
+ * Label views are keyed on the SOURCE column name ("Primary Name"), so
+ * the spec's `raw` is the join key. Labels carry real newlines — they
+ * are two-line form labels in the app UI — so whitespace is collapsed.
+ *
+ * Falls back to a prettified export name for anything unmatched, which
+ * means a record type with no label view still reads sensibly.
+ */
+async function loadColumnLabels(pool, recordType, lang) {
+  const spec = EXPORT_SPECS[recordType];
+  const keys = labelKeysForRecordType(recordType);
+  const labels = new Map();
+ 
+  let rows = [];
+  if (spec && spec.labelView) {
+    const sfx = EXPORT_LANG_SUFFIXES[lang] || "en";
+    try {
+      rows = (await pool.query(
+        `SELECT label_name,
+                COALESCE(display_${sfx}, display_en, label_name) AS label
+         FROM ${spec.labelView}`
+      )).rows;
+    } catch (err) {
+      console.warn(
+        `[viewer/export] labels ${recordType}: ${err.message} — ` +
+        `falling back to prettified names`
+      );
+    }
+  }
+ 
+  const byName = new Map();
+  for (const r of rows) {
+    byName.set(r.label_name, String(r.label || "").replace(/\s+/g, " ").trim());
+  }
+ 
+  for (const { column, labelKey } of keys) {
+    labels.set(column, byName.get(labelKey) || prettifyExportName(column));
+  }
+  return labels;
 }
 
 // ---------- Route ----------
@@ -1915,6 +1964,55 @@ router.get("/export", async (req, res) => {
         ? (await pool.query(exportRelationshipsSql(ctes, sfx), values)).rows
         : [];
  
+      // Unlike CSV and GPKG, KML keeps ONE flat list of records — buildKml
+      // groups them into folders itself. So rather than building separate
+      // layers, run each spec query and merge its columns onto the rows
+      // already fetched, keyed on caal_id_norm. descriptionHtml then reads
+      // spec.kmlFields to decide what goes in the balloon.
+      const kmlCommonCols = commonFields("kml");
+      const recordTypesPresent = [...new Set(
+        recordRows.map(r => r.record_type).filter(Boolean)
+      )].sort();
+
+      for (const recordType of recordTypesPresent) {
+        if (!EXPORT_SPECS[recordType]) continue;
+        try {
+          const typeQuery = exportTypeRecordsSql({
+            ctes,
+            pickedSql: pickedKmlCteBody(sfx),
+            recordType,
+            lang,
+            commonCols: kmlCommonCols,
+            format: "kml"
+          });
+          const typeRows = (await pool.query(typeQuery.sql, values)).rows;
+
+          const byKey = new Map();
+          for (const row of typeRows) byKey.set(row.caal_id_norm, row);
+
+          let merged = 0;
+          for (const row of recordRows) {
+            if (row.record_type !== recordType) continue;
+            const extra = byKey.get(row.caal_id_norm);
+            if (!extra) continue;
+            for (const col of typeQuery.columns) {
+              if (row[col] === undefined) row[col] = extra[col];
+            }
+            merged += 1;
+          }
+
+          console.log(
+            `[viewer/export] kml ${recordType}: enriched ${merged} of ` +
+            `${typeRows.length} rows with ${typeQuery.columns.length} columns`
+          );
+        } catch (err) {
+          console.warn(
+            `[viewer/export] kml ${recordType}: spec query failed, ` +
+            `placemarks keep the common description — ${err.message}`
+          );
+        }
+      }
+
       // Recompute mode with the same rule the estimate used, honouring centroidsOnly.
       const membership = Number(est.membership_count || 0);
       const relationFolders = Number(est.relation_folder_count || 0);

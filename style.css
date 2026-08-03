@@ -3804,9 +3804,21 @@ svg {
   margin-top: 0.75rem;
 }
 
-.map-options-section label,
-.map-options-section-title {
+.map-options-section {
+  display: grid;
+  gap: 0.35rem;
+  margin-top: 0.75rem;
+}
+
+.map-options-section-title,
+.map-options-section > label[for] {
   font-weight: 700;
+  font-size: 0.86rem;
+}
+
+.map-options-section .map-options-check,
+.map-options-section .browse-checkbox {
+  font-weight: 400;
   font-size: 0.86rem;
 }
 
@@ -3821,7 +3833,7 @@ svg {
   display: flex;
   align-items: center;
   gap: 0.45rem;
-  font-weight: 500;
+  font-weight: 400;
 }
 
 .map-options-check.is-disabled {
@@ -6074,14 +6086,26 @@ Popup preview */
   outline: none !important;
 }
 
-.maplibregl-ctrl-top-right .maplibregl-ctrl.map-custom-control button.map-icon-toggle.is-active,
-.maplibregl-ctrl-top-right .maplibregl-ctrl.map-custom-control button.map-icon-toggle.is-active:hover,
-.maplibregl-ctrl-top-right .maplibregl-ctrl.map-custom-control button.map-icon-toggle.is-active:focus {
-  background: #ffffff !important;
-  color: #111827 !important;
+.maplibregl-ctrl-top-right
+.maplibregl-ctrl.map-custom-control
+button.map-icon-toggle.is-active,
+.maplibregl-ctrl-top-right
+.maplibregl-ctrl.map-custom-control
+button.map-icon-toggle.is-active:hover,
+.maplibregl-ctrl-top-right
+.maplibregl-ctrl.map-custom-control
+button.map-icon-toggle.is-active:focus,
+.maplibregl-ctrl-top-right
+.maplibregl-ctrl.map-custom-control
+button.map-icon-toggle.is-active:focus-visible {
+  background: var(--accent-soft) !important;
+  color: var(--accent) !important;
+
   box-shadow:
-    0 0 0 2px rgba(15, 59, 111, 0.45),
+    0 0 0 2px var(--accent),
     0 1px 5px rgba(0, 0, 0, 0.28) !important;
+
+  outline: none !important;
 }
 
 .maplibregl-ctrl-top-right .maplibregl-ctrl.map-custom-control svg {

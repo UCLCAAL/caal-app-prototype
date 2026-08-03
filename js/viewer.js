@@ -2509,7 +2509,7 @@ function zoomViewerToBoundaryFeature(
 }
 
 function showViewerReferencePopup(feature, lngLat) {
-  if (viewerMapInteractionToolIsActive()) {
+  if (viewerReferencePopupInteractionIsBlocked()) {
     return;
   }
 
@@ -2752,12 +2752,13 @@ function bindViewerReferenceLayerPopups() {
     if (!viewerMap.getLayer(layerId)) return;
 
     viewerMap.on("mouseenter", layerId, () => {
-      if (viewerMapInteractionToolIsActive()) {
+      if (viewerReferencePopupInteractionIsBlocked()) {
         updateViewerMapToolCursor();
         return;
       }
 
-      viewerMap.getCanvas().style.cursor = "pointer";
+      viewerMap.getCanvas().style.cursor =
+        "pointer";
     });
 
     viewerMap.on("mouseleave", layerId, () => {
@@ -2765,12 +2766,15 @@ function bindViewerReferenceLayerPopups() {
     });
 
     viewerMap.on("click", layerId, (event) => {
-      if (viewerMapInteractionToolIsActive()) {
+      if (viewerReferencePopupInteractionIsBlocked()) {
         return;
       }
 
       const feature = event.features?.[0];
-      if (!feature) return;
+
+      if (!feature) {
+        return;
+      }
 
       showViewerReferencePopup(
         feature,
@@ -8238,6 +8242,7 @@ function initViewerMap() {
     viewerMapLoaded = true;
 
     initialiseViewerSpatialDraw();
+    updateViewerMapToolCursor();
     ensureViewerMeasurementLayers();
     bindViewerMeasurementMapEvents();
     bindViewerSpatialRectangleEvents();
@@ -12037,7 +12042,6 @@ function addViewerLocateControl() {
 }
 
 // MEASUREMENT TOOL FUNCTIONS
-
 function toggleViewerMeasurementPanel() {
   if (!viewerMeasurementPanel) return;
 
@@ -12053,6 +12057,15 @@ function toggleViewerMeasurementPanel() {
     closeViewerLocatePanel();
   }
 
+  if (
+    mapOptionsPanel &&
+    !mapOptionsPanel.hidden
+  ) {
+    closeMapOptionsPanel();
+  }
+
+  closeViewerMapPopupsForTool();
+
   viewerMeasurementPanel.hidden = false;
 
   viewerMeasurementControlBtn?.classList.add(
@@ -12065,8 +12078,18 @@ function toggleViewerMeasurementPanel() {
   );
 }
 
-function closeViewerMeasurementPanel() {
-  clearViewerMeasurement();
+function closeViewerMeasurementPanel({
+  clearMeasurement = true
+} = {}) {
+  if (clearMeasurement) {
+    clearViewerMeasurement();
+  } else {
+    viewerMeasurementIsActive = false;
+
+    updateViewerMapToolCursor();
+    updateViewerMeasurementButtons();
+    updateViewerMeasurementResult();
+  }
 
   if (viewerMeasurementPanel) {
     viewerMeasurementPanel.hidden = true;
@@ -12898,24 +12921,87 @@ function viewerMapInteractionToolIsActive() {
   );
 }
 
+function viewerReferencePopupInteractionIsBlocked() {
+  const measurementPanelIsInUse =
+    viewerMeasurementPanel &&
+    !viewerMeasurementPanel.hidden &&
+    viewerMeasurementMode !== null;
+
+  return (
+    viewerMapInteractionToolIsActive() ||
+    measurementPanelIsInUse
+  );
+}
+
 function updateViewerMapToolCursor() {
+  const toolIsActive =
+    viewerMapInteractionToolIsActive();
+
   mapElement?.classList.toggle(
     "is-map-tool-active",
-    viewerMapInteractionToolIsActive()
+    toolIsActive
   );
 
   if (!viewerMap) return;
 
   viewerMap.getCanvas().style.cursor =
-    viewerMapInteractionToolIsActive()
+    toolIsActive
       ? "crosshair"
       : "";
+
+  /*
+    Preserve normal map double-click zoom when the map is
+    not being used to draw or measure.
+  */
+  if (toolIsActive) {
+    viewerMap.doubleClickZoom?.disable?.();
+  } else {
+    viewerMap.doubleClickZoom?.enable?.();
+  }
 }
 
 function closeViewerMapPopupsForTool() {
   if (viewerPopup) {
     viewerPopup.remove();
     viewerPopup = null;
+  }
+}
+
+function closeViewerMapUiForDownload() {
+  closeViewerMapPopupsForTool();
+
+  if (
+    viewerLocatePanel &&
+    !viewerLocatePanel.hidden
+  ) {
+    closeViewerLocatePanel();
+  }
+
+  if (
+    viewerMeasurementPanel &&
+    !viewerMeasurementPanel.hidden
+  ) {
+    /*
+      Hide the panel and stop active drawing, but retain
+      completed measurement geometry for map-image export.
+    */
+    closeViewerMeasurementPanel({
+      clearMeasurement: false
+    });
+  }
+
+  if (
+    mapOptionsPanel &&
+    !mapOptionsPanel.hidden
+  ) {
+    closeMapOptionsPanel();
+  }
+
+  if (
+    viewerSpatialDrawMenu &&
+    !viewerSpatialDrawMenu.hidden
+  ) {
+    setViewerSpatialDrawMenuOpen(false);
   }
 }
 
@@ -13629,8 +13715,16 @@ function addMapDownloadControl() {
       }
  
       const open = () => {
+        closeViewerMapUiForDownload();
+
         viewerExportMenuState.open = true;
         menu.classList.add("is-open");
+
+        button.classList.add("is-active");
+        button.setAttribute(
+          "aria-expanded",
+          "true"
+        );
 
         renderViewerExportMenu(menu);
 
@@ -13641,9 +13735,16 @@ function addMapDownloadControl() {
           refreshViewerExportEstimate(menu);
         }
       };
+
       const close = () => {
         viewerExportMenuState.open = false;
         menu.classList.remove("is-open");
+
+        button.classList.remove("is-active");
+        button.setAttribute(
+          "aria-expanded",
+          "false"
+        );
       };
  
       const button = createMapIconButton({
@@ -13657,6 +13758,8 @@ function addMapDownloadControl() {
           </svg>`,
         onClick: () => (viewerExportMenuState.open ? close() : open())
       });
+
+      button.setAttribute("aria-expanded", "false");
  
       container.appendChild(button);
       container.appendChild(menu);

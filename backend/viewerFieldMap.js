@@ -451,6 +451,7 @@ function langNumberedSql(alias, base, count, lang, rawPattern) {
 const EXPORT_SPECS = Object.freeze({
   monument: Object.freeze({
     source: "ui.mv_monuments_caal",
+    labelView: "ui.v_label_monuments",
     alias: "m",
     keyColumn: "id",
     geometryColumn: "geom",
@@ -579,6 +580,7 @@ const EXPORT_SPECS = Object.freeze({
   }),
   archive: Object.freeze({
     source: "ui.mv_archive_caal_app",
+    labelView: "ui.v_label_archive",
     alias: "ar",
     keyColumn: "id",
     geometryColumn: null,          // archives carry no geometry
@@ -657,6 +659,7 @@ const EXPORT_SPECS = Object.freeze({
 
   rs3_poly: Object.freeze({
     source: "ui.v_rs3_poly_export",
+    labelView: null,   // no label view yet
     alias: "rs",
     keyColumn: "id",
     vocabArrays: Object.freeze([]),   // view resolves types itself
@@ -728,6 +731,7 @@ const EXPORT_SPECS = Object.freeze({
 
   rs3_line: Object.freeze({
     source: "ui.v_rs3_line_export",
+    labelView: null,   // no label view yet
     alias: "rs",
     keyColumn: "id",
     vocabArrays: Object.freeze([]),   // view resolves types itself
@@ -799,6 +803,7 @@ const EXPORT_SPECS = Object.freeze({
 
   rs3_group: Object.freeze({
     source: "ui.v_rs3_group_export",
+    labelView: null,   // no label view yet
     alias: "rs",
     keyColumn: "id",
     vocabArrays: Object.freeze([]),
@@ -824,6 +829,50 @@ const EXPORT_SPECS = Object.freeze({
     ])
   })
 });
+
+
+/**
+ * The key each export column looks its label up by.
+ * `labelKey` wins where a column has no source column of its own —
+ * the vocabulary arrays and anything the view composes.
+ */
+function labelKeyFor(col) {
+  return col.labelKey || col.raw || col.export;
+}
+ 
+/** snake_case -> Sentence case, for columns with no label row. */
+function prettifyExportName(name) {
+  const s = String(name || "").replace(/_/g, " ").trim();
+  return s ? s.charAt(0).toUpperCase() + s.slice(1) : name;
+}
+ 
+/**
+ * Ordered [{ column, labelKey }] for a record type, so the caller can
+ * resolve labels without re-deriving the column list.
+ * Vocabulary-array columns are included with composed keys.
+ */
+function labelKeysForRecordType(recordType) {
+  const spec = EXPORT_SPECS[recordType];
+  if (!spec) return [];
+  const out = spec.columns.map(c => ({ column: c.export, labelKey: labelKeyFor(c) }));
+  for (const v of spec.vocabArrays || []) {
+    const source = VOCAB_SOURCES[v.vocab];
+    out.push({ column: v.exportPrefix, labelKey: v.labelKey || v.exportPrefix });
+    if (source) {
+      out.push({
+        column: `${v.exportPrefix}${source.idColumnSuffix}`,
+        labelKey: `${v.exportPrefix}${source.idColumnSuffix}`
+      });
+      if (source.hasDates) {
+        out.push({ column: `${v.exportPrefix}_date_from`,
+                   labelKey: `${v.exportPrefix}_date_from` });
+        out.push({ column: `${v.exportPrefix}_date_to`,
+                   labelKey: `${v.exportPrefix}_date_to` });
+      }
+    }
+  }
+  return out;
+}
 
 /**
  * SQL for one record type's export file, reusing the existing CTEs so the
@@ -854,9 +903,14 @@ function exportTypeRecordsSql({
     viewerGeoPackage.js — they are deliberately NOT in `columns`, so they
     never become attribute columns in the output file.
   */
-  const geometrySelect = format === "gpkg"
-    ? `,\n       p."geom_wkb", p."min_x", p."min_y", p."max_x", p."max_y"`
-    : "";
+  const passthroughSelect =
+    format === "gpkg"
+      ? `,\n       p."geom_wkb", p."min_x", p."min_y", p."max_x", p."max_y"`
+      : format === "kml"
+        // caal_id_norm is the key the KML route merges these rows onto the
+        // already-fetched placemark rows with.
+        ? `,\n       p."caal_id_norm"`
+        : "";
 
   return {
     sql: `${ctes}
@@ -864,7 +918,7 @@ function exportTypeRecordsSql({
     SELECT
        ${commonSelect(leading)},
        ${selectSql},
-       ${commonSelect(trailing)}${geometrySelect}
+       ${commonSelect(trailing)}${passthroughSelect}
     FROM picked p
     LEFT JOIN ${spec.source} ${alias}
       ON ${alias}."${spec.keyColumn}"::text = p.source_row_id::text

@@ -40,6 +40,21 @@ function xmlEscape(value) {
     .replace(/"/g, "&quot;").replace(/'/g, "&apos;");
 }
 
+/**
+ * Folder names in Google Earth's sidebar are truncated to roughly the
+ * panel width, so leading with the CAAL ID keeps them scannable and
+ * sortable. display_label on RS records is free-text interpretation and
+ * frequently runs to hundreds of characters.
+ */
+function folderTitle(row, max = 60) {
+  const id = (row.caal_id || "").trim();
+  const label = (row.display_label || "").replace(/\s+/g, " ").trim();
+  if (!label || label === id) return id || "(untitled)";
+  const room = max - id.length - 3;
+  const short = label.length > room ? label.slice(0, room).trimEnd() + "…" : label;
+  return `${id} — ${short}`;
+}
+
 function cdata(value) {
   const s = value === null || value === undefined ? "" : String(value);
   return `<![CDATA[${s.replace(/]]>/g, "]]&gt;")}]]>`;
@@ -103,8 +118,10 @@ function descriptionHtml(row, relations) {
   push("Dataset", row.dataset_label);
 
   const spec = EXPORT_SPECS[row.record_type];
-  if (spec && spec.kmlFields) {
-    for (const f of spec.kmlFields) push(f.label, row[f.column]);
+      if (spec && spec.kmlFields && spec.kmlFields.length) {
+        for (const f of spec.kmlFields) {
+          push((labels && labels.get(f.column)) || f.label, row[f.column]);
+        }
   } else {
     push("Country", row.country);
     push("Monument types", row.monument_types);
@@ -123,7 +140,7 @@ function descriptionHtml(row, relations) {
 
 // ---- placemark ----
 
-function placemark(row, { centroidsOnly, styleId, relations }) {
+function placemark(row, { centroidsOnly, styleId, relations, labels }) {
   const centroid = (row.centroid_lon !== null && row.centroid_lon !== undefined)
     ? { lon: row.centroid_lon, lat: row.centroid_lat }
     : null;
@@ -136,7 +153,7 @@ function placemark(row, { centroidsOnly, styleId, relations }) {
       <Placemark>
         <name>${xmlEscape(row.display_label || row.caal_id)}</name>
         <styleUrl>#${styleId}</styleUrl>
-        <description>${descriptionHtml(row, relations)}</description>
+        <description>${descriptionHtml(row, relations, labels)}</description>
         ${geometry}
       </Placemark>`;
 }
@@ -194,7 +211,7 @@ function relationshipLine(edge, fromCentroid, toCentroid) {
  * mode             "structured" | "flat"
  * options          { centroidsOnly, relationshipLines }
  */
-function buildKml({ recordRows, relationshipRows, mode, options, meta }) {
+function buildKml({ recordRows, relationshipRows, mode, options, meta, labelsByType }) {
   const centroidsOnly = Boolean(options.centroidsOnly);
   const relationshipLines = Boolean(options.relationshipLines);
 
@@ -203,6 +220,8 @@ function buildKml({ recordRows, relationshipRows, mode, options, meta }) {
   const centroidOf = r =>
     (r && r.centroid_lon !== null && r.centroid_lon !== undefined)
       ? { lon: r.centroid_lon, lat: r.centroid_lat } : null;
+  
+  const labelsFor = r => (labelsByType && labelsByType.get(r.record_type)) || null;
 
   // relationships grouped by the selected ("from") record
   const relByFrom = new Map();
@@ -217,33 +236,60 @@ function buildKml({ recordRows, relationshipRows, mode, options, meta }) {
 
   let body = "";
 
+    // Record-type folders at the top level in both modes, so the sidebar
+  // opens as a short list of layers rather than hundreds of siblings.
+  const typeOrder = [
+    "rs3_poly", "rs3_line", "rs3_group", "monument",
+    "vernacular", "institution", "dataset", "cartography", "archive"
+  ];
+  const groupByType = rows => {
+    const map = new Map();
+    for (const r of rows) {
+      const t = r.record_type || "records";
+      if (!map.has(t)) map.set(t, []);
+      map.get(t).push(r);
+    }
+    return [...map.entries()].sort(
+      (a, b) => (typeOrder.indexOf(a[0]) + 1 || 99) - (typeOrder.indexOf(b[0]) + 1 || 99)
+    );
+  };
+  // dataset_label is the human name already on every row ("RS3 Line").
+  const typeName = (type, rows) => rows[0]?.dataset_label || type;
+ 
   if (mode === "structured") {
-    for (const rec of selected) {
-      const rels = relByFrom.get((rec.caal_id || "").toLowerCase().trim()) || [];
-      const relatedMarks = rels
-        .map(e => byId.get((e.to_caal_id || "").toLowerCase().trim()))
-        .filter(Boolean)
-        .map(rr => placemark(rr, { centroidsOnly, styleId: "related", relations: null }))
-        .filter(Boolean)
-        .join("");
-      const primary = placemark(rec, {
-        centroidsOnly, styleId: styleIdFor(rec.record_type), relations: rels
-      });
+    for (const [type, recs] of groupByType(selected)) {
+      let inner = "";
+      for (const rec of recs) {
+        const rels = relByFrom.get((rec.caal_id || "").toLowerCase().trim()) || [];
+        const relatedMarks = rels
+          .map(e => byId.get((e.to_caal_id || "").toLowerCase().trim()))
+          .filter(Boolean)
+          .map(rr => placemark(rr, { centroidsOnly, styleId: "related",
+                                   relations: null, labels: labelsFor(rr) }))
+          .filter(Boolean)
+          .join("");
+        const primary = placemark(rec, {
+          centroidsOnly, styleId: styleIdFor(rec.record_type),
+          relations: rels, labels: labelsFor(rec)
+        });
+        if (!primary && !relatedMarks) continue;
+        inner += `
+      <Folder>
+        <name>${xmlEscape(folderTitle(rec))}</name>
+        ${primary}${relatedMarks ? `
+        <Folder><name>Related</name>${relatedMarks}</Folder>` : ""}
+      </Folder>`;
+      }
+      if (!inner) continue;
       body += `
     <Folder>
-      <name>${xmlEscape(rec.display_label || rec.caal_id)}</name>
-      ${primary}${relatedMarks ? `
-      <Folder><name>Related</name>${relatedMarks}</Folder>` : ""}
+      <name>${xmlEscape(typeName(type, recs))} (${recs.length})</name>
+      <open>0</open>${inner}
     </Folder>`;
     }
   } else {
-    // flat: group all placemarks (selected + related) by record type
-    const byType = new Map();
-    for (const r of [...selected, ...related]) {
-      if (!byType.has(r.record_type)) byType.set(r.record_type, []);
-      byType.get(r.record_type).push(r);
-    }
-    for (const [type, rows] of byType) {
+    // flat: one folder per record type, placemarks directly inside
+    for (const [type, rows] of groupByType([...selected, ...related])) {
       const marks = rows.map(r => {
         const rels = r.export_role === "selected"
           ? (relByFrom.get((r.caal_id || "").toLowerCase().trim()) || [])
@@ -251,11 +297,15 @@ function buildKml({ recordRows, relationshipRows, mode, options, meta }) {
         return placemark(r, {
           centroidsOnly,
           styleId: r.export_role === "related" ? "related" : styleIdFor(type),
-          relations: rels
+          relations: rels, labels: labelsFor(r)
         });
       }).filter(Boolean).join("");
+      if (!marks) continue;
       body += `
-    <Folder><name>${xmlEscape(type)}</name>${marks}</Folder>`;
+    <Folder>
+      <name>${xmlEscape(typeName(type, rows))} (${rows.length})</name>
+      <open>0</open>${marks}
+    </Folder>`;
     }
   }
 

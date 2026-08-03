@@ -347,6 +347,7 @@ const MONUMENT_MEASUREMENT_POINT_LAYER_ID = "monument-measurement-points";
 let selectedAdminBoundary = null;
 let adminBoundarySummaryClickEnabled = false;
 let hoveredAdminBoundaryId = null;
+let monumentAdminBoundaryPopup = null;
 
 let nationalClusterFeatures = [];
 let nationalClusterMode = "points";
@@ -1096,6 +1097,15 @@ function toggleMapOptionsPanel() {
   }
 
   if (
+    monumentSpatialDrawMenu &&
+    !monumentSpatialDrawMenu.hidden
+  ) {
+    setMonumentSpatialDrawMenuOpen(false);
+  }
+
+  closeMonumentMapPopupsForTool();
+
+  if (
     monumentMeasurementPanel &&
     !monumentMeasurementPanel.hidden
   ) {
@@ -1249,6 +1259,12 @@ function addMapResetControl() {
 }
 
 async function downloadMonumentsMapImage() {
+  if (!map) return;
+
+  closeMonumentMapUiForDownload();
+
+  map.triggerRepaint();
+
   if (!map) return;
 
   map.triggerRepaint();
@@ -2307,23 +2323,83 @@ function monumentMapInteractionToolIsActive() {
   return monumentSpatialDrawIsActive || monumentMeasurementIsActive;
 }
 
+function monumentMeasurementPanelIsInUse() {
+  return Boolean(
+    monumentMeasurementPanel &&
+    !monumentMeasurementPanel.hidden &&
+    monumentMeasurementMode !== null
+  );
+}
+
+function monumentMapContextInteractionIsBlocked() {
+  return (
+    monumentMapInteractionToolIsActive() ||
+    monumentMeasurementPanelIsInUse()
+  );
+}
+
 function updateMonumentMapToolCursor() {
+  const toolIsActive =
+    monumentMapInteractionToolIsActive();
+
   mapElement?.classList.toggle(
     "is-map-tool-active",
-    monumentMapInteractionToolIsActive()
+    toolIsActive
   );
 
   if (!map) return;
 
   map.getCanvas().style.cursor =
-    monumentMapInteractionToolIsActive()
+    toolIsActive
       ? "crosshair"
       : "";
+
+  /*
+    Normal map behaviour: double-click zooms in.
+    Suppress it only while clicks belong to an active
+    measurement or spatial-drawing operation.
+  */
+  if (toolIsActive) {
+    map.doubleClickZoom?.disable?.();
+  } else {
+    map.doubleClickZoom?.enable?.();
+  }
+}
+
+function closeMonumentAdminBoundaryPopup() {
+  if (!monumentAdminBoundaryPopup) {
+    return;
+  }
+
+  monumentAdminBoundaryPopup.remove();
+  monumentAdminBoundaryPopup = null;
+}
+
+function clearMonumentAdminBoundaryHover() {
+  if (
+    map &&
+    hoveredAdminBoundaryId !== null &&
+    map.getSource("central-asia-borders")
+  ) {
+    map.setFeatureState(
+      {
+        source: "central-asia-borders",
+        id: hoveredAdminBoundaryId
+      },
+      {
+        hover: false
+      }
+    );
+  }
+
+  hoveredAdminBoundaryId = null;
 }
 
 function closeMonumentMapPopupsForTool() {
   clearActiveMonumentHoverPopup();
   closeMonumentClickPopup();
+  closeMonumentAdminBoundaryPopup();
+  clearMonumentAdminBoundaryHover();
 }
 
 function showMonumentMapToolMessage(key, fallback) {
@@ -2816,16 +2892,10 @@ async function clearMonumentSpatialPolygonFilter({
 function toggleMonumentMeasurementPanel() {
   if (!monumentMeasurementPanel) return;
 
-  /*
-    Clicking the ruler while the panel is open
-    means close the tool completely.
-  */
   if (!monumentMeasurementPanel.hidden) {
     closeMonumentMeasurementPanel();
     return;
   }
-
-  monumentMeasurementPanel.hidden = false;
 
   if (
     monumentLocatePanel &&
@@ -2841,31 +2911,91 @@ function toggleMonumentMeasurementPanel() {
     closeMapOptionsPanel();
   }
 
-  monumentMeasurementControlBtn?.classList.add(
-    "is-active"
-  );
+  if (
+    monumentSpatialDrawMenu &&
+    !monumentSpatialDrawMenu.hidden
+  ) {
+    setMonumentSpatialDrawMenuOpen(
+      false
+    );
+  }
 
-  monumentMeasurementControlBtn?.setAttribute(
-    "aria-expanded",
-    "true"
-  );
+  closeMonumentMapPopupsForTool();
+
+  monumentMeasurementPanel.hidden =
+    false;
+
+  monumentMeasurementControlBtn
+    ?.classList.add(
+      "is-active"
+    );
+
+  monumentMeasurementControlBtn
+    ?.setAttribute(
+      "aria-expanded",
+      "true"
+    );
 }
 
-function closeMonumentMeasurementPanel() {
+function closeMonumentMeasurementPanel({
+  clearMeasurement = true
+} = {}) {
   if (monumentMeasurementPanel) {
     monumentMeasurementPanel.hidden = true;
   }
 
-  clearMonumentMeasurement();
+  if (clearMeasurement) {
+    clearMonumentMeasurement();
+  } else {
+    cancelMonumentMeasurementDrawing();
+  }
 
-  monumentMeasurementControlBtn?.classList.remove(
-    "is-active"
-  );
+  monumentMeasurementControlBtn
+    ?.classList.remove(
+      "is-active"
+    );
 
-  monumentMeasurementControlBtn?.setAttribute(
-    "aria-expanded",
-    "false"
-  );
+  monumentMeasurementControlBtn
+    ?.setAttribute(
+      "aria-expanded",
+      "false"
+    );
+}
+
+function closeMonumentMapUiForDownload() {
+  closeMonumentMapPopupsForTool();
+
+  if (
+    monumentLocatePanel &&
+    !monumentLocatePanel.hidden
+  ) {
+    closeMonumentLocatePanel();
+  }
+
+  if (
+    monumentMeasurementPanel &&
+    !monumentMeasurementPanel.hidden
+  ) {
+    closeMonumentMeasurementPanel({
+      clearMeasurement: false
+    });
+  }
+
+  if (
+    mapOptionsPanel &&
+    !mapOptionsPanel.hidden
+  ) {
+    closeMapOptionsPanel();
+  }
+
+  if (
+    monumentSpatialDrawMenu &&
+    !monumentSpatialDrawMenu.hidden
+  ) {
+    setMonumentSpatialDrawMenuOpen(
+      false
+    );
+  }
 }
 
 function addMonumentMeasurementControl() {
@@ -3128,16 +3258,29 @@ function toggleMonumentLocatePanel() {
     closeMapOptionsPanel();
   }
 
+  if (
+    monumentSpatialDrawMenu &&
+    !monumentSpatialDrawMenu.hidden
+  ) {
+    setMonumentSpatialDrawMenuOpen(
+      false
+    );
+  }
+
+  closeMonumentMapPopupsForTool();
+
   monumentLocatePanel.hidden = false;
 
-  monumentLocateControlBtn?.classList.add(
-    "is-active"
-  );
+  monumentLocateControlBtn
+    ?.classList.add(
+      "is-active"
+    );
 
-  monumentLocateControlBtn?.setAttribute(
-    "aria-expanded",
-    "true"
-  );
+  monumentLocateControlBtn
+    ?.setAttribute(
+      "aria-expanded",
+      "true"
+    );
 
   monumentLocateLongitude?.focus();
 }
@@ -3502,8 +3645,36 @@ function setMonumentSpatialDrawMenuOpen(
 function toggleMonumentSpatialDrawMenu() {
   if (!monumentSpatialDrawMenu) return;
 
+  const willOpen =
+    monumentSpatialDrawMenu.hidden;
+
+  if (willOpen) {
+    if (
+      monumentMeasurementPanel &&
+      !monumentMeasurementPanel.hidden
+    ) {
+      closeMonumentMeasurementPanel();
+    }
+
+    if (
+      monumentLocatePanel &&
+      !monumentLocatePanel.hidden
+    ) {
+      closeMonumentLocatePanel();
+    }
+
+    if (
+      mapOptionsPanel &&
+      !mapOptionsPanel.hidden
+    ) {
+      closeMapOptionsPanel();
+    }
+
+    closeMonumentMapPopupsForTool();
+  }
+
   setMonumentSpatialDrawMenuOpen(
-    monumentSpatialDrawMenu.hidden
+    willOpen
   );
 }
 
@@ -10768,67 +10939,105 @@ function bringMonumentOverlaysToFront() {
 }
 
 function bindAdminBoundaryLayerEvents() {
-  if (!map || map.__adminBoundaryEventsBound) return;
+  if (
+    !map ||
+    map.__adminBoundaryEventsBound
+  ) {
+    return;
+  }
 
   map.__adminBoundaryEventsBound = true;
 
-  map.on("click", "central-asia-borders-fill", (event) => {
-    if (monumentMapInteractionToolIsActive()) return;
+  map.on(
+    "click",
+    "central-asia-borders-fill",
+    (event) => {
+      if (
+        monumentMapContextInteractionIsBlocked()
+      ) {
+        return;
+      }
 
-    const feature = event.features?.[0];
-    if (!feature) return;
+      const feature =
+        event.features?.[0];
 
-    openAdminBoundaryMiniPopup(feature, event.lngLat);
-  });
+      if (!feature) {
+        return;
+      }
 
-  map.on("mousemove", "central-asia-borders-fill", (event) => {
-    if (monumentMapInteractionToolIsActive()) {
+      openAdminBoundaryMiniPopup(
+        feature,
+        event.lngLat
+      );
+    }
+  );
+
+  map.on(
+    "mousemove",
+    "central-asia-borders-fill",
+    (event) => {
+      if (
+        monumentMapContextInteractionIsBlocked()
+      ) {
+        clearMonumentAdminBoundaryHover();
+        updateMonumentMapToolCursor();
+        return;
+      }
+
+      const feature =
+        event.features?.[0];
+
+      if (!feature) {
+        return;
+      }
+
+      const boundaryId =
+        Number(
+          feature.id ||
+          feature.properties?.boundary_id
+        );
+
+      if (
+        !Number.isInteger(boundaryId)
+      ) {
+        return;
+      }
+
+      if (
+        hoveredAdminBoundaryId !== null &&
+        hoveredAdminBoundaryId !== boundaryId
+      ) {
+        clearMonumentAdminBoundaryHover();
+      }
+
+      hoveredAdminBoundaryId =
+        boundaryId;
+
+      map.setFeatureState(
+        {
+          source:
+            "central-asia-borders",
+          id:
+            boundaryId
+        },
+        {
+          hover: true
+        }
+      );
+
+      map.getCanvas().style.cursor =
+        "pointer";
+    }
+  );
+
+  map.on(
+    "mouseleave",
+    "central-asia-borders-fill",
+    () => {
+      clearMonumentAdminBoundaryHover();
       updateMonumentMapToolCursor();
-      return;
     }
-    const feature = event.features?.[0];
-    if (!feature) return;
-
-    const boundaryId = Number(feature.id || feature.properties?.boundary_id);
-    if (!Number.isInteger(boundaryId)) return;
-
-    if (hoveredAdminBoundaryId !== null && hoveredAdminBoundaryId !== boundaryId) {
-      map.setFeatureState(
-        {
-          source: "central-asia-borders",
-          id: hoveredAdminBoundaryId
-        },
-        { hover: false }
-      );
-    }
-
-    hoveredAdminBoundaryId = boundaryId;
-
-    map.setFeatureState(
-      {
-        source: "central-asia-borders",
-        id: boundaryId
-      },
-      { hover: true }
-    );
-
-    map.getCanvas().style.cursor = "pointer";
-  });
-
-  map.on("mouseleave", "central-asia-borders-fill", () => {
-    if (hoveredAdminBoundaryId !== null) {
-      map.setFeatureState(
-        {
-          source: "central-asia-borders",
-          id: hoveredAdminBoundaryId
-        },
-        { hover: false }
-      );
-    }
-
-    hoveredAdminBoundaryId = null;
-    updateMonumentMapToolCursor();
-  });
+  );
 }
 
 async function fetchAdminBoundarySummary(boundaryId) {
@@ -10853,7 +11062,15 @@ async function fetchAdminBoundarySummary(boundaryId) {
 }
 
 function openAdminBoundaryMiniPopup(feature, lngLat) {
-  if (!map || !feature) return;
+  if (
+    !map ||
+    !feature ||
+    monumentMapContextInteractionIsBlocked()
+  ) {
+    return;
+  }
+
+  closeMonumentMapPopupsForTool();
 
   const props = feature.properties || {};
   const boundaryId = Number(props.boundary_id);
@@ -10926,6 +11143,16 @@ function openAdminBoundaryMiniPopup(feature, lngLat) {
     .setLngLat(lngLat)
     .setHTML(html)
     .addTo(map);
+
+  monumentAdminBoundaryPopup = popup;
+
+  popup.on("close", () => {
+    if (
+      monumentAdminBoundaryPopup === popup
+    ) {
+      monumentAdminBoundaryPopup = null;
+    }
+  });
 
   setTimeout(() => {
     const zoomBtn = document.getElementById(zoomPopupId);
@@ -14716,7 +14943,7 @@ function bindMonumentLayerEvents() {
           clusterLayerId,
           async (event) => {
             if (
-              monumentMapInteractionToolIsActive()
+              monumentMapContextInteractionIsBlocked()
             ) {
               updateMonumentMapToolCursor();
               return;
@@ -14834,7 +15061,7 @@ function bindMonumentLayerEvents() {
           clusterLayerId,
           () => {
             if (
-              monumentMapInteractionToolIsActive()
+              monumentMapContextInteractionIsBlocked()
             ) {
               updateMonumentMapToolCursor();
               return;
@@ -15084,7 +15311,9 @@ function bindMonumentLayerEvents() {
   }
 
   async function handleMonumentPointClick(e) {
-    if (monumentMapInteractionToolIsActive()) return;
+    if (monumentMapContextInteractionIsBlocked()) {
+      return;
+    }
 
     e?.originalEvent?.preventDefault?.();
     e?.originalEvent?.stopPropagation?.();
@@ -15110,7 +15339,9 @@ function bindMonumentLayerEvents() {
   }
 
   function handleMonumentPointHover(e) {
-    if (monumentMapInteractionToolIsActive()) {
+    if (
+      monumentMapContextInteractionIsBlocked()
+    ) {
       clearMonumentPointHover();
       updateMonumentMapToolCursor();
       return;
@@ -15279,18 +15510,24 @@ function bindMonumentLayerEvents() {
     map.on("click", layerId, handleMonumentPointClick);
 
     map.on("mouseenter", layerId, (event) => {
-      if (monumentMapInteractionToolIsActive()) {
+      if (
+        monumentMapContextInteractionIsBlocked()
+      ) {
         clearMonumentPointHover();
         updateMonumentMapToolCursor();
         return;
       }
 
-      map.getCanvas().style.cursor = "pointer";
+      map.getCanvas().style.cursor =
+        "pointer";
+
       handleMonumentPointHover(event);
     });
 
     map.on("mousemove", layerId, (event) => {
-      if (monumentMapInteractionToolIsActive()) {
+      if (
+        monumentMapContextInteractionIsBlocked()
+      ) {
         clearMonumentPointHover();
         updateMonumentMapToolCursor();
         return;
@@ -15300,8 +15537,12 @@ function bindMonumentLayerEvents() {
     });
 
     map.on("mouseleave", layerId, () => {
-      if (!monumentMapInteractionToolIsActive()) {
-        scheduleClearMonumentPointHover(800);
+      if (
+        !monumentMapContextInteractionIsBlocked()
+      ) {
+        scheduleClearMonumentPointHover(
+          800
+        );
       }
 
       updateMonumentMapToolCursor();
@@ -19323,8 +19564,15 @@ document.addEventListener("DOMContentLoaded", async () => {
     addMonumentCoordinateStatusBar();
 
     map.on("click", (event) => {
-      if (monumentMapInteractionToolIsActive()) return;
-      if (!monumentIsAddMode) return;
+      if (
+        monumentMapContextInteractionIsBlocked()
+      ) {
+        return;
+      }
+
+      if (!monumentIsAddMode) {
+        return;
+      }
 
       applyMapClickToSelectedRecord(event.lngLat);
 
@@ -19352,6 +19600,7 @@ document.addEventListener("DOMContentLoaded", async () => {
       updateAddModeUI();
 
       initialiseMonumentSpatialDraw();
+      updateMonumentMapToolCursor();
 
       ensureMonumentMeasurementLayers();
       bindMonumentMeasurementMapEvents();
