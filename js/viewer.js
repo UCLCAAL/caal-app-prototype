@@ -95,14 +95,23 @@ const mapElement = document.getElementById("map");
 const mapStatusLine = document.getElementById("mapStatusLine");
 
 let mapOptionsBtn = document.getElementById("mapOptionsBtn");
+
+let viewerMapLayersBtn = document.getElementById("viewerMapLayersBtn");
+
 let resetMapBtn = document.getElementById("resetMapBtn");
+
 let downloadMapBtn = document.getElementById("downloadMapBtn");
 
 let viewerCoordinateStatusBar = null;
 let viewerCoordinateStatusLngLat = null;
 
 const closeMapOptionsBtn = document.getElementById("closeMapOptionsBtn");
+
 const mapOptionsPanel = document.getElementById("mapOptionsPanel");
+
+const viewerMapLayersPanel = document.getElementById("viewerMapLayersPanel");
+
+const closeViewerMapLayersBtn = document.getElementById("closeViewerMapLayersBtn");
 
 const basemapSelect = document.getElementById("basemapSelect");
 
@@ -8224,7 +8233,9 @@ function initViewerMap() {
   addViewerLocateControl();
   addViewerMeasurementControl();
 
+  addViewerMapLayersControl();
   addMapOptionsControl();
+
   addViewerLegendControl();
   addViewerCoordinateStatusBar();
 
@@ -11344,6 +11355,43 @@ function svgMapOptionsIcon() {
   `;
 }
 
+function svgViewerMapLayersIcon() {
+  return `
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      width="18"
+      height="18"
+    >
+      <path
+        d="M12 3.5 3.5 8 12 12.5 20.5 8 12 3.5Z"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.7"
+        stroke-linejoin="round"
+      />
+
+      <path
+        d="M4.5 11.5 12 15.5l7.5-4"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.7"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+
+      <path
+        d="M4.5 15 12 19l7.5-4"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.7"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+    </svg>
+  `;
+}
+
 function createMapIconButton({
   id,
   title,
@@ -11406,11 +11454,16 @@ function showViewerHiddenLayerNotice(recordType) {
       class="viewer-map-layer-notice-action"
     >
       <span aria-hidden="true">
-        ${svgMapOptionsIcon()}
+        ${svgViewerMapLayersIcon()}
       </span>
 
       <span>
-        ${escapeHtml(t("map_options", "Map options"))}
+        ${escapeHtml(
+          t(
+            "map_layers",
+            "Map layers"
+          )
+        )}
       </span>
     </button>
 
@@ -11433,8 +11486,8 @@ function showViewerHiddenLayerNotice(recordType) {
   notice
     .querySelector(".viewer-map-layer-notice-action")
     ?.addEventListener("click", () => {
-      if (mapOptionsPanel?.hidden) {
-        toggleMapOptionsPanel();
+      if (viewerMapLayersPanel?.hidden) {
+        toggleViewerMapLayersPanel();
       }
 
       const label = mapInput.closest("label");
@@ -11463,6 +11516,87 @@ function showViewerHiddenLayerNotice(recordType) {
   viewerHiddenLayerNoticeTimer = window.setTimeout(() => {
     notice.remove();
   }, 8000);
+}
+
+function addViewerMapLayersControl() {
+  if (!viewerMap) {
+    return;
+  }
+
+  class ViewerMapLayersControl {
+    onAdd(mapInstance) {
+      this._map = mapInstance;
+
+      const container =
+        document.createElement("div");
+
+      container.className =
+        "maplibregl-ctrl " +
+        "map-custom-control " +
+        "viewer-map-layers-map-control";
+
+      const button =
+        createMapIconButton({
+          id: "viewerMapLayersBtn",
+
+          title: t(
+            "map_layers",
+            "Map layers"
+          ),
+
+          className:
+            "viewer-map-layers-map-toggle",
+
+          html:
+            svgViewerMapLayersIcon(),
+
+          onClick:
+            toggleViewerMapLayersPanel
+        });
+
+      button.setAttribute(
+        "aria-expanded",
+        "false"
+      );
+
+      button.setAttribute(
+        "aria-controls",
+        "viewerMapLayersPanel"
+      );
+
+      container.appendChild(
+        button
+      );
+
+      viewerMapLayersBtn =
+        button;
+
+      this._container =
+        container;
+
+      return container;
+    }
+
+    onRemove() {
+      if (
+        this._container?.parentNode
+      ) {
+        this._container
+          .parentNode
+          .removeChild(
+            this._container
+          );
+      }
+
+      viewerMapLayersBtn = null;
+      this._map = undefined;
+    }
+  }
+
+  viewerMap.addControl(
+    new ViewerMapLayersControl(),
+    "top-right"
+  );
 }
 
 function addMapOptionsControl() {
@@ -11685,6 +11819,13 @@ function toggleViewerLocatePanel() {
     !viewerMeasurementPanel.hidden
   ) {
     closeViewerMeasurementPanel();
+  }
+
+  if (
+    viewerMapLayersPanel &&
+    !viewerMapLayersPanel.hidden
+  ) {
+    closeViewerMapLayersPanel();
   }
 
   if (
@@ -12065,6 +12206,20 @@ function toggleViewerMeasurementPanel() {
   }
 
   closeViewerMapPopupsForTool();
+
+  if (
+    viewerMapLayersPanel &&
+    !viewerMapLayersPanel.hidden
+  ) {
+    closeViewerMapLayersPanel();
+  }
+
+  if (
+    mapOptionsPanel &&
+    !mapOptionsPanel.hidden
+  ) {
+    closeMapOptionsPanel();
+  }
 
   viewerMeasurementPanel.hidden = false;
 
@@ -14745,27 +14900,127 @@ function wireViewerResultsExportMenu() {
 
 // end of results export menu
 
-function toggleMapOptionsPanel() {
-  if (!mapOptionsPanel) return;
-
-  if (!mapOptionsPanel.hidden) {
-    closeMapOptionsPanel();
+function closeViewerMapLayersPanel() {
+  if (!viewerMapLayersPanel) {
     return;
   }
 
-  updateMapOptionsState();
+  viewerMapLayersPanel.hidden = true;
+
+  viewerMapLayersBtn?.classList.remove(
+    "is-active"
+  );
+
+  viewerMapLayersBtn?.setAttribute(
+    "aria-expanded",
+    "false"
+  );
+}
+
+function updateViewerMapLayersPanelState() {
+  if (
+    borderStyleOptions &&
+    showCentralAsiaBordersCheckbox
+  ) {
+    borderStyleOptions.hidden =
+      !showCentralAsiaBordersCheckbox.checked;
+  }
+
+  updateSurveyGridOptionsVisibility();
+}
+
+function toggleViewerMapLayersPanel() {
+  if (!viewerMapLayersPanel) {
+    return;
+  }
+
+  if (!viewerMapLayersPanel.hidden) {
+    closeViewerMapLayersPanel();
+    return;
+  }
+
+  if (
+    mapOptionsPanel &&
+    !mapOptionsPanel.hidden
+  ) {
+    closeMapOptionsPanel();
+  }
+
   if (
     viewerLocatePanel &&
     !viewerLocatePanel.hidden
   ) {
     closeViewerLocatePanel();
   }
+
+  if (
+    viewerMeasurementPanel &&
+    !viewerMeasurementPanel.hidden
+  ) {
+    closeViewerMeasurementPanel();
+  }
+
+  updateViewerMapLayersPanelState();
+
+  viewerMapLayersPanel.hidden = false;
+
+  viewerMapLayersBtn?.classList.add(
+    "is-active"
+  );
+
+  viewerMapLayersBtn?.setAttribute(
+    "aria-expanded",
+    "true"
+  );
+}
+
+function toggleMapOptionsPanel() {
+  if (!mapOptionsPanel) {
+    return;
+  }
+
+  if (!mapOptionsPanel.hidden) {
+    closeMapOptionsPanel();
+    return;
+  }
+
+  if (
+    viewerMapLayersPanel &&
+    !viewerMapLayersPanel.hidden
+  ) {
+    closeViewerMapLayersPanel();
+  }
+
+  if (
+    viewerLocatePanel &&
+    !viewerLocatePanel.hidden
+  ) {
+    closeViewerLocatePanel();
+  }
+
+  if (
+    viewerMeasurementPanel &&
+    !viewerMeasurementPanel.hidden
+  ) {
+    closeViewerMeasurementPanel();
+  }
+
+  updateMapOptionsState();
+
   mapOptionsPanel.hidden = false;
 
   if (mapOptionsBtn) {
-    mapOptionsBtn.classList.add("is-active");
-    mapOptionsBtn.setAttribute("aria-expanded", "true");
-    mapOptionsBtn.innerHTML = `<span aria-hidden="true">×</span>`;
+    mapOptionsBtn.classList.add(
+      "is-active"
+    );
+
+    mapOptionsBtn.setAttribute(
+      "aria-expanded",
+      "true"
+    );
+
+    mapOptionsBtn.innerHTML =
+      `<span aria-hidden="true">×</span>`;
   }
 }
 
@@ -15885,6 +16140,13 @@ function wireViewerEvents() {
 
   if (closeMapOptionsBtn) {
     closeMapOptionsBtn.addEventListener("click", closeMapOptionsPanel);
+  }
+
+  if (closeViewerMapLayersBtn) {
+    closeViewerMapLayersBtn.addEventListener(
+      "click",
+      closeViewerMapLayersPanel
+    );
   }
 
   if (showCentralAsiaBordersCheckbox) {

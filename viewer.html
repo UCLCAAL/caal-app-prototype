@@ -933,15 +933,22 @@
         </div>
 
 
-        <div class="map-options-panel" id="mapOptionsPanel" hidden>
+        <div
+          class="map-options-panel viewer-map-layers-panel"
+          id="viewerMapLayersPanel"
+          hidden
+        >
           <div class="map-options-header">
-            <strong data-i18n="map_options">Map options</strong>
+            <strong data-i18n="map_layers">
+              Map layers
+            </strong>
+
             <button
               type="button"
               class="icon-btn"
-              id="closeMapOptionsBtn"
-              aria-label="Close map options"
-              data-i18n-aria-label="close_map_options"
+              id="closeViewerMapLayersBtn"
+              aria-label="Close map layers"
+              data-i18n-aria-label="close_map_layers"
             >
               ×
             </button>
@@ -968,133 +975,285 @@
             </select>
           </div>
 
+          <!-- ==============================
+              DATA LAYERS
+              ============================== -->
           <div class="map-options-section">
-            <div class="map-options-section-title" data-i18n="viewer_layers">
-              Display Layers
+            <div
+              class="map-options-section-title"
+              data-i18n="data_layers"
+            >
+              Data layers
             </div>
 
             <label class="map-options-check viewer-map-layer-check">
-              <input type="checkbox" id="viewerMapLayerMonument" value="monument" checked />
+              <input
+                type="checkbox"
+                id="viewerMapLayerMonument"
+                value="monument"
+                checked
+              />
               <span
                 class="viewer-layer-icon-slot"
                 data-viewer-layer-icon="monument"
                 aria-hidden="true"
               ></span>
-              <span data-i18n="viewer_layer_monument">Monuments</span>
+              <span data-i18n="viewer_layer_monument">
+                Monuments
+              </span>
             </label>
 
             <label class="map-options-check viewer-map-layer-check">
-              <input type="checkbox" id="viewerMapLayerRs3Poly" value="rs3_poly" checked />
+              <input
+                type="checkbox"
+                id="viewerMapLayerRs3Poly"
+                value="rs3_poly"
+                checked
+              />
               <span
                 class="viewer-layer-icon-slot"
                 data-viewer-layer-icon="rs3_poly"
                 aria-hidden="true"
               ></span>
-              <span data-i18n="viewer_layer_rs3_poly">Polygons</span>
+              <span data-i18n="viewer_layer_rs3_poly">
+                Polygons
+              </span>
             </label>
 
             <label class="map-options-check viewer-map-layer-check">
-              <input type="checkbox" id="viewerMapLayerRs3Line" value="rs3_line" checked />
+              <input
+                type="checkbox"
+                id="viewerMapLayerRs3Line"
+                value="rs3_line"
+                checked
+              />
               <span
                 class="viewer-layer-icon-slot"
                 data-viewer-layer-icon="rs3_line"
                 aria-hidden="true"
               ></span>
-              <span data-i18n="viewer_layer_rs3_line">Lines</span>
+              <span data-i18n="viewer_layer_rs3_line">
+                Lines
+              </span>
             </label>
 
             <label class="map-options-check viewer-map-layer-check">
-              <input type="checkbox" id="viewerMapLayerRs3Group" value="rs3_group" checked />
+              <input
+                type="checkbox"
+                id="viewerMapLayerRs3Group"
+                value="rs3_group"
+                checked
+              />
               <span
                 class="viewer-layer-icon-slot"
                 data-viewer-layer-icon="rs3_group"
                 aria-hidden="true"
               ></span>
-              <span data-i18n="viewer_layer_rs3_group">Groups</span>
+              <span data-i18n="viewer_layer_rs3_group">
+                Groups
+              </span>
             </label>
 
             <label class="map-options-check viewer-map-layer-check">
-              <input type="checkbox" id="viewerMapLayerInstitution" value="institution" checked />
+              <input
+                type="checkbox"
+                id="viewerMapLayerInstitution"
+                value="institution"
+                checked
+              />
               <span
                 class="viewer-layer-icon-slot"
                 data-viewer-layer-icon="institution"
                 aria-hidden="true"
               ></span>
-              <span data-i18n="viewer_layer_institution">Institutions</span>
+              <span data-i18n="viewer_layer_institution">
+                Institutions
+              </span>
             </label>
 
             <label class="map-options-check viewer-map-layer-check">
-              <input type="checkbox" id="viewerMapLayerVernacular" value="vernacular" checked />
+              <input
+                type="checkbox"
+                id="viewerMapLayerVernacular"
+                value="vernacular"
+                checked
+              />
               <span
                 class="viewer-layer-icon-slot"
                 data-viewer-layer-icon="vernacular"
                 aria-hidden="true"
               ></span>
-              <span data-i18n="viewer_layer_vernacular">Vernacular</span>
+              <span data-i18n="viewer_layer_vernacular">
+                Vernacular
+              </span>
             </label>
 
             <label class="map-options-check viewer-map-layer-check">
-              <input type="checkbox" id="viewerMapLayerDataset" value="dataset" />
+              <input
+                type="checkbox"
+                id="viewerMapLayerDataset"
+                value="dataset"
+              />
               <span
                 class="viewer-layer-icon-slot"
                 data-viewer-layer-icon="dataset"
                 aria-hidden="true"
               ></span>
-              <span data-i18n="viewer_layer_dataset">Datasets</span>
+              <span data-i18n="viewer_layer_dataset">
+                Datasets
+              </span>
             </label>
 
             <label class="map-options-check viewer-map-layer-check">
-              <input type="checkbox" id="viewerMapLayerCartography" value="cartography" />
+              <input
+                type="checkbox"
+                id="viewerMapLayerCartography"
+                value="cartography"
+              />
               <span
                 class="viewer-layer-icon-slot"
                 data-viewer-layer-icon="cartography"
                 aria-hidden="true"
               ></span>
-              <span data-i18n="viewer_layer_cartography">Cartography</span>
+              <span data-i18n="viewer_layer_cartography">
+                Cartography
+              </span>
             </label>
           </div>
 
+          <!-- ==============================
+              CONTEXT LAYERS
+              ============================== -->
           <div class="map-options-section">
-            <div class="map-options-section-title" data-i18n="context_layers">
+            <div
+              class="map-options-section-title"
+              data-i18n="context_layers"
+            >
               Context layers
             </div>
 
-            <label class="browse-checkbox">
-              <input type="checkbox" id="viewerMapLayerSurveyGrid" value="survey_grid" />
-              <span data-i18n="viewer_layer_survey_grid">Survey grid</span>
+            <label class="map-options-check">
+              <input
+                type="checkbox"
+                id="viewerMapLayerSurveyGrid"
+                value="survey_grid"
+              />
+              <span data-i18n="viewer_layer_survey_grid">
+                Survey grid
+              </span>
             </label>
 
-            <div id="surveyGridOptions" class="map-option-nested" hidden>
-              <label class="field-label" for="surveyGridStyleMode" data-i18n="viewer_survey_grid_style">
+            <div
+              id="surveyGridOptions"
+              class="map-option-nested"
+              hidden
+            >
+              <label
+                class="field-label"
+                for="surveyGridStyleMode"
+                data-i18n="viewer_survey_grid_style"
+              >
                 Survey grid style
               </label>
 
-              <select id="surveyGridStyleMode" class="form-control">
-                <option value="neutral" data-i18n="viewer_survey_grid_style_neutral">Neutral overlay</option>
-                <option value="status" data-i18n="viewer_survey_grid_style_status">Colour by survey status</option>
-                <option value="checked" data-i18n="viewer_survey_grid_style_checked">Colour by checked status</option>
+              <select
+                id="surveyGridStyleMode"
+                class="form-control"
+              >
+                <option
+                  value="neutral"
+                  data-i18n="viewer_survey_grid_style_neutral"
+                >
+                  Neutral overlay
+                </option>
+
+                <option
+                  value="status"
+                  data-i18n="viewer_survey_grid_style_status"
+                >
+                  Colour by survey status
+                </option>
+
+                <option
+                  value="checked"
+                  data-i18n="viewer_survey_grid_style_checked"
+                >
+                  Colour by checked status
+                </option>
               </select>
             </div>
 
             <label class="map-options-check">
-              <input type="checkbox" id="showCentralAsiaBordersCheckbox" />
-              <span data-i18n="administrative_boundaries">Administrative boundaries</span>
+              <input
+                type="checkbox"
+                id="showCentralAsiaBordersCheckbox"
+              />
+              <span data-i18n="administrative_boundaries">
+                Administrative boundaries
+              </span>
             </label>
 
-            <div class="map-options-subsection" id="borderStyleOptions" hidden>
-              <p class="map-options-help" id="adminBoundariesHelp">
+            <div
+              class="map-options-subsection"
+              id="borderStyleOptions"
+              hidden
+            >
+              <p
+                class="map-options-help"
+                id="adminBoundariesHelp"
+              >
                 Click a region to filter results or view a regional summary.
               </p>
 
-              <label for="borderStyleSelect" data-i18n="border_style">
+              <label
+                for="borderStyleSelect"
+                data-i18n="border_style"
+              >
                 Border style
               </label>
-              <select id="borderStyleSelect" class="form-control">
-                <option value="subtle" data-i18n="subtle">Subtle</option>
-                <option value="dark" data-i18n="dark">Dark</option>
-                <option value="filled" data-i18n="filled" selected>Filled</option>
+
+              <select
+                id="borderStyleSelect"
+                class="form-control"
+              >
+                <option
+                  value="subtle"
+                  data-i18n="subtle"
+                >
+                  Subtle
+                </option>
+
+                <option
+                  value="dark"
+                  data-i18n="dark"
+                >
+                  Dark
+                </option>
+
+                <option
+                  value="filled"
+                  data-i18n="filled"
+                  selected
+                >
+                  Filled
+                </option>
               </select>
             </div>
+          </div>
+        </div>
+
+        <div class="map-options-panel" id="mapOptionsPanel" hidden>
+          <div class="map-options-header">
+            <strong data-i18n="map_options">Map options</strong>
+            <button
+              type="button"
+              class="icon-btn"
+              id="closeMapOptionsBtn"
+              aria-label="Close map options"
+              data-i18n-aria-label="close_map_options"
+            >
+              ×
+            </button>
           </div>
 
           <div class="map-options-section">
