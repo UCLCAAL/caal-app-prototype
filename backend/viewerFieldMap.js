@@ -833,6 +833,66 @@ const EXPORT_SPECS = Object.freeze({
       { column: 'certainty', label: 'Certainty' },
       { column: 'comments', label: 'Comments' },
     ])
+  }),
+  vernacular: Object.freeze({
+    source: "ui.v_vernacular_export",
+    alias: "vn",
+    keyColumn: "id",
+    labelView: null,                  // no label view yet
+    vocabArrays: Object.freeze([]),   // view resolves monument types itself
+
+    columns: Object.freeze([
+      { kind: "lang",  base: 'country',                  export: 'country' },
+      { kind: "plain", raw: 'Region',                    export: 'region' },
+      { kind: "plain", raw: 'Classification',            export: 'classification' },
+      { kind: "plain", raw: 'Designation',               export: 'designation' },
+      { kind: "plain", raw: 'World Heritage Site Name',  export: 'world_heritage_site_name' },
+      { kind: "plain", raw: 'Monument Passport',         export: 'monument_passport' },
+      { kind: "plain", raw: 'External Reference',        export: 'external_reference' },
+
+      { kind: "lang",  base: 'monument_types',           export: 'monument_types' },
+      { kind: "plain", raw: 'monument_types_concept_ids', export: 'monument_types_concept_ids' },
+
+      { kind: "plain", raw: 'Condition',                 export: 'condition' },
+      { kind: "plain", raw: 'Descriptive Date',          export: 'descriptive_date' },
+      { kind: "plain", raw: 'Primary Address',           export: 'primary_address' },
+
+      { kind: "plain", raw: 'Measurement Value1',        export: 'measurement_value_1' },
+      { kind: "lang",  base: 'measurement_unit_1',       export: 'measurement_unit_1' },
+      { kind: "lang",  base: 'measurement_type_1',       export: 'measurement_type_1' },
+      { kind: "plain", raw: 'Measurement Value2',        export: 'measurement_value_2' },
+      { kind: "lang",  base: 'measurement_unit_2',       export: 'measurement_unit_2' },
+      { kind: "lang",  base: 'measurement_type_2',       export: 'measurement_type_2' },
+
+      { kind: "plain", raw: 'Number of Floors',          export: 'number_of_floors' },
+      { kind: "plain", raw: 'Building Material',         export: 'building_material' },
+      { kind: "plain", raw: 'Roof Material',             export: 'roof_material' },
+      { kind: "plain", raw: 'Function',                  export: 'function' },
+      { kind: "plain", raw: 'Occupation',                export: 'occupation' },
+      { kind: "plain", raw: 'well',                      export: 'well' },
+      { kind: "plain", raw: 'Type of Open Space',        export: 'type_of_open_space' },
+      { kind: "plain", raw: 'Degree of Intervention',    export: 'degree_of_intervention' },
+      { kind: "plain", raw: 'Type of Intervention',      export: 'type_of_intervention' },
+
+      { kind: "plain", raw: 'Recorder',                  export: 'recorder' },
+      { kind: "plain", raw: 'Date of Recording',         export: 'date_of_recording' },
+      { kind: "plain", raw: 'Tstamp',                    export: 'updated_at' }
+    ]),
+
+    kmlFields: Object.freeze([
+      { column: 'monument_types',        label: 'Monument types' },
+      { column: 'classification',        label: 'Classification' },
+      { column: 'condition',             label: 'Condition' },
+      { column: 'function',              label: 'Function' },
+      { column: 'building_material',     label: 'Building material' },
+      { column: 'roof_material',         label: 'Roof material' },
+      { column: 'number_of_floors',      label: 'Number of floors' },
+      { column: 'type_of_open_space',    label: 'Open space' },
+      { column: 'degree_of_intervention', label: 'Degree of intervention' },
+      { column: 'type_of_intervention',  label: 'Type of intervention' },
+      { column: 'designation',           label: 'Designation' },
+      { column: 'primary_address',       label: 'Address' }
+    ])
   })
 });
 
