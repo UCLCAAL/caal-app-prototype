@@ -32,13 +32,19 @@ const ARCHIVE_LOOKUP_VIEWS = {
   related_subject: "ui.v_lkp_subjects",
   content_type: "ui.v_lkp_content_types",
   language: "ui.v_lkp_languages_abridged",
+
+  language_display:
+    "ui.v_lkp_langdisplay",
+
   script: "ui.v_lkp_scripts",
   writing_system: "ui.v_lkp_writing_systems",
   format: "ui.v_lkp_digital_file_formats",
   colour: "ui.v_lkp_colour",
   copyright_status: "ui.v_lkp_copyright_status",
-  size_dimensions_original_material: "ui.v_lkp_size_dimensions_original_material",
-  condition_original_material: "ui.v_lkp_condition"
+  size_dimensions_original_material:
+    "ui.v_lkp_size_dimensions_original_material",
+  condition_original_material:
+    "ui.v_lkp_condition"
 };
 
 function getLookupViewsForPage(page) {

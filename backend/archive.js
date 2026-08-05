@@ -90,6 +90,7 @@ function ownedWorkspaceArchiveSql(storage, userId) {
   return `
     SELECT
       ${archiveBrowseColumnSql("v")},
+      v."Preferred Language" AS preferred_language,
       'workspace'::text AS source_scope,
       true AS is_editable,
       'workspace'::text AS source_scope_override,
@@ -266,6 +267,7 @@ function makeArchiveBrowseScopeConfig(currentSession) {
   const workspacePublicOwnedSql = `
     SELECT
       ${archiveBrowseColumnSql("m")},
+      a."Preferred Language" AS preferred_language,
       'workspace'::text AS source_scope,
       true AS is_editable,
       'workspace'::text AS source_scope_override,
@@ -273,6 +275,8 @@ function makeArchiveBrowseScopeConfig(currentSession) {
       'public_caal'::text AS storage_scope,
       true AS is_promoted
     FROM ${ARCHIVE_CAAL_MV} m
+    LEFT JOIN ${ARCHIVE_CAAL_TABLE} a
+      ON a.id = m.id
     LEFT JOIN public.record_registry rr
       ON rr.caal_id = m."CAAL_ID"
      AND ${archiveRegistryMatchSql("rr")}
@@ -296,6 +300,7 @@ function makeArchiveBrowseScopeConfig(currentSession) {
       sql: `
         SELECT
           ${archiveBrowseColumnSql("m")},
+          a."Preferred Language" AS preferred_language,
           'national_ref'::text AS source_scope,
           ${publicEditableSql} AS is_editable,
           'national_ref'::text AS source_scope_override,
@@ -303,6 +308,8 @@ function makeArchiveBrowseScopeConfig(currentSession) {
           'public_caal'::text AS storage_scope,
           true AS is_promoted
         FROM ${ARCHIVE_CAAL_MV} m
+        LEFT JOIN ${ARCHIVE_CAAL_TABLE} a
+          ON a.id = m.id
         WHERE ${nationalWhere}
           AND COALESCE(m.created_by_app_user_id, -1) <> ${userId}
           AND ${ownPromotedExclusion}
@@ -315,6 +322,7 @@ function makeArchiveBrowseScopeConfig(currentSession) {
         `
           SELECT
             ${archiveBrowseColumnSql("m")},
+            a."Preferred Language" AS preferred_language,
             'all_caal'::text AS source_scope,
             ${allCaalEditableSql} AS is_editable,
             'all_caal'::text AS source_scope_override,
@@ -322,16 +330,22 @@ function makeArchiveBrowseScopeConfig(currentSession) {
             'public_caal'::text AS storage_scope,
             true AS is_promoted
           FROM ${ARCHIVE_CAAL_MV} m
+          LEFT JOIN ${ARCHIVE_CAAL_TABLE} a
+            ON a.id = m.id
           WHERE (
-              ${workspaceCode && workspaceCode !== "caal"
-                ? `m.workspace_code IS DISTINCT FROM '${workspaceCode.replace(/'/g, "''")}'`
-                : "true"}
+              ${
+                workspaceCode && workspaceCode !== "caal"
+                  ? `m.workspace_code IS DISTINCT FROM '${workspaceCode.replace(/'/g, "''")}'`
+                  : "true"
+              }
             )
             AND COALESCE(m.created_by_app_user_id, -1) <> ${userId}
             AND ${ownPromotedExclusion}
         `,
         allWorkspaceArchivesSql
-      ].filter(Boolean).join("\nUNION ALL\n")
+      ]
+        .filter(Boolean)
+        .join("\nUNION ALL\n")
     }
   };
 }
@@ -502,6 +516,10 @@ function buildArchiveRecord(row, lang) {
       content_type: pickLangValueWithFallback(row, "content_type", lang, ["Content Type", "content_type_en", "content_type"]),
       country: pickLangValueWithFallback(row, "country", lang, ["Country", "country_en", "country"]),
       level: pickLangValueWithFallback(row, "level", lang, ["Level", "level_en", "level"]),
+      preferred_language: firstDefined(
+        row.preferred_language,
+        row["Preferred Language"]
+      ),
       archive_recorder: firstDefined(
         row["Archive Recorder"],
         row.archive_recorder
@@ -511,7 +529,13 @@ function buildArchiveRecord(row, lang) {
         row.date_of_recording
       )
     },
-    raw: row,
+    raw: {
+      ...row,
+      "Preferred Language": firstDefined(
+        row["Preferred Language"],
+        row.preferred_language
+      )
+    },
     source: {
       scope: effectiveScope,
       storage: row.storage_scope || null,

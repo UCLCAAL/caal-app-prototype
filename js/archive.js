@@ -597,8 +597,14 @@ function archiveScopeBadgeClass(record) {
 }
 
 // lookup helper
-async function loadArchiveLookups(langOverride = null) {
-  const lang = archiveCurrentLanguageCode(langOverride);
+async function loadArchiveLookups(
+  langOverride = null
+) {
+  const lang =
+    archiveCurrentLanguageCode(
+      langOverride
+    );
+
   archiveActiveLanguage = lang;
 
   const response = await fetch(
@@ -612,10 +618,20 @@ async function loadArchiveLookups(langOverride = null) {
   const data = await response.json();
 
   if (!response.ok || !data.ok) {
-    throw new Error(data.error || "Failed to load archive lookups");
+    throw new Error(
+      data.error ||
+      "Failed to load archive lookups"
+    );
   }
 
-  archiveLookups = data.lookups || {};
+  archiveLookups =
+    data.lookups || {};
+
+  window.sharedLookups =
+    window.sharedLookups || {};
+
+  window.sharedLookups.language_display =
+    archiveLookups.language_display || [];
 }
 
 // Generic helpers
@@ -2807,6 +2823,64 @@ function archiveSyncModeVisualState() {
 
 // Record field helpers
 // --------------------------------------------------------
+function archiveRawAny(
+  record,
+  ...fieldNames
+) {
+  for (const fieldName of fieldNames) {
+    const value =
+      archiveRaw(
+        record,
+        fieldName
+      );
+
+    if (
+      value !== null &&
+      value !== undefined &&
+      value !== ""
+    ) {
+      return value;
+    }
+  }
+
+  return null;
+}
+
+function archivePreferredLanguage(record) {
+  const sources = [
+    record?.display,
+    record?.raw,
+    record?.summary,
+    record?.identity,
+    record
+  ];
+
+  const fieldNames = [
+    "Preferred Language",
+    "preferred_language"
+  ];
+
+  for (const source of sources) {
+    if (!source || typeof source !== "object") {
+      continue;
+    }
+
+    for (const fieldName of fieldNames) {
+      const value = source[fieldName];
+
+      if (
+        value !== null &&
+        value !== undefined &&
+        String(value).trim() !== ""
+      ) {
+        return value;
+      }
+    }
+  }
+
+  return null;
+}
+
 function archiveRaw(record, fieldName) {
   return record?.raw?.[fieldName] ?? null;
 }
@@ -5140,8 +5214,15 @@ function archiveRenderDisplayMode(record) {
     archiveDateOnly(s.date_of_recording)
   );
   metadataHtml += archiveRenderDetailItem(
-    t("recorded_language", "Recorded Language"),
-    displayLanguageName(archiveRaw(record, "Preferred Language"))
+    t(
+      "recorded_language",
+      "Recorded Language"
+    ),
+    displayLanguageName(
+      archivePreferredLanguage(
+        record
+      )
+    )
   );
   metadataHtml += archiveRenderDetailHtmlItem(
     archiveLabel("Resource", "DOI"),
@@ -5198,12 +5279,18 @@ function archiveRenderDisplayMode(record) {
     archiveRaw(record, "Resolution")
   ]);
 
-  const metadataHasValues = archiveSectionHasValues([
-    s.archive_recorder,
-    s.date_of_recording,
-    archiveRaw(record, "Preferred Language"),
-    archiveRaw(record, "Resource")
-  ]);
+  const metadataHasValues =
+    archiveSectionHasValues([
+      s.archive_recorder,
+      s.date_of_recording,
+      archivePreferredLanguage(
+        record
+      ),
+      archiveRaw(
+        record,
+        "Resource"
+      )
+    ]);
 
   const canEditThisRecord = canEditArchiveRecord(record);
 
@@ -5434,8 +5521,15 @@ function archiveRenderEditMode(record) {
     true
   );
   metadataHtml += archiveRenderReadOnlyItem(
-    t("recorded_language", "Recorded Language"),
-    displayLanguageName(archiveRaw(record, "Preferred Language"))
+    t(
+      "recorded_language",
+      "Recorded Language"
+    ),
+    displayLanguageName(
+      archivePreferredLanguage(
+        record
+      )
+    )
   );
   metadataHtml += archiveRenderSelect(
     "Country",
