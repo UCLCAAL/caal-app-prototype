@@ -5134,7 +5134,19 @@ function archiveRenderDisplayMode(record) {
   materialHtml += archiveRenderDetailItem(archiveLabel("Content Type", "Content Type"), s.content_type);
   materialHtml += archiveRenderDetailItem(archiveLabel("Number and Type of Original Material", "Number and Type of Original Material"), archiveRaw(record, "Number and Type of Original Material"), true);
   materialHtml += archiveRenderDetailItem(archiveLabel("Size and Dimensions of Original Material", "Size and Dimensions of Original Material"), archiveRaw(record, "Size and Dimensions of Original Material"));
-  materialHtml += archiveRenderDetailItem(archiveLabel("Condition of Original Material", "Condition of Original Material"), archiveRaw(record, "Condition of Original Material"));
+  materialHtml += archiveRenderDetailItem(
+    archiveLabel(
+      "Condition of Original Material",
+      "Condition of Original Material"
+    ),
+    archiveRenderLookupSingleValue(
+      "condition_original_material",
+      archiveRaw(
+        record,
+        "Condition of Original Material"
+      )
+    )
+  );
 
   const relatedHtml = archiveRenderResourceRelations(record);
   const relatedHasValues = getRecordRelations(record).length > 0;
@@ -5192,16 +5204,65 @@ function archiveRenderDisplayMode(record) {
     archiveRenderLookupMultiValue("language", archiveRaw(record, "Languages of Material")),
     true
   );
-  contentHtml += archiveRenderDetailItem(archiveLabel("Script of Material", "Script of Material"), archiveRaw(record, "Script of Material"));
-  contentHtml += archiveRenderDetailItem(archiveLabel("Writing System", "Writing System"), archiveRaw(record, "Writing System"));
+  contentHtml += archiveRenderDetailItem(
+    archiveLabel(
+      "Script of Material",
+      "Script of Material"
+    ),
+    archiveRenderLookupSingleValue(
+      "script",
+      archiveRaw(
+        record,
+        "Script of Material"
+      )
+    )
+  );
+
+  contentHtml += archiveRenderDetailItem(
+    archiveLabel(
+      "Writing System",
+      "Writing System"
+    ),
+    archiveRenderLookupSingleValue(
+      "writing_system",
+      archiveRaw(
+        record,
+        "Writing System"
+      )
+    )
+  );
 
   let digitalHtml = "";
   digitalHtml += archiveRenderDetailItem(archiveLabel("Digital Folder Name", "Digital Folder Name"), archiveRaw(record, "Digital Folder Name"), true);
   digitalHtml += archiveRenderDetailItem(archiveLabel("Digital Files Name", "Digital Files Name"), archiveRaw(record, "Digital Files Name"), true);
   digitalHtml += archiveRenderDetailItem(archiveLabel("Creation Date of Digital Files", "Creation Date of Digital Files"), archiveRaw(record, "Creation Date of Digital Files"));
-  digitalHtml += archiveRenderDetailItem(archiveLabel("Format of Digital Files", "Format of Digital Files"), archiveRaw(record, "Format of Digital Files"));
+  digitalHtml += archiveRenderDetailItem(
+    archiveLabel(
+      "Format of Digital Files",
+      "Format of Digital Files"
+    ),
+    archiveRenderLookupSingleValue(
+      "format",
+      archiveRaw(
+        record,
+        "Format of Digital Files"
+      )
+    )
+  );
   digitalHtml += archiveRenderDetailItem(archiveLabel("Number of Digital Files", "Number of Digital Files"), archiveRaw(record, "Number of Digital Files"));
-  digitalHtml += archiveRenderDetailItem(archiveLabel("Colour", "Colour"), archiveRaw(record, "Colour"));
+  digitalHtml += archiveRenderDetailItem(
+    archiveLabel(
+      "Colour",
+      "Colour"
+    ),
+    archiveRenderLookupSingleValue(
+      "colour",
+      archiveRaw(
+        record,
+        "Colour"
+      )
+    )
+  );
   digitalHtml += archiveRenderDetailItem(archiveLabel("Resolution", "Resolution"), archiveRaw(record, "Resolution"));
 
   let metadataHtml = "";
