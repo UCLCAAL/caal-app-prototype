@@ -10,6 +10,8 @@ document.addEventListener("DOMContentLoaded", async () => {
       .trim()
       .toLowerCase() === "caal";
 
+  homeCanAccessViewer = isCaalUser;
+
   if (fullSearchButton) {
     fullSearchButton.disabled = !isCaalUser;
     fullSearchButton.setAttribute("aria-disabled", String(!isCaalUser));
@@ -54,6 +56,7 @@ let homeGlobalSearchRecords = [];
 
 let homeGlobalSearchTotal = 0;
 let homeGlobalSearchTotalsByType = {};
+let homeCanAccessViewer = false;
 
 function homeCurrentLanguageCode() {
   return (
@@ -164,11 +167,44 @@ function homeRelatedLine(record) {
 }
 
 function homeResultUrl(record) {
-  if (typeof getRelatedRecordUrl !== "function") return null;
+  if (
+    typeof getRelatedRecordUrl !==
+    "function"
+  ) {
+    return null;
+  }
+
+  const recordType =
+    String(
+      record?.record_type || ""
+    ).trim();
+
+  /*
+    Monuments and Archive have their
+    own permitted application pages.
+  */
+  if (
+    recordType === "monument" ||
+    recordType === "archive"
+  ) {
+    return getRelatedRecordUrl(
+      record?.caal_id,
+      recordType,
+      null
+    );
+  }
+
+  /*
+    All other searchable resource
+    types open through the Viewer.
+  */
+  if (!homeCanAccessViewer) {
+    return null;
+  }
 
   return getRelatedRecordUrl(
     record?.caal_id,
-    record?.record_type,
+    recordType,
     null
   );
 }
@@ -309,16 +345,22 @@ function homeFullSearchUrlForType(recordType) {
   }
 
   if (
+    homeCanAccessViewer &&
     [
       "rs3_poly",
       "rs3_line",
       "rs3_group",
       "institution",
       "vernacular",
-      "dataset"
+      "dataset",
+      "cartography"
     ].includes(recordType)
   ) {
-    params.set("recordTypes", recordType);
+    params.set(
+      "recordTypes",
+      recordType
+    );
+
     return `viewer.html?${params.toString()}`;
   }
 
