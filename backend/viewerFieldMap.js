@@ -94,7 +94,8 @@ function splitCommonFields(fields) {
 const FORMAT_EXCLUSIONS = Object.freeze({
   csv: Object.freeze([]),
   gpkg: Object.freeze(["geometry_wkt", "geometry_truncated"]),
-  kml: Object.freeze(["geometry_wkt", "geometry_truncated"])
+  kml: Object.freeze(["geometry_wkt", "geometry_truncated"]),
+  geojson: Object.freeze(["geometry_wkt", "geometry_truncated"])
 });
 
 function orderFields(fields) {

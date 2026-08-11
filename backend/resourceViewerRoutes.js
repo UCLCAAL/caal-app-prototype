@@ -1174,7 +1174,8 @@ function emptyFeatureCollection() {
 const EXPORT_LIMITS = Object.freeze({
   csv: 60000,
   gpkg: 60000,
-  kml: 2000
+  kml: 2000,
+  geojson: 20000
 });
 
 function exportLimitFor(format) {
@@ -1556,6 +1557,7 @@ const os = require("os");
 const path = require("path");
 const { writeGeoPackage } = require("./viewerGeoPackage");
 const { buildKml } = require("./viewerKml");
+const { featureCollectionJson } = require("./viewerGeoJson");
 
 const {
   COMMON_FIELDS,
@@ -2042,10 +2044,10 @@ router.get("/export", async (req, res) => {
     `started format=${format}`
   );
 
-  if (format !== "csv" && format !== "gpkg" && format !== "kml") {
+  if (!["csv", "gpkg", "kml", "geojson"].includes(format)) {
     return res.status(400).json({
       ok: false, error: "format_not_available",
-      detail: "csv, gpkg and kml are available"
+      detail: "csv, gpkg, kml and geojson are available"
     });
   }
 
@@ -2494,6 +2496,172 @@ router.get("/export", async (req, res) => {
       res.setHeader("Content-Type", "application/vnd.google-earth.kml+xml");
       res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
       return res.send(kml);
+    }
+
+    // GeoJSON - reuses pickedKmlCteBody — it already emits geom_geojson
+    // ============================================================
+
+    if (format === "geojson") {
+      const ctes = exportCtesSql({
+        whereSql: filter.whereSql, scopesParam, includeRelated
+      });
+
+      // pickedKmlCteBody is the only picked body that emits
+      // ST_AsGeoJSON(geom_4326), which is exactly what this format needs.
+      const recordRows =
+        (await pool.query(exportRecordsKmlSql(ctes, sfx), values)).rows;
+
+      let refreshedAt = null;
+      try {
+        const cache = await pool.query(
+          `SELECT COALESCE(checked_at, refreshed_at) AS at
+           FROM ui.app_cache_status WHERE cache_key = $1`,
+          [EXPORT_BASE_CACHE_KEY]
+        );
+        refreshedAt = cache.rows[0] ? cache.rows[0].at : null;
+      } catch (e) { /* non-fatal */ }
+
+      const geoCommonCols = commonFields("geojson");
+      const byRecordType = new Map();
+      for (const row of recordRows) {
+        const t = row.record_type || "records";
+        if (!byRecordType.has(t)) byRecordType.set(t, []);
+        byRecordType.get(t).push(row);
+      }
+
+      const layerFiles = [];
+      const skippedTypes = [];
+
+      for (const [recordType, rows] of [...byRecordType.entries()]
+        .sort((a, b) => a[0].localeCompare(b[0]))) {
+
+        // Nothing in this type has geometry — archives today. A
+        // FeatureCollection of null geometries is legal but unhelpful,
+        // and several desktop tools mishandle it.
+        const hasGeometry = rows.some(
+          r => r.geom_geojson ||
+               (r.centroid_lon !== null && r.centroid_lon !== undefined)
+        );
+        if (!hasGeometry) {
+          skippedTypes.push(`${recordType} (${rows.length})`);
+          continue;
+        }
+
+        let columns = null;
+        let outRows = rows;
+        let columnsSource = "common";
+
+        if (EXPORT_SPECS[recordType]) {
+          try {
+            const typeQuery = exportTypeRecordsSql({
+              ctes,
+              pickedSql: pickedKmlCteBody(sfx),
+              recordType,
+              lang,
+              commonCols: geoCommonCols,
+              format: "geojson"
+            });
+            const t0 = Date.now();
+            outRows = (await pool.query(typeQuery.sql, values)).rows;
+            columns = typeQuery.columns;
+            columnsSource = "spec";
+            console.log(
+              `[viewer/export] geojson ${recordType}: ${outRows.length} rows, ` +
+              `${columns.length} properties in ${Date.now() - t0}ms`
+            );
+          } catch (err) {
+            console.warn(
+              `[viewer/export] geojson ${recordType}: spec query failed, ` +
+              `falling back to common columns — ${err.message}`
+            );
+            outRows = rows;
+          }
+        }
+
+        if (!columns) columns = fieldsForRecordType(recordType, "geojson");
+
+        layerFiles.push({
+          name: `${recordType}_${lang}.geojson`,
+          recordType,
+          columns,
+          rowCount: outRows.length,
+          columnsSource,
+          content: featureCollectionJson({ rows: outRows, columns })
+        });
+      }
+
+      // Localised display names for each column, from the record type's
+      // label view where one exists. Types without one fall back to
+      // prettified export names, so this is safe for RS and vernacular.
+      const labelsByType = new Map();
+      for (const f of layerFiles) {
+        labelsByType.set(
+          f.recordType,
+          await loadColumnLabels(pool, f.recordType, lang)
+        );
+      }
+
+      const infoRows = [
+        ["generated_at", new Date().toISOString()],
+        ["language", lang],
+        ["include_related", String(includeRelated)],
+        ["selected_record_count", String(selected)],
+        ["related_record_count", String(Number(est.related_record_count || 0))],
+        ["record_limit", String(exportLimitFor(format))],
+        ["data_refreshed_at",
+         refreshedAt ? new Date(refreshedAt).toISOString() : "unknown"],
+        ["coordinate_reference_system", "EPSG:4326 (WGS84 lon/lat)"],
+        ["format_note",
+         "RFC 7946 FeatureCollection per record type. Coordinates rounded to 6 decimal places (~10cm)."],
+        ["geometry_note",
+         skippedTypes.length
+           ? `Record types with no geometry are omitted from this bundle: ${skippedTypes.join(", ")}. Use the CSV export for those.`
+           : "All exported record types carry geometry."],
+        ["column_note",
+         "Per-record-type files carry only the properties that apply to that type. A property absent from a file means the concept does not exist for that record type, not that the value is unrecorded."],
+        ["filters", req.originalUrl.split("?")[1] || ""],
+        ["source", "CAAL Viewer export"]
+      ];
+      const infoCsv = csvFile(["key", "value"], infoRows);
+
+      const contentsCsv = csvFile(
+        ["file", "record_type", "row_count", "column_count",
+         "columns_source", "columns", "column_labels"],
+        [
+          ...layerFiles.map(f => {
+            const labels = labelsByType.get(f.recordType);
+            return [
+              f.name, f.recordType, String(f.rowCount),
+              String(f.columns.length), f.columnsSource,
+              f.columns.join("; "),
+              f.columns.map(c => (labels && labels.get(c)) || c).join("; ")
+            ];
+          }),
+          ["export_information.csv", "(provenance)", String(infoRows.length),
+           "2", "common", "key; value", "key; value"]
+        ]
+      );
+
+      const stamp = new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "");
+      const filename = `caal_export_${lang}_${stamp}.zip`;
+
+      console.log(
+        `[viewer export] geojson lang=${lang} related=${includeRelated} ` +
+        `files=${layerFiles.length} records=${recordRows.length} ` +
+        `ms=${Date.now() - startedMs}`
+      );
+
+      res.setHeader("Content-Type", "application/zip");
+      res.setHeader("Content-Disposition", `attachment; filename="${filename}"`);
+
+      const zip = archiver("zip", { zlib: { level: 6 } });
+      zip.on("error", err => { throw err; });
+      zip.pipe(res);
+      zip.append(contentsCsv, { name: "contents.csv" });
+      for (const f of layerFiles) zip.append(f.content, { name: f.name });
+      zip.append(infoCsv, { name: "export_information.csv" });
+      await zip.finalize();
+      return;
     }
 
     // 2. Fetch rows (bounded by the cap, so in-memory is fine)

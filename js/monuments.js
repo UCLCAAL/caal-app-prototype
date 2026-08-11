@@ -16953,7 +16953,7 @@ function renderMonumentDisplayMode(record) {
     mRenderDetailItem(mLabel("Primary Name (English)", "Primary Name (English)"), mSummary(record, "primary_name_english"), true),
     mRenderDetailItem(mLabel("Other Names", "Other Names"), mRaw(record, "Other Names"), true),
     mRenderDetailItem(mLabel("Country", "Country"), mSummary(record, "country")),
-    mRenderDetailItem(mLabel("Region", "Region"), mSummary(record, "region")),
+    mRenderDetailItem(mLabel("Region", "Region"), mSummary(record, "region") || mRaw(record, "Region")),
     mRenderDetailItem(mLabel("Classification", "Classification"), mSummary(record, "classification")),
     mRenderDetailItem(mLabel("CAAL_ID", "CAAL_ID"), mIdentity(record, "caal_id")),
     mRenderDetailItem(mLabel("Internal Reference", "Internal Reference"), mRaw(record, "Internal Reference")),

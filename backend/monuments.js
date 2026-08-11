@@ -1052,6 +1052,7 @@ function buildMonumentRecord(row, lang, currentAppUserId = null, canEditCaal = f
       primary_name: firstDefined(row["Primary Name"], row.primary_name),
       primary_name_english: firstDefined(row["Primary Name (English)"], row.primary_name_english),
       country: pickLangValueWithFallback(row, "country", lang, ["Country"]),
+      region: firstDefined(row["Region"], row.region),
       classification: pickLangValueWithFallback(row, "classification", lang, ["Classification"]),
       designation: pickLangValueWithFallback(row, "designation", lang, ["Designation"]),
 

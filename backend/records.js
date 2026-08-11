@@ -153,12 +153,27 @@ function buildResolvedMonumentRecord(row, lang, session) {
 
       country: firstDefined(
         row.country_display,
-        pickLangValueWithFallback(row, "country", lang, ["Country"])
+        pickLangValueWithFallback(
+          row,
+          "country",
+          lang,
+          ["Country"]
+        )
+      ),
+
+      region: firstDefined(
+        row["Region"],
+        row.region
       ),
 
       classification: firstDefined(
         row.classification_display,
-        pickLangValueWithFallback(row, "classification", lang, ["Classification"])
+        pickLangValueWithFallback(
+          row,
+          "classification",
+          lang,
+          ["Classification"]
+        )
       ),
 
       designation: firstDefined(

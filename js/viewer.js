@@ -55,6 +55,14 @@ const viewerFilterDeteriorationCause = document.getElementById("viewerFilterDete
 const viewerFilterRiskType = document.getElementById("viewerFilterRiskType");
 const viewerFilterRiskMin = document.getElementById("viewerFilterRiskMin");
 let viewerLookups = {};
+
+// Full record display lookups
+// These deliberately remain separate from viewerLookups because
+// viewerLookups controls Viewer filtering, while these reproduce
+// the display behaviour of the standalone record pages.
+let viewerMonumentLookups = {};
+let viewerArchiveLookups = {};
+
 let viewerLabels = {};
 
 let viewerOverviewAbortController = null;
@@ -1359,7 +1367,12 @@ function renderViewerDescription(raw, fieldName) {
 }
 
 
-function renderViewerMeasurementsGroup(raw) {
+function renderViewerMeasurementsGroup(raw,
+  {
+    unitTransform = (value) => value,
+    typeTransform = (value) => value
+  } = {}
+) {
   const rows = [];
 
   for (let i = 1; i <= VIEWER_REPEATABLE_MAX; i += 1) {
@@ -1398,12 +1411,12 @@ function renderViewerMeasurementsGroup(raw) {
 
             <div class="measurement-field">
               <span class="detail-label">${escapeHtml(t("unit", "Unit"))}</span>
-              <div class="detail-value">${viewerSafeDisplayValue(row.unit)}</div>
+              <div class="detail-value">${viewerSafeDisplayValue(unitTransform(row.unit))}</div>
             </div>
 
             <div class="measurement-field">
               <span class="detail-label">${escapeHtml(t("type", "Type"))}</span>
-              <div class="detail-value">${viewerSafeDisplayValue(row.type)}</div>
+              <div class="detail-value">${viewerSafeDisplayValue(typeTransform(row.type))}</div>
             </div>
           </div>
         </div>
@@ -3119,6 +3132,45 @@ function viewerTranslatedFieldValue(record, fieldName, rawValue = null) {
     }
   }
 
+  if (
+    record?.identity?.record_type ===
+    "monument"
+  ) {
+    const monumentLookupByField = {
+      Country: "country",
+      Classification: "classification",
+      Designation: "designation",
+      "Location Confidence":
+        "location_confidence"
+    };
+
+    const lookupName =
+      monumentLookupByField[fieldName];
+
+    if (lookupName) {
+      return viewerLookupLabel(
+        viewerMonumentLookups,
+        lookupName,
+        rawValue
+      );
+    }
+
+    if (
+      fieldName === "Preferred Language"
+    ) {
+      return viewerLanguageDisplayName(
+        rawValue
+      );
+    }
+
+    if (
+      fieldName === "Date of Recording" ||
+      fieldName === "Tstamp"
+    ) {
+      return viewerDateOnly(rawValue);
+    }
+  }
+
   return viewerDisplayValue(fieldName, rawValue);
 }
 
@@ -4666,26 +4718,126 @@ function filterViewerAdvancedFilterTree(wrapper, query) {
   });
 }
 
+async function loadOptionalViewerRecordLookups(
+  url,
+  recordTypeLabel
+) {
+  try {
+    const response = await fetch(
+      url,
+      {
+        method: "GET",
+        credentials: "include"
+      }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok || !data.ok) {
+      throw new Error(
+        data.error ||
+        `Failed to load ${recordTypeLabel} lookups`
+      );
+    }
+
+    return data.lookups || {};
+  } catch (error) {
+    console.warn(
+      `Viewer ${recordTypeLabel} lookups unavailable:`,
+      error
+    );
+
+    /*
+      Record display should still work with raw values
+      if a secondary lookup endpoint is temporarily unavailable.
+    */
+    return {};
+  }
+}
+
 async function loadViewerLookups() {
   const lang =
-    (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
+    (
+      typeof window.getCurrentLanguage === "function" &&
+      window.getCurrentLanguage()
+    ) ||
     window.appSession?.profile?.preferred_language ||
     "en";
 
-  const response = await fetch(
+  /*
+    The Viewer lookup request remains mandatory because it drives
+    the actual Viewer filter controls.
+  */
+  const viewerLookupPromise = fetch(
     `/api/viewer/lookups?lang=${encodeURIComponent(lang)}`,
-    { method: "GET", credentials: "include" }
-  );
+    {
+      method: "GET",
+      credentials: "include"
+    }
+  ).then(async (response) => {
+    const data = await response.json();
 
-  const data = await response.json();
+    if (!response.ok || !data.ok) {
+      throw new Error(
+        data.error ||
+        "Failed to load viewer lookups"
+      );
+    }
 
-  if (!response.ok || !data.ok) {
-    throw new Error(data.error || "Failed to load viewer lookups");
+    return data;
+  });
+
+  /*
+    Record-type lookups are the same authoritative lookup sets used
+    by the standalone Monument and Archive pages.
+  */
+  const [
+    viewerData,
+    monumentLookups,
+    archiveLookups
+  ] = await Promise.all([
+    viewerLookupPromise,
+
+    loadOptionalViewerRecordLookups(
+      `/api/lookups/monuments?lang=${encodeURIComponent(lang)}`,
+      "monument"
+    ),
+
+    loadOptionalViewerRecordLookups(
+      `/api/lookups/archive?lang=${encodeURIComponent(lang)}`,
+      "archive"
+    )
+  ]);
+
+  viewerLookups = viewerData.lookups || {};
+
+  viewerMonumentLookups = monumentLookups || {};
+
+  viewerArchiveLookups = archiveLookups || {};
+
+  viewerFieldApplicability = viewerData.fieldApplicability ||
+    {...VIEWER_FIELD_APPLICABILITY_FALLBACK};
+
+  /* Keep existing shared language lookup available. */
+  window.sharedLookups = window.sharedLookups || {};
+
+  if (
+    Array.isArray(
+      viewerMonumentLookups.language_display
+    ) &&
+    viewerMonumentLookups.language_display.length
+  ) {
+    window.sharedLookups.language_display =
+      viewerMonumentLookups.language_display;
+  } else if (
+    Array.isArray(
+      viewerArchiveLookups.language_display
+    ) &&
+    viewerArchiveLookups.language_display.length
+  ) {
+    window.sharedLookups.language_display =
+      viewerArchiveLookups.language_display;
   }
-
-  viewerLookups = data.lookups || {};
-  viewerFieldApplicability =
-    data.fieldApplicability || { ...VIEWER_FIELD_APPLICABILITY_FALLBACK };
 }
 
 function populateViewerFilterLookups() {
@@ -6061,6 +6213,176 @@ function viewerRecordFieldValue(record, ...fieldNames) {
   return null;
 }
 
+function viewerNormaliseLookupToken(value) {
+  return String(value ?? "")
+    .trim()
+    .toLocaleLowerCase();
+}
+
+function viewerLookupItemAliases(item) {
+  const raw = item?.raw || {};
+
+  const values = [
+    item?.value,
+    item?.canonical_value,
+    item?.id,
+    item?.concept_id,
+    item?.label,
+    item?.display_label,
+    item?.chip_label,
+    item?.label_en,
+
+    item?.display_en,
+    item?.display_ru,
+    item?.display_zh,
+    item?.display_kk,
+    item?.display_ky,
+    item?.display_tg,
+    item?.display_tk,
+    item?.display_uz,
+
+    raw?.value,
+    raw?.canonical_value,
+    raw?.id,
+    raw?.concept_id,
+    raw?.label,
+    raw?.label_en,
+
+    raw?.display_en,
+    raw?.display_ru,
+    raw?.display_zh,
+    raw?.display_kk,
+    raw?.display_ky,
+    raw?.display_tg,
+    raw?.display_tk,
+    raw?.display_uz
+  ];
+
+  return new Set(
+    values
+      .map(viewerNormaliseLookupToken)
+      .filter(Boolean)
+  );
+}
+
+function viewerLookupLabel(
+  lookups,
+  lookupName,
+  value
+) {
+  if (
+    value === null ||
+    value === undefined ||
+    String(value).trim() === ""
+  ) {
+    return value;
+  }
+
+  const options =
+    Array.isArray(lookups?.[lookupName])
+      ? lookups[lookupName]
+      : [];
+
+  const token =
+    viewerNormaliseLookupToken(value);
+
+  const match =
+    options.find((item) =>
+      viewerLookupItemAliases(item).has(token)
+    );
+
+  return match
+    ? (
+        match.label ??
+        match.display_label ??
+        match.value ??
+        value
+      )
+    : value;
+}
+
+function viewerLookupListValues(value) {
+  if (!viewerHasDisplayValue(value)) {
+    return [];
+  }
+
+  if (Array.isArray(value)) {
+    return value
+      .map((item) =>
+        String(item ?? "").trim()
+      )
+      .filter(Boolean);
+  }
+
+  const text =
+    String(value).trim();
+
+  /*
+    JSON array.
+  */
+  if (
+    text.startsWith("[") &&
+    text.endsWith("]")
+  ) {
+    try {
+      const parsed =
+        JSON.parse(text);
+
+      if (Array.isArray(parsed)) {
+        return parsed
+          .map((item) =>
+            String(item ?? "").trim()
+          )
+          .filter(Boolean);
+      }
+    } catch {
+      // Fall through.
+    }
+  }
+
+  /*
+    PostgreSQL text array.
+  */
+  if (
+    text.startsWith("{") &&
+    text.endsWith("}")
+  ) {
+    return text
+      .slice(1, -1)
+      .split(",")
+      .map((item) =>
+        item
+          .trim()
+          .replace(/^"(.*)"$/, "$1")
+      )
+      .filter(Boolean);
+  }
+
+  /*
+    Normal CAAL multi-value fields.
+  */
+  return text
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function viewerLookupMultiValue(
+  lookups,
+  lookupName,
+  value
+) {
+  return viewerLookupListValues(value)
+    .map((item) =>
+      viewerLookupLabel(
+        lookups,
+        lookupName,
+        item
+      )
+    )
+    .join(", ");
+}
+
 function renderViewerDetailHtmlItem(
   label,
   htmlValue,
@@ -6167,15 +6489,34 @@ function viewerListDisplayValue(value) {
 }
 
 function viewerDateOnly(value) {
-  if (!viewerHasDisplayValue(value)) return value;
+  if (!viewerHasDisplayValue(value)) {
+    return value;
+  }
 
-  const text = String(value).trim();
+  const text =
+    String(value).trim();
 
-  if (/^\d{4}-\d{2}-\d{2}T/.test(text)) {
+  if (
+    /^\d{4}-\d{2}-\d{2}T/.test(text)
+  ) {
     return text.slice(0, 10);
   }
 
-  return value;
+  if (
+    /^\d{4}-\d{2}-\d{2}\s/.test(text)
+  ) {
+    return text.slice(0, 10);
+  }
+
+  if (
+    /^\d{1,2}\/\d{1,2}\/\d{4}\s/.test(
+      text
+    )
+  ) {
+    return text.split(/\s+/)[0];
+  }
+
+  return text;
 }
 
 function viewerLanguageDisplayName(value) {
@@ -6630,7 +6971,13 @@ function renderViewerArchiveMaterialGroup(record) {
       },
       {
         label: vLabel("Level", "Level"),
-        names: ["Level", "level"]
+        names: ["Level", "level"],
+        transform: (value) =>
+          viewerLookupLabel(
+            viewerArchiveLookups,
+            "level",
+            value
+          )
       },
       {
         label: vLabel(
@@ -6672,7 +7019,13 @@ function renderViewerArchiveMaterialGroup(record) {
         names: [
           "Content Type",
           "content_type"
-        ]
+        ],
+        transform: (value) =>
+          viewerLookupLabel(
+            viewerArchiveLookups,
+            "content_type",
+            value
+          )
       },
       {
         label: vLabel(
@@ -6703,7 +7056,13 @@ function renderViewerArchiveMaterialGroup(record) {
         names: [
           "Condition of Original Material",
           "condition_of_original_material"
-        ]
+        ],
+        transform: (value) =>
+          viewerLookupLabel(
+            viewerArchiveLookups,
+            "condition_original_material",
+            value
+          )
       }
     ]
   );
@@ -6777,7 +7136,12 @@ function renderViewerArchivePublicationGroup(record) {
           "Still under CopyrightYN",
           "still_under_copyright"
         ],
-        transform: viewerCopyrightDisplayValue
+        transform: (value) =>
+          viewerLookupLabel(
+            viewerArchiveLookups,
+            "copyright_status",
+            value
+          )
       },
       {
         label: vLabel(
@@ -6835,7 +7199,12 @@ function renderViewerArchiveContentGroup(record) {
           "Related Countries",
           "related_countries"
         ],
-        transform: viewerListDisplayValue,
+        transform: (value) =>
+          viewerLookupMultiValue(
+            viewerArchiveLookups,
+            "related_country",
+            value
+          ),
         fullWidth: true
       },
       {
@@ -6858,7 +7227,12 @@ function renderViewerArchiveContentGroup(record) {
           "Related Religions",
           "related_religions"
         ],
-        transform: viewerListDisplayValue,
+        transform: (value) =>
+          viewerLookupMultiValue(
+            viewerArchiveLookups,
+            "related_religion",
+            value
+          ),
         fullWidth: true
       },
       {
@@ -6870,7 +7244,12 @@ function renderViewerArchiveContentGroup(record) {
           "Related Subjects",
           "related_subjects"
         ],
-        transform: viewerListDisplayValue,
+        transform: (value) =>
+          viewerLookupMultiValue(
+            viewerArchiveLookups,
+            "related_subject",
+            value
+          ),
         fullWidth: true
       },
       {
@@ -6893,7 +7272,12 @@ function renderViewerArchiveContentGroup(record) {
           "Languages of Material",
           "languages_of_material"
         ],
-        transform: viewerListDisplayValue,
+        transform: (value) =>
+          viewerLookupMultiValue(
+            viewerArchiveLookups,
+            "language",
+            value
+          ),
         fullWidth: true
       },
       {
@@ -6904,7 +7288,13 @@ function renderViewerArchiveContentGroup(record) {
         names: [
           "Script of Material",
           "script_of_material"
-        ]
+        ],
+        transform: (value) =>
+          viewerLookupLabel(
+            viewerArchiveLookups,
+            "script",
+            value
+          )
       },
       {
         label: vLabel(
@@ -6914,7 +7304,13 @@ function renderViewerArchiveContentGroup(record) {
         names: [
           "Writing System",
           "writing_system"
-        ]
+        ],
+        transform: (value) =>
+          viewerLookupLabel(
+            viewerArchiveLookups,
+            "writing_system",
+            value
+          )
       }
     ]
   );
@@ -6966,7 +7362,13 @@ function renderViewerArchiveDigitalGroup(record) {
         names: [
           "Format of Digital Files",
           "format_of_digital_files"
-        ]
+        ],
+        transform: (value) =>
+          viewerLookupLabel(
+            viewerArchiveLookups,
+            "format",
+            value
+          )
       },
       {
         label: vLabel(
@@ -6980,7 +7382,13 @@ function renderViewerArchiveDigitalGroup(record) {
       },
       {
         label: vLabel("Colour", "Colour"),
-        names: ["Colour", "colour"]
+        names: ["Colour", "colour"],
+        transform: (value) =>
+          viewerLookupLabel(
+            viewerArchiveLookups,
+            "colour",
+            value
+          )
       },
       {
         label: vLabel("Resolution", "Resolution"),
@@ -7202,6 +7610,15 @@ function renderViewerDetailGroup(raw, group, record) {
 
     case "rs_risk":
       return renderViewerRiskAssessmentGroup(raw);
+
+    case "monument_main":
+      return renderViewerMonumentMainGroup(raw, record);
+
+    case "monument_administration":
+      return renderViewerMonumentAdministrationGroup(raw, record);
+
+    case "monument_measurements":
+      return renderViewerMonumentMeasurementsGroup(raw);
 
     case "archive_material":
       return renderViewerArchiveMaterialGroup(record);
@@ -7609,6 +8026,33 @@ function viewerLegacyMultiValuesFromRaw(raw, fieldBase, count) {
   return values;
 }
 
+function viewerLookupLegacyMultiValues(
+  raw,
+  fieldBase,
+  count,
+  lookups,
+  lookupName
+) {
+  return viewerLegacyMultiValuesFromRaw(
+    raw,
+    fieldBase,
+    count
+  )
+    .map((value) =>
+      viewerLookupLabel(
+        lookups,
+        lookupName,
+        value
+      )
+    )
+    .filter(
+      (value) =>
+        value !== null &&
+        value !== undefined &&
+        String(value).trim() !== ""
+    );
+}
+
 function renderViewerValueList(label, values) {
   const cleanValues = Array.isArray(values)
     ? values.map((value) => String(value || "").trim()).filter(Boolean)
@@ -7632,13 +8076,26 @@ function renderViewerValueList(label, values) {
 
 function renderViewerMonumentMainGroup(raw, record) {
   const monumentTypes =
-    Array.isArray(record?.summary?.monument_type_path) &&
+    Array.isArray(
+      record?.summary?.monument_type_path
+    ) &&
     record.summary.monument_type_path.length
       ? record.summary.monument_type_path
-      : viewerLegacyMultiValuesFromRaw(raw, "Monument Type", 6);
+      : viewerLookupLegacyMultiValues(
+          raw,
+          "Monument Type",
+          6,
+          viewerMonumentLookups,
+          "monument_type"
+        );
 
-  const religions = viewerLegacyMultiValuesFromRaw(raw, "Religion", 3);
-  const culturalPeriods = viewerLegacyMultiValuesFromRaw(raw, "Cultural Period", 6);
+  const religions = viewerLookupLegacyMultiValues(raw, "Religion", 3,
+      viewerMonumentLookups, "religion");
+
+  const culturalPeriods = viewerLookupLegacyMultiValues(raw, "Cultural Period", 6,
+      viewerMonumentLookups,
+      "cultural_period"
+    );  
 
   return `
     <div class="group-block">
@@ -7689,7 +8146,15 @@ function renderViewerMonumentAdministrationGroup(raw) {
 
             <div class="measurement-field">
               <span class="detail-label">${escapeHtml(vLabel("Type", "Type"))}</span>
-              <div class="detail-value">${viewerSafeDisplayValue(row.type)}</div>
+              <div class="detail-value">
+                ${viewerSafeDisplayValue(
+                  viewerLookupLabel(
+                    viewerMonumentLookups,
+                    "admin_subdivision_type",
+                    row.type
+                  )
+                )}
+              </div>
             </div>
           </div>
         </div>
@@ -7712,7 +8177,24 @@ function renderViewerMonumentAdministrationGroup(raw) {
 }
 
 function renderViewerMonumentMeasurementsGroup(raw) {
-  return renderViewerMeasurementsGroup(raw);
+  return renderViewerMeasurementsGroup(
+    raw,
+    {
+      unitTransform: (value) =>
+        viewerLookupLabel(
+          viewerMonumentLookups,
+          "measurement_unit",
+          value
+        ),
+
+      typeTransform: (value) =>
+        viewerLookupLabel(
+          viewerMonumentLookups,
+          "measurement_type",
+          value
+        )
+    }
+  );
 }
 
 // =====================================================================
