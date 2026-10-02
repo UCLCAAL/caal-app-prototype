@@ -164,10 +164,14 @@ function inferRecordWorkspaceCodeFromPayload(payload, currentSession) {
     return sessionWorkspaceCode;
   }
 
-  // CAAL users create into the national workspace inferred from the record.
+  // For CAAL users, infer record attribution independently of physical storage.
+  // Countries without a national mapping belong to the CAAL workspace.
   const country = String(payload["Country"] || "")
     .trim()
     .toLowerCase();
+
+  // A genuinely empty country remains invalid for CAAL record creation.
+  if (!country) return null;
 
   const countryToWorkspace = {
     kazakhstan: "kz",
@@ -187,7 +191,9 @@ function inferRecordWorkspaceCodeFromPayload(payload, currentSession) {
     "узбекистан": "uz"
   };
 
-  return countryToWorkspace[country] || null;
+  return Object.prototype.hasOwnProperty.call(countryToWorkspace, country)
+    ? countryToWorkspace[country]
+    : "caal";
 }
 
 function storageForWorkspaceCode(workspaceCode) {
@@ -232,7 +238,7 @@ function createStorageTargetForRecord(resourceType, payload, currentSession) {
   if (!recordWorkspaceCode) {
     return {
       ok: false,
-      error: "A country is required so the record can be assigned to a national workspace"
+      error: "A country is required to save the record"
     };
   }
 
@@ -255,7 +261,8 @@ function createStorageTargetForRecord(resourceType, payload, currentSession) {
 
   /*
     CAAL users write directly to public CAAL tables,
-    but the record still keeps its inferred national workspace_code.
+    while the record keeps its inferred workspace_code (or "caal" for
+    countries without a national mapping). No country value is changed.
   */
   if (isCaalUser) {
     return {
