@@ -1,3 +1,10 @@
+function quoteRestoreColumn(name) {
+  if (typeof name !== "string" || !name || name.includes("\0")) {
+    throw new Error("Invalid restore column name");
+  }
+  return '"' + name.replace(/"/g, '""') + '"';
+}
+
 const express = require("express");
 const pool = require("./db");
 const {
@@ -18,23 +25,68 @@ const {
   archiveTableForWorkspaceCode,
   storageScopeForWorkspaceCode,
   createStorageTargetForRecord,
-  enabledWorkspaceStorageConfigs
+  enabledWorkspaceStorageConfigs,
+  quoteIdent
 } = require("./workspaceStorage");
 
 const {
   getResourceRelations,
   syncResourceRelationsForArchive,
-  deactivateResourceRelationsForDeletedRecord
+  deactivateResourceRelationsForDeletedRecord,
+  reactivateResourceRelationsForRestoredRecord
 } = require("./resourceRelations");
 
 const { allocateCaalId } = require("./caalIdAllocator");
 
 const router = express.Router();
 
-function currentAppUserIdFromSession(session) {
-  const value = session?.user?.user_id ?? null;
+function parseArchiveAppUserId(value) {
+  if (typeof value !== "number" && typeof value !== "string") return null;
+  if (typeof value === "string" && !/^\d+$/.test(value.trim())) return null;
   const parsed = Number(value);
-  return Number.isInteger(parsed) ? parsed : null;
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null;
+}
+
+function currentAppUserIdFromSession(session) {
+  return parseArchiveAppUserId(session?.user?.user_id);
+}
+
+// Called only inside an explicit transaction on this same connection.
+async function setPublicArchiveAuditContext(client, currentSession, action) {
+  const installed = await client.query(`
+    SELECT 1 FROM pg_trigger
+    WHERE tgrelid = 'public."CAAL_Archive"'::regclass
+      AND tgname = 'trg_log_caal_archive_edit'
+      AND NOT tgisinternal AND tgenabled IN ('O', 'A')
+  `);
+  if (!installed.rows.length) {
+    throw new Error("Archive audit trigger is missing or disabled. Install 01-install-archive-audit.sql first.");
+  }
+  const userId = currentAppUserIdFromSession(currentSession);
+  await client.query(`
+    SELECT set_config('caal.edit_source', 'web_app', true),
+           set_config('caal.app_user_id', $1, true),
+           set_config('caal.username', $2, true),
+           set_config('caal.audit_action', $3, true),
+           set_config('caal.audit_skip', 'false', true)
+  `, [String(userId ?? ""), currentSession?.user?.username || "web_app", action]);
+}
+
+async function withPublicArchiveAuditTransaction(currentSession, action, operation) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    await setPublicArchiveAuditContext(client, currentSession, action);
+    const result = await operation(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    try { await client.query("ROLLBACK"); }
+    catch (rollbackError) { console.error("Archive audit rollback failed:", rollbackError); }
+    throw error;
+  } finally {
+    client.release();
+  }
 }
 
 function archiveRegistryMatchSql(alias = "rr") {
@@ -87,6 +139,9 @@ function ownedWorkspaceArchiveSql(storage, userId) {
   const storageScope = sqlTextLiteral(storage.storageScope);
   const sourceSchema = sqlTextLiteral(storage.schema);
 
+  const deletedColumns = ARCHIVE_BROWSE_COLUMNS.map(column =>
+    column.startsWith('"search_blob_') ? `(SELECT lower(string_agg(kv.value, ' ')) FROM jsonb_each_text(rr.deleted_record) kv WHERE kv.key NOT IN ('id', 'created_by_app_user_id', 'workspace_code', 'geom', 'Tstamp', 'workspace_assigned_at')) AS ${column}` : `v.${column}`
+  ).join(",\n");
   return `
     SELECT
       ${archiveBrowseColumnSql("v")},
@@ -104,6 +159,24 @@ function ownedWorkspaceArchiveSql(storage, userId) {
      AND rr.source_row_id = v.id
     WHERE v.created_by_app_user_id = ${userId}
       AND COALESCE(rr.status, '') <> 'deleted'
+    UNION ALL
+    SELECT ${deletedColumns},
+      v."Preferred Language" AS preferred_language,
+      'workspace'::text AS source_scope, false AS is_editable,
+      'workspace'::text AS source_scope_override, false AS is_editable_override,
+      ${storageScope}::text AS storage_scope, false AS is_promoted
+    FROM public.record_registry rr
+    CROSS JOIN LATERAL jsonb_populate_record(NULL::${archiveView},
+      rr.deleted_record || jsonb_build_object('created_by_app_user_id',
+        COALESCE(rr.created_by_app_user_id,
+          NULLIF(rr.deleted_record->>'created_by_app_user_id', '')::bigint))
+    ) v
+    WHERE rr.source_schema = ${sourceSchema} AND rr.source_table = 'CAAL_Archive'
+      AND rr.status = 'deleted' AND rr.deleted_record IS NOT NULL
+      AND v.created_by_app_user_id = ${userId}
+      AND rr.deleted_at > COALESCE(
+        (SELECT refreshed_at FROM ui.app_cache_status
+         WHERE cache_key = 'archive_caal_cache' LIMIT 1), now() - interval '2 hours')
   `;
 }
 
@@ -228,6 +301,76 @@ function archiveBrowseColumnSql(alias) {
     .join(",\n      ");
 }
 
+function archiveCurrentPublicSourceSql() {
+  const cachedColumns = ARCHIVE_BROWSE_COLUMNS.map((column) => {
+    if (['"created_by_app_user_id"', '"workspace_code"'].includes(column)) {
+      return `CASE WHEN a.id IS NOT NULL THEN a.${column} ELSE c.${column} END AS ${column}`;
+    }
+    return `c.${column}`;
+  }).join(",\n      ");
+  const deletedColumns = ARCHIVE_BROWSE_COLUMNS.map((column) =>
+    column.startsWith('"search_blob_')
+      ? `(SELECT lower(string_agg(kv.value, ' ')) FROM jsonb_each_text(rr.deleted_record) kv WHERE kv.key NOT IN ('id', 'created_by_app_user_id', 'workspace_code', 'geom', 'Tstamp', 'workspace_assigned_at')) AS ${column}`
+      : `v.${column}`
+  ).join(",\n      ");
+  return `
+    WITH threshold AS (
+      SELECT COALESCE(
+        (SELECT refreshed_at FROM ui.app_cache_status
+         WHERE cache_key = 'archive_caal_cache' LIMIT 1),
+        now() - interval '2 hours'
+      ) AS refreshed_at
+    ), changed AS MATERIALIZED (
+      -- Identify the small delta using base tables before touching the live view.
+      SELECT a.id
+      FROM ${ARCHIVE_CAAL_TABLE} a
+      CROSS JOIN threshold t
+      WHERE a."Tstamp" > t.refreshed_at
+         OR EXISTS (
+           SELECT 1 FROM public."CAAL_Archive_web_edit_log" log
+           WHERE log.caal_id = a."CAAL_ID" AND log.edited_at > t.refreshed_at
+         )
+         OR NOT EXISTS (
+           SELECT 1 FROM ${ARCHIVE_CAAL_MV} c
+           WHERE c.id = a.id AND c."CAAL_ID" = a."CAAL_ID"
+         )
+    )
+    SELECT ${cachedColumns}
+    FROM ${ARCHIVE_CAAL_MV} c
+    LEFT JOIN ${ARCHIVE_CAAL_TABLE} a ON a.id = c.id AND a."CAAL_ID" = c."CAAL_ID"
+    WHERE NOT EXISTS (SELECT 1 FROM changed x WHERE x.id = c.id)
+      AND (a.id IS NOT NULL OR EXISTS (
+        SELECT 1 FROM public.record_registry rr CROSS JOIN threshold t
+        WHERE rr.caal_id = c."CAAL_ID" AND ${archiveRegistryMatchSql("rr")}
+          AND rr.source_schema = 'public' AND rr.status = 'deleted'
+          AND rr.deleted_record IS NOT NULL AND rr.deleted_at > t.refreshed_at
+      ))
+    UNION ALL
+    SELECT ${archiveBrowseColumnSql("v")}
+    FROM changed x
+    CROSS JOIN LATERAL (
+      SELECT v.* FROM ui.v_archive_grid_base_caal_app v
+      WHERE v.id = x.id
+      OFFSET 0
+    ) v
+    UNION ALL
+    -- A record created and deleted between refreshes has no cached row.
+    SELECT ${deletedColumns}
+    FROM public.record_registry rr CROSS JOIN threshold t
+    CROSS JOIN LATERAL jsonb_populate_record(
+      NULL::ui.mv_archive_caal_app, rr.deleted_record || jsonb_build_object(
+        'created_by_app_user_id', COALESCE(rr.created_by_app_user_id,
+          NULLIF(rr.deleted_record->>'created_by_app_user_id', '')::bigint)
+      )
+    ) v
+    WHERE ${archiveRegistryMatchSql("rr")}
+      AND rr.source_schema = 'public' AND rr.status = 'deleted'
+      AND rr.deleted_record IS NOT NULL AND rr.deleted_at > t.refreshed_at
+      AND NOT EXISTS (SELECT 1 FROM ${ARCHIVE_CAAL_MV} c WHERE c."CAAL_ID" = rr.caal_id)
+      AND NOT EXISTS (SELECT 1 FROM ${ARCHIVE_CAAL_TABLE} a WHERE a."CAAL_ID" = rr.caal_id)
+  `;
+}
+
 function makeArchiveBrowseScopeConfig(currentSession) {
   const currentAppUserId = currentAppUserIdFromSession(currentSession);
   const userId = currentAppUserId ?? -1;
@@ -256,7 +399,6 @@ function makeArchiveBrowseScopeConfig(currentSession) {
       WHERE rr.caal_id = m."CAAL_ID"
         AND rr.created_by_app_user_id = ${userId}
         AND ${archiveRegistryMatchSql("rr")}
-        AND COALESCE(rr.status, '') <> 'deleted'
     )
   `;
 
@@ -274,7 +416,7 @@ function makeArchiveBrowseScopeConfig(currentSession) {
       true AS is_editable_override,
       'public_caal'::text AS storage_scope,
       true AS is_promoted
-    FROM ${ARCHIVE_CAAL_MV} m
+    FROM current_public_archive m
     LEFT JOIN ${ARCHIVE_CAAL_TABLE} a
       ON a.id = m.id
     LEFT JOIN public.record_registry rr
@@ -284,7 +426,6 @@ function makeArchiveBrowseScopeConfig(currentSession) {
         rr.created_by_app_user_id = ${userId}
         OR m.created_by_app_user_id = ${userId}
       )
-      AND COALESCE(rr.status, '') <> 'deleted'
   `;
 
   const allWorkspaceArchivesSql = "";
@@ -307,7 +448,7 @@ function makeArchiveBrowseScopeConfig(currentSession) {
           ${publicEditableSql} AS is_editable_override,
           'public_caal'::text AS storage_scope,
           true AS is_promoted
-        FROM ${ARCHIVE_CAAL_MV} m
+        FROM current_public_archive m
         LEFT JOIN ${ARCHIVE_CAAL_TABLE} a
           ON a.id = m.id
         WHERE ${nationalWhere}
@@ -329,7 +470,7 @@ function makeArchiveBrowseScopeConfig(currentSession) {
             ${allCaalEditableSql} AS is_editable_override,
             'public_caal'::text AS storage_scope,
             true AS is_promoted
-          FROM ${ARCHIVE_CAAL_MV} m
+          FROM current_public_archive m
           LEFT JOIN ${ARCHIVE_CAAL_TABLE} a
             ON a.id = m.id
           WHERE (
@@ -408,10 +549,11 @@ function getAllowedScopes(session) {
 function buildBrowseUnionSql(scopes, currentSession) {
   const config = makeArchiveBrowseScopeConfig(currentSession);
 
-  return scopes
+  const unionSql = scopes
     .filter((scope) => config[scope])
     .map((scope) => config[scope].sql)
     .join("\nUNION ALL\n");
+  return `WITH current_public_archive AS (${archiveCurrentPublicSourceSql()}) ${unionSql}`;
 }
 
 function pickLangValue(row, baseName, lang, fallbackOrder = []) {
@@ -800,48 +942,63 @@ router.get("/", async (req, res) => {
   const offsetParam = values.length;
 
   const dataSql = `
-    SELECT
-      combined.*,
-      combined."CAAL_ID" AS caal_id_normalized
-    FROM (
-      ${unionSql}
-    ) combined
-    ${whereSql}
-    ORDER BY
-      CASE COALESCE(source_scope_override, source_scope)
-        WHEN 'workspace' THEN 0
-        WHEN 'national_ref' THEN 1
-        WHEN 'all_caal' THEN 2
-        ELSE 3
-      END,
-      "Date of Recording" DESC NULLS LAST,
-      id DESC
-    LIMIT $${limitParam} OFFSET $${offsetParam}
-  `;
-
-  const countSql = `
-    SELECT COUNT(*) AS total
-    FROM (
-      ${unionSql}
-    ) combined
-    ${whereSql}
+    WITH filtered AS MATERIALIZED (
+      SELECT combined.*, combined."CAAL_ID" AS caal_id_normalized
+      FROM (${unionSql}) combined
+      ${whereSql}
+    ), page AS (
+      SELECT * FROM filtered
+      ORDER BY
+        CASE COALESCE(source_scope_override, source_scope)
+          WHEN 'workspace' THEN 0 WHEN 'national_ref' THEN 1
+          WHEN 'all_caal' THEN 2 ELSE 3 END,
+        "Date of Recording" DESC NULLS LAST, id DESC
+      LIMIT $${limitParam} OFFSET $${offsetParam}
+    )
+    SELECT (SELECT COUNT(*) FROM filtered) AS total,
+           COALESCE((SELECT jsonb_agg(to_jsonb(page) ORDER BY
+             CASE COALESCE(source_scope_override, source_scope)
+               WHEN 'workspace' THEN 0 WHEN 'national_ref' THEN 1
+               WHEN 'all_caal' THEN 2 ELSE 3 END,
+             "Date of Recording" DESC NULLS LAST, id DESC
+           ) FROM page), '[]'::jsonb) AS records
   `;
 
   try {
-    const dataValues = values;
-    const countValues = values.slice(0, values.length - 2);
+    const startedAt = Date.now();
+    const client = await pool.connect();
+    let result;
 
-    const [dataResult, countResult] = await Promise.all([
-      pool.query(dataSql, dataValues),
-      pool.query(countSql, countValues)
-    ]);
+    try {
+      await client.query("BEGIN READ ONLY");
+      await client.query("SET LOCAL jit = off");
 
-    const records = dataResult.rows.map((row) => buildArchiveRecord(row, lang));
+      result = await client.query(dataSql, values);
+
+      await client.query("COMMIT");
+    } catch (error) {
+      try {
+        await client.query("ROLLBACK");
+      } catch (rollbackError) {
+        console.error("Archive read rollback failed:", rollbackError);
+      }
+
+      throw error;
+    } finally {
+      client.release();
+    }
+
+    res.setHeader?.(
+      "Server-Timing",
+      `archive_db;dur=${Date.now() - startedAt}`
+    );
+    const page = result.rows[0] || { records: [], total: 0 };
+    const records = (page.records || []).map((row) => buildArchiveRecord(row, lang));
 
     return res.json({
       ok: true,
       records,
-      total: Number(countResult.rows[0].total),
+      total: Number(page.total),
       limit,
       offset,
       scopes
@@ -1229,50 +1386,8 @@ function classifyArchiveEdit(changedFields = []) {
   return "metadata";
 }
 
-async function logPublicCaalArchiveEdit({
-  oldRow,
-  newRow,
-  submittedFields,
-  currentSession,
-  note = null
-}) {
-  if (!oldRow || !newRow) return;
-
-  const { changedFields, oldValues, newValues } =
-    buildArchiveChangedValueSnapshots(oldRow, newRow, submittedFields);
-
-  if (changedFields.length === 0) return;
-
-  await pool.query(
-    `
-    INSERT INTO public."CAAL_Archive_web_edit_log" (
-      caal_id,
-      archive_id,
-      edited_by_app_user_id,
-      edited_by_username,
-      edit_type,
-      changed_fields,
-      old_values,
-      new_values,
-      note
-    )
-    VALUES (
-      $1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9
-    )
-    `,
-    [
-      newRow["CAAL_ID"],
-      newRow.id,
-      currentSession?.user?.user_id ?? null,
-      currentSession?.user?.username ?? null,
-      classifyArchiveEdit(changedFields),
-      changedFields,
-      JSON.stringify(oldValues),
-      JSON.stringify(newValues),
-      note
-    ]
-  );
-}
+// Public CAAL_Archive row changes are audited by trg_log_caal_archive_edit.
+// Do not add an application INSERT for the same row event.
 
 async function logWorkspaceArchiveEdit({
   oldRow,
@@ -1362,6 +1477,159 @@ function publicCaalArchiveEditWhereSql(session, tableAlias = "a", paramIndex) {
   };
 }
 
+// Non-admin scope: rows the current user created (registry creator or the row's own creator column).
+function archiveOwnRecordWhereSql(tableAlias, paramIndex) {
+  return `
+    AND (
+      ${tableAlias}.created_by_app_user_id = $${paramIndex}
+      OR EXISTS (
+        SELECT 1
+        FROM public.record_registry rr
+        WHERE rr.caal_id = ${tableAlias}."CAAL_ID"
+          AND rr.created_by_app_user_id = $${paramIndex}
+          AND ${archiveRegistryMatchSql("rr")}
+          AND COALESCE(rr.status, '') <> 'deleted'
+      )
+    )
+  `;
+}
+
+function deletedArchiveWorkspaceCode(registryRow) {
+  return String(
+    registryRow?.workspace_code ||
+    registryRow?.deleted_record?.workspace_code ||
+    (
+      registryRow?.source_schema &&
+      registryRow.source_schema !== "public"
+        ? registryRow.source_schema
+        : ""
+    )
+  )
+    .trim()
+    .toLowerCase();
+}
+
+// Same as delete: CAAL admin, national admin in their own workspace, or the creator.
+function canReinstateDeletedArchive(currentSession, registryRow) {
+  if (isCaalAdmin(currentSession)) {
+    return true;
+  }
+
+  if (!canEditArchive(currentSession) && !isNationalAdmin(currentSession)) {
+    return false;
+  }
+
+  const sessionWorkspace = getSessionWorkspaceCode(currentSession);
+  const recordWorkspace = deletedArchiveWorkspaceCode(registryRow);
+
+  if (
+    isNationalAdmin(currentSession) &&
+    sessionWorkspace &&
+    recordWorkspace &&
+    sessionWorkspace === recordWorkspace
+  ) {
+    return true;
+  }
+
+  const userId = currentAppUserIdFromSession(currentSession);
+
+  const creatorId =
+    registryRow?.created_by_app_user_id ??
+    registryRow?.deleted_record?.created_by_app_user_id ??
+    null;
+
+  return (
+    userId !== null &&
+    userId !== undefined &&
+    creatorId !== null &&
+    creatorId !== undefined &&
+    Number(userId) === parseArchiveAppUserId(creatorId)
+  );
+}
+
+function deletedArchiveSourceScope(registryRow, currentSession) {
+  const userId = currentAppUserIdFromSession(currentSession);
+
+  const creatorId =
+    registryRow?.created_by_app_user_id ??
+    registryRow?.deleted_record?.created_by_app_user_id ??
+    null;
+
+  if (
+    userId !== null &&
+    creatorId !== null &&
+    Number(userId) === parseArchiveAppUserId(creatorId)
+  ) {
+    return "workspace";
+  }
+
+  const sessionWorkspace = getSessionWorkspaceCode(currentSession);
+  const recordWorkspace = deletedArchiveWorkspaceCode(registryRow);
+
+  if (
+    sessionWorkspace &&
+    sessionWorkspace !== "caal" &&
+    recordWorkspace === sessionWorkspace
+  ) {
+    return "national_ref";
+  }
+
+  return "all_caal";
+}
+
+function deletedArchiveStorageScope(registryRow) {
+  const stored = String(registryRow?.storage_scope || "").trim();
+
+  if (stored) return stored;
+
+  const schema = String(registryRow?.source_schema || "").trim();
+
+  if (schema === "public") return "public_caal";
+
+  return schema ? `${schema}_workspace` : null;
+}
+
+function buildDeletedArchiveRecord(registryRow, lang, currentSession) {
+  const raw = { ...(registryRow?.deleted_record || {}) };
+
+  const sourceScope = deletedArchiveSourceScope(registryRow, currentSession);
+  const storageScope = deletedArchiveStorageScope(registryRow);
+  const canReinstate = canReinstateDeletedArchive(currentSession, registryRow);
+
+  const record = buildArchiveRecord(
+    {
+      ...raw,
+      source_scope: sourceScope,
+      storage_scope: storageScope,
+      is_promoted: storageScope === "public_caal",
+      is_editable: false
+    },
+    lang
+  );
+
+  record.source = {
+    ...(record.source || {}),
+    scope: sourceScope,
+    storage: storageScope,
+    is_deleted: true,
+    is_editable: false
+  };
+
+  record.deletion = {
+    deleted_since_cache: true,
+    can_reinstate: canReinstate
+  };
+
+  // Audit details only for people allowed to restore this record.
+  if (canReinstate) {
+    record.deletion.deleted_at = registryRow.deleted_at || null;
+    record.deletion.deleted_by = registryRow.deleted_by || null;
+    record.deletion.delete_reason = registryRow.delete_reason || null;
+  }
+
+  return record;
+}
+
 function normaliseArchivePayload(input = {}) {
   const payload = {};
 
@@ -1419,7 +1687,8 @@ function normaliseArchivePayload(input = {}) {
 }
 
 async function getCurrentUserArchivePrefix(userId) {
-  if (!userId) return null;
+  userId = parseArchiveAppUserId(userId);
+  if (userId === null) return null;
 
   const result = await pool.query(
     `
@@ -1475,6 +1744,7 @@ function canCreateArchiveInWorkspaceCode(workspaceCode) {
 }
 
 async function registerCreatedRecord({
+  db = pool,
   sourceSchema,
   sourceTable,
   sourceRowId,
@@ -1487,7 +1757,7 @@ async function registerCreatedRecord({
   createdByWorkspaceCode = null,
   notes = null
 }) {
-  await pool.query(
+  await db.query(
     `
     INSERT INTO public.record_registry (
       source_schema,
@@ -1742,31 +2012,35 @@ router.patch("/:id", async (req, res) => {
         2
       );
 
-      const oldPublicResult = await pool.query(
-        `
-        SELECT a.*
-        FROM ${ARCHIVE_CAAL_TABLE} a
-        WHERE a.id = $1
-          ${publicOldCheck.sql}
-        `,
-        [id, ...publicOldCheck.values]
-      );
+      await withPublicArchiveAuditTransaction(currentSession, "update", async (client) => {
+        const oldPublicResult = await client.query(
+          `
+          SELECT a.*
+          FROM ${ARCHIVE_CAAL_TABLE} a
+          WHERE a.id = $1
+            ${publicOldCheck.sql}
+          FOR UPDATE
+          `,
+          [id, ...publicOldCheck.values]
+        );
 
-      oldPublicCaalRow = oldPublicResult.rows[0] || null;
-      oldRowForSummary = oldPublicCaalRow;
+        oldPublicCaalRow = oldPublicResult.rows[0] || null;
+        oldRowForSummary = oldPublicCaalRow;
 
-      result = await pool.query(
-        `
-        UPDATE ${ARCHIVE_CAAL_TABLE} a
-        SET
-          ${setSql},
-          "Tstamp" = NOW()
-        WHERE a.id = $${fields.length + 1}
-          ${publicEditCheck.sql}
-        RETURNING *
-        `,
-        [...values, id, ...publicEditCheck.values]
-      );
+        result = await client.query(
+          `
+          UPDATE ${ARCHIVE_CAAL_TABLE} a
+          SET
+            ${setSql},
+            "Tstamp" = NOW()
+          WHERE a.id = $${fields.length + 1}
+            ${publicEditCheck.sql}
+          RETURNING *
+          `,
+          [...values, id, ...publicEditCheck.values]
+        );
+
+      });
 
       if (result.rows.length > 0) {
         returnedScope =
@@ -1990,10 +2264,203 @@ router.delete("/:id", async (req, res) => {
   const isWorkspaceTarget = requestedStorageScope.endsWith("_workspace");
 
   if (isPublicTarget) {
-    return res.status(403).json({
-      ok: false,
-      error: "Public CAAL archive records cannot currently be deleted from this screen"
-    });
+    if (!canEditPublicCaalArchive(currentSession)) {
+      return res.status(403).json({
+        ok: false,
+        error: "You do not have permission to delete public CAAL archive records"
+      });
+    }
+
+    const client = await pool.connect();
+
+    try {
+      await client.query("BEGIN");
+
+      await setPublicArchiveAuditContext(client, currentSession, "delete");
+
+      const targetResult = await client.query(
+        `
+        SELECT a.*
+        FROM ${ARCHIVE_CAAL_TABLE} a
+        WHERE a.id = $1
+          AND (
+            $2::boolean = true
+
+            OR (
+              $4::boolean = true
+              AND lower(trim(COALESCE(a.workspace_code, ''))) = lower(trim($5))
+            )
+
+            OR EXISTS (
+              SELECT 1
+              FROM public.record_registry rr
+              WHERE rr.caal_id = a."CAAL_ID"
+                AND rr.created_by_app_user_id = $3
+                AND ${archiveRegistryMatchSql("rr")}
+                AND COALESCE(rr.status, '') <> 'deleted'
+            )
+
+            OR a.created_by_app_user_id = $3
+          )
+        `,
+        [
+          id,
+          isCaalAdmin(currentSession),
+          userId,
+          Boolean(isNationalAdmin(currentSession)),
+          getSessionWorkspaceCode(currentSession) || ""
+        ]
+      );
+
+      const target = targetResult.rows[0];
+
+      if (!target) {
+        await client.query("ROLLBACK");
+
+        return res.status(403).json({
+          ok: false,
+          error: "Public CAAL archive record not found, or you do not have permission to delete it"
+        });
+      }
+
+      await client.query(
+        `
+        WITH registry_update AS (
+          UPDATE public.record_registry rr
+          SET
+            status = 'deleted',
+
+            workspace_code = COALESCE(
+              NULLIF(rr.workspace_code, ''),
+              NULLIF($7, '')
+            ),
+
+            storage_scope = COALESCE(
+              NULLIF(rr.storage_scope, ''),
+              'public_caal'
+            ),
+
+            deleted_at = now(),
+            deleted_by_app_user_id = $2,
+            deleted_by = $3,
+            delete_reason = $4,
+            deleted_record = $5::jsonb,
+
+            restored_at = NULL,
+            restored_by_app_user_id = NULL,
+            restored_by = NULL,
+            restore_notes = NULL
+          WHERE (
+              rr.caal_id = $1
+              OR (
+                rr.source_schema = 'public'
+                AND rr.source_table = 'CAAL_Archive'
+                AND rr.source_row_id = $6
+              )
+            )
+          RETURNING rr.id
+        ),
+        registry_insert AS (
+          INSERT INTO public.record_registry (
+            source_schema,
+            source_table,
+            source_row_id,
+            caal_id,
+            record_type,
+            created_at,
+            created_by,
+            created_by_app_user_id,
+            workspace_code,
+            storage_scope,
+            status,
+            notes,
+            deleted_at,
+            deleted_by_app_user_id,
+            deleted_by,
+            delete_reason,
+            deleted_record
+          )
+          SELECT
+            'public',
+            'CAAL_Archive',
+            $6,
+            $1,
+            'archive',
+            now(),
+            COALESCE($9, $3),
+            $8,
+            $7,
+            'public_caal',
+            'deleted',
+            'Registry row created during public CAAL web app delete',
+            now(),
+            $2,
+            $3,
+            $4,
+            $5::jsonb
+          WHERE NOT EXISTS (SELECT 1 FROM registry_update)
+          RETURNING id
+        )
+        SELECT
+          COALESCE(
+            (SELECT id FROM registry_update LIMIT 1),
+            (SELECT id FROM registry_insert LIMIT 1)
+          ) AS registry_id
+        `,
+        [
+          target["CAAL_ID"],                       // $1
+          userId,                                  // $2 deleter
+          username,                                // $3 deleter
+          deleteReason,                            // $4
+          JSON.stringify(target),                  // $5
+          target.id,                               // $6
+          target.workspace_code || null,           // $7
+          target.created_by_app_user_id ?? null,   // $8
+          target["Archive Recorder"] || null       // $9
+        ]
+      );
+
+      const deleteResult = await client.query(
+        `
+        DELETE FROM ${ARCHIVE_CAAL_TABLE}
+        WHERE id = $1
+        RETURNING id, "CAAL_ID"
+        `,
+        [target.id]
+      );
+
+      await client.query("COMMIT");
+
+      await deactivateResourceRelationsForDeletedRecord(pool, {
+        caalId: target["CAAL_ID"],
+        currentSession,
+        note: "Deactivated because public CAAL archive record was deleted through CAAL web app."
+      });
+
+      return res.json({
+        ok: true,
+        deleted: {
+          id: deleteResult.rows[0].id,
+          CAAL_ID: deleteResult.rows[0]["CAAL_ID"],
+          storage_scope: "public_caal",
+          physically_deleted: true
+        },
+        cache_refresh_required: true
+      });
+    } catch (error) {
+      await client.query("ROLLBACK");
+
+      console.error("Public CAAL archive delete failed:");
+      console.error(error);
+
+      return res.status(500).json({
+        ok: false,
+        error: "Public CAAL archive delete failed",
+        detail: error.message
+      });
+    } finally {
+      client.release();
+    }
   }
 
   if (!isWorkspaceTarget) {
@@ -2022,7 +2489,15 @@ router.delete("/:id", async (req, res) => {
   }
 
   try {
-    const ownershipClause = canEditCaal
+    // Same rule as monuments: CAAL admins, or national admins in their own workspace.
+    const canAdministerWorkspace =
+      canEditCaal ||
+      (
+        isNationalAdmin(currentSession) &&
+        requestedStorageScope === ownStorageScope
+      );
+
+    const ownershipClause = canAdministerWorkspace
       ? ""
       : `AND a.created_by_app_user_id = $2`;
 
@@ -2041,7 +2516,11 @@ router.delete("/:id", async (req, res) => {
           deleted_by_app_user_id = $2,
           deleted_by = $3,
           delete_reason = $4,
-          deleted_record = to_jsonb(target)
+          deleted_record = to_jsonb(target),
+          restored_at = NULL,
+          restored_by_app_user_id = NULL,
+          restored_by = NULL,
+          restore_notes = NULL
         FROM target
         WHERE rr.source_schema = $5
           AND rr.source_table = 'CAAL_Archive'
@@ -2106,7 +2585,7 @@ router.delete("/:id", async (req, res) => {
     if (result.rows.length === 0) {
       return res.status(403).json({
         ok: false,
-        error: canEditCaal
+        error: canAdministerWorkspace
           ? "Archive record not found in workspace table"
           : "You can only delete your own workspace archive records"
       });
@@ -2263,30 +2742,38 @@ router.post("/", async (req, res) => {
     const targetTable = createTarget.tableSql;
     const targetStorage = createTarget.storageScope;
 
-    const result = await pool.query(
-      `
-      INSERT INTO ${targetTable} (${columnSql})
-      VALUES (${valueSql})
-      RETURNING *
-      `,
-      values
-    );
+    const insertAndRegister = async (db) => {
+      const result = await db.query(
+        `
+        INSERT INTO ${targetTable} (${columnSql})
+        VALUES (${valueSql})
+        RETURNING *
+        `,
+        values
+      );
 
-    await registerCreatedRecord({
-      sourceSchema: createTarget.schema,
-      sourceTable: "CAAL_Archive",
-      sourceRowId: result.rows[0].id,
-      caalId: result.rows[0]["CAAL_ID"],
-      recordType: "archive",
-      createdBy: sessionUsername,
-      createdByAppUserId: appUserId,
-      workspaceCode: recordWorkspaceCode,
-      storageScope: createTarget.storageScope,
-      createdByWorkspaceCode: getSessionWorkspaceCode(currentSession),
-      notes: createTarget.isPublicCaalStorage
-        ? `Created through CAAL web app into public CAAL archive table; record workspace_code=${recordWorkspaceCode}`
-        : `Created through CAAL web app into ${createTarget.storageScope}`
-    });
+      await registerCreatedRecord({
+        db,
+        sourceSchema: createTarget.schema,
+        sourceTable: "CAAL_Archive",
+        sourceRowId: result.rows[0].id,
+        caalId: result.rows[0]["CAAL_ID"],
+        recordType: "archive",
+        createdBy: sessionUsername,
+        createdByAppUserId: appUserId,
+        workspaceCode: recordWorkspaceCode,
+        storageScope: createTarget.storageScope,
+        createdByWorkspaceCode: getSessionWorkspaceCode(currentSession),
+        notes: createTarget.isPublicCaalStorage
+          ? `Created through CAAL web app into public CAAL archive table; record workspace_code=${recordWorkspaceCode}`
+          : `Created through CAAL web app into ${createTarget.storageScope}`
+      });
+
+      return result;
+    };
+    const result = createTarget.isPublicCaalStorage
+      ? await withPublicArchiveAuditTransaction(currentSession, "create", insertAndRegister)
+      : await insertAndRegister(pool);
 
     await replaceArchiveHoldingInstitutionRelation(pool, {
       archiveCaalId: result.rows[0]["CAAL_ID"],
@@ -2374,6 +2861,12 @@ router.post("/admin/refresh-caal-cache", async (req, res) => {
   const refreshedBy = currentSession?.user?.username || "web_admin";
 
   async function refreshMaterializedView(viewName, cacheKey, note) {
+    // Snapshot time captured BEFORE the refresh, matching the cron job.
+    const { rows: startRows } = await pool.query(
+      `SELECT clock_timestamp() - interval '30 seconds' AS snapshot_at`
+    );
+    const snapshotAt = startRows[0].snapshot_at;
+
     await pool.query(`REFRESH MATERIALIZED VIEW CONCURRENTLY ${viewName}`);
     refreshed.push(viewName);
 
@@ -2386,10 +2879,14 @@ router.post("/admin/refresh-caal-cache", async (req, res) => {
           cache_key,
           refreshed_at,
           refreshed_by,
+          checked_at,
+          checked_by,
           note
         )
         VALUES (
           $1,
+          $4::timestamptz,
+          $2,
           now(),
           $2,
           $3
@@ -2398,9 +2895,11 @@ router.post("/admin/refresh-caal-cache", async (req, res) => {
         DO UPDATE SET
           refreshed_at = EXCLUDED.refreshed_at,
           refreshed_by = EXCLUDED.refreshed_by,
+          checked_at = EXCLUDED.checked_at,
+          checked_by = EXCLUDED.checked_by,
           note = EXCLUDED.note
         `,
-        [cacheKey, refreshedBy, note]
+        [cacheKey, refreshedBy, note, snapshotAt]
       );
     }
   }
@@ -2488,22 +2987,31 @@ router.get("/live-edited-records", async (req, res) => {
     return res.status(401).json({ ok: false, error: "No active session" });
   }
 
-  if (!isCaalAdmin(currentSession) && !isNationalAdmin(currentSession)) {
-    return res.status(403).json({
-      ok: false,
-      error: "Admin only"
-    }); 
-  }
+  const currentAppUserId = currentAppUserIdFromSession(currentSession);
 
   try {
-    const workspaceCode = getSessionWorkspaceCode(currentSession);
     const values = [];
+    let scopeWhere = "";
 
-    let workspaceWhere = "";
+    if (isCaalAdmin(currentSession)) {
+      // CAAL admins: all uncached rows
+    } else if (isNationalAdmin(currentSession)) {
+      values.push(getSessionWorkspaceCode(currentSession));
+      scopeWhere = `AND a.workspace_code = $${values.length}`;
+    } else {
+      // Everyone else: only the records they created
+      if (currentAppUserId === null) {
+        return res.json({
+          ok: true,
+          records: [],
+          total: 0,
+          source_mode: "archive_uncached_live_edits",
+          cache_refreshed_at: null
+        });
+      }
 
-    if (isNationalAdmin(currentSession)) {
-      values.push(workspaceCode);
-      workspaceWhere = `AND a.workspace_code = $${values.length}`;
+      values.push(currentAppUserId);
+      scopeWhere = archiveOwnRecordWhereSql("a", values.length);
     }
 
     const result = await pool.query(
@@ -2518,7 +3026,7 @@ router.get("/live-edited-records", async (req, res) => {
         SELECT
           COALESCE(
             (SELECT refreshed_at FROM cache_status),
-            now() - interval '2 hours'
+            'epoch'::timestamptz
           ) AS changed_after
       )
       SELECT
@@ -2528,8 +3036,25 @@ router.get("/live-edited-records", async (req, res) => {
         threshold.changed_after AS cache_refreshed_at
       FROM ${ARCHIVE_CAAL_TABLE} a
       CROSS JOIN threshold
-      WHERE a."Tstamp" > threshold.changed_after
-        ${workspaceWhere}
+      WHERE (
+          a."Tstamp" > threshold.changed_after
+          OR EXISTS (
+            SELECT 1 FROM public."CAAL_Archive_web_edit_log" log
+            WHERE log.caal_id = a."CAAL_ID"
+              AND log.edited_at > threshold.changed_after
+          )
+          OR NOT EXISTS (
+            SELECT 1
+            FROM ${ARCHIVE_CAAL_MV} c
+            WHERE c."CAAL_ID" = a."CAAL_ID"
+          )
+        )
+        ${scopeWhere}
+        AND NOT EXISTS (
+          SELECT 1 FROM public.record_registry rr
+          WHERE rr.caal_id = a."CAAL_ID" AND ${archiveRegistryMatchSql("rr")}
+            AND rr.status = 'deleted'
+        )
       ORDER BY a."Tstamp" DESC NULLS LAST
       `,
       values
@@ -2561,13 +3086,6 @@ router.get("/:id/live-full-record", async (req, res) => {
     return res.status(401).json({ ok: false, error: "No active session" });
   }
 
-  if (!isCaalAdmin(currentSession) && !isNationalAdmin(currentSession)) {
-    return res.status(403).json({
-      ok: false,
-      error: "Admin only"
-    });
-  }
-
   const id = Number(req.params.id);
 
   if (!Number.isInteger(id)) {
@@ -2583,14 +3101,26 @@ router.get("/:id/live-full-record", async (req, res) => {
     "en";
 
   try {
-    const workspaceCode = getSessionWorkspaceCode(currentSession);
     const values = [id];
+    let scopeWhere = "";
 
-    let workspaceWhere = "";
+    if (isCaalAdmin(currentSession)) {
+      // CAAL admins: any record
+    } else if (isNationalAdmin(currentSession)) {
+      values.push(getSessionWorkspaceCode(currentSession));
+      scopeWhere = `AND a.workspace_code = $${values.length}`;
+    } else {
+      const currentAppUserId = currentAppUserIdFromSession(currentSession);
 
-    if (isNationalAdmin(currentSession)) {
-      values.push(workspaceCode);
-      workspaceWhere = `AND a.workspace_code = $${values.length}`;
+      if (currentAppUserId === null) {
+        return res.status(404).json({
+          ok: false,
+          error: "Archive record not found"
+        });
+      }
+
+      values.push(currentAppUserId);
+      scopeWhere = archiveOwnRecordWhereSql("a", values.length);
     }
 
     const result = await pool.query(
@@ -2605,7 +3135,7 @@ router.get("/:id/live-full-record", async (req, res) => {
         true AS is_promoted
       FROM ${ARCHIVE_CAAL_TABLE} a
       WHERE a.id = $1
-        ${workspaceWhere}
+        ${scopeWhere}
       LIMIT 1
       `,
       values
@@ -2641,6 +3171,338 @@ router.get("/:id/live-full-record", async (req, res) => {
       detail: error.message
     });
   }
+});
+
+// Archive records deleted since the last cache refresh (shown as tombstones).
+router.get("/deleted-since-cache", async (req, res) => {
+  const currentSession = req.session?.appSession || null;
+
+  if (!currentSession) {
+    return res.status(401).json({ ok: false, error: "No active session" });
+  }
+
+  const lang =
+    req.query.lang ||
+    currentSession.profile?.preferred_language ||
+    "en";
+
+  const allowedScopes = getAllowedScopes(currentSession);
+  const requestedScopes = Array.from(new Set(parseScopes(req.query.scopes)));
+  const scopes = requestedScopes.filter((scope) => allowedScopes.includes(scope));
+
+  if (!scopes.length) {
+    return res.json({ ok: true, records: [], total: 0 });
+  }
+
+  try {
+    const result = await pool.query(
+      `
+      WITH cache_status AS (
+        SELECT refreshed_at
+        FROM ui.app_cache_status
+        WHERE cache_key = 'archive_caal_cache'
+        LIMIT 1
+      ),
+      threshold AS (
+        SELECT COALESCE(
+          (SELECT refreshed_at FROM cache_status),
+          now() - interval '2 hours'
+        ) AS changed_after
+      )
+      SELECT rr.*
+      FROM public.record_registry rr
+      CROSS JOIN threshold
+      WHERE rr.status = 'deleted'
+        AND ${archiveRegistryMatchSql("rr")}
+        AND rr.deleted_record IS NOT NULL
+        AND rr.deleted_at > threshold.changed_after
+      ORDER BY rr.deleted_at DESC
+      `
+    );
+
+    const records = result.rows
+      .map((row) => buildDeletedArchiveRecord(row, lang, currentSession))
+      .filter((record) => scopes.includes(record.source?.scope));
+
+    return res.json({
+      ok: true,
+      records,
+      total: records.length,
+      source_mode: "archive_deleted_since_cache"
+    });
+  } catch (error) {
+    console.error("Deleted archive cache reconciliation failed:", error);
+
+    return res.status(500).json({
+      ok: false,
+      error: "Deleted archive cache reconciliation failed",
+      detail: error.message
+    });
+  }
+});
+
+router.post("/:caalId/reinstate", async (req, res) => {
+  const currentSession = req.session?.appSession || null;
+
+  if (!currentSession) {
+    return res.status(401).json({ ok: false, error: "No active session" });
+  }
+
+  if (
+    !canEditArchive(currentSession) &&
+    !canEditCaalArchive(currentSession) &&
+    !isNationalAdmin(currentSession)
+  ) {
+    return res.status(403).json({
+      ok: false,
+      error: "You do not have permission to reinstate archive records"
+    });
+  }
+
+  const caalId = String(req.params.caalId || "").trim();
+
+  if (!caalId) {
+    return res.status(400).json({ ok: false, error: "Missing CAAL_ID" });
+  }
+
+  const restoreNotes = String(req.body?.notes || "").trim() || null;
+  const userId = currentSession?.user?.user_id ?? null;
+  const username = currentSession?.user?.username ?? null;
+
+  const client = await pool.connect();
+
+  let registryRow = null;
+  let restoredRow = null;
+
+  try {
+    await client.query("BEGIN");
+
+    const registryResult = await client.query(
+      `
+      SELECT *
+      FROM public.record_registry rr
+      WHERE lower(trim(rr.caal_id)) = lower(trim($1))
+        AND rr.status = 'deleted'
+        AND ${archiveRegistryMatchSql("rr")}
+      ORDER BY rr.deleted_at DESC NULLS LAST
+      LIMIT 1
+      FOR UPDATE
+      `,
+      [caalId]
+    );
+
+    registryRow = registryResult.rows[0] || null;
+
+    if (!registryRow) {
+      await client.query("ROLLBACK");
+      return res.status(404).json({
+        ok: false,
+        error: "Deleted archive record not found"
+      });
+    }
+
+    if (!canReinstateDeletedArchive(currentSession, registryRow)) {
+      await client.query("ROLLBACK");
+      return res.status(403).json({
+        ok: false,
+        error: "You do not have permission to reinstate this archive record"
+      });
+    }
+
+    if (!registryRow.deleted_record) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({
+        ok: false,
+        error: "This registry entry does not contain a recovery copy"
+      });
+    }
+
+    const sourceSchema = String(registryRow.source_schema || "");
+    const sourceTable = String(registryRow.source_table || "");
+
+    if (sourceTable !== "CAAL_Archive") {
+      await client.query("ROLLBACK");
+      return res.status(400).json({
+        ok: false,
+        error: "Unsupported archive source table"
+      });
+    }
+
+    // Only configured storage may be restored; never trust identifiers
+    // stored in record_registry blindly.
+    const isPublicSource = sourceSchema === "public";
+
+    const configuredStorage = Object.entries(WORKSPACE_STORAGE)
+      .map(([workspaceCode, config]) => ({ workspaceCode, ...config }))
+      .find(
+        (storage) =>
+          storage.schema === sourceSchema &&
+          storage.archiveTable === sourceTable
+      );
+
+    if (!isPublicSource && !configuredStorage) {
+      await client.query("ROLLBACK");
+      return res.status(400).json({
+        ok: false,
+        error: "The original archive storage location is not configured"
+      });
+    }
+
+    const targetTable = tableSql(sourceSchema, sourceTable);
+
+    const duplicateResult = await client.query(
+      `
+      SELECT id, "CAAL_ID"
+      FROM ${targetTable}
+      WHERE id = $1
+         OR lower(trim("CAAL_ID")) = lower(trim($2))
+      LIMIT 1
+      `,
+      [registryRow.source_row_id, registryRow.caal_id]
+    );
+
+    if (duplicateResult.rows.length) {
+      await client.query("ROLLBACK");
+      return res.status(409).json({
+        ok: false,
+        error: "The record already exists in its original table"
+      });
+    }
+
+    const columnsResult = await client.query(
+      `
+      SELECT column_name, is_generated, is_identity
+      FROM information_schema.columns
+      WHERE table_schema = $1
+        AND table_name = $2
+      ORDER BY ordinal_position
+      `,
+      [sourceSchema, sourceTable]
+    );
+
+    const writableColumns = columnsResult.rows
+      .filter((column) => column.is_generated === "NEVER")
+      .map((column) => column.column_name);
+
+    const hasIdentity = columnsResult.rows.some(
+      (column) => column.is_identity === "YES"
+    );
+
+    if (!writableColumns.length) {
+      throw new Error("No writable columns found for restore");
+    }
+
+    // Newer than the current cache so the record shows as pending (yellow) until the next refresh.
+    const recoveryCopy = {
+      ...registryRow.deleted_record,
+      Tstamp: new Date().toISOString()
+    };
+
+    const columnSql = writableColumns.map(quoteRestoreColumn).join(", ");
+    const restoredSelectSql = writableColumns
+      .map((column) => `restored.${quoteRestoreColumn(column)}`)
+      .join(", ");
+    const overridingSql = hasIdentity ? "OVERRIDING SYSTEM VALUE" : "";
+
+    if (isPublicSource) {
+      await setPublicArchiveAuditContext(client, currentSession, "restore");
+    }
+
+    const restoreResult = await client.query(
+      `
+      WITH restored AS (
+        SELECT (
+          jsonb_populate_record(NULL::${targetTable}, $1::jsonb)
+        ).*
+      )
+      INSERT INTO ${targetTable} (${columnSql})
+      ${overridingSql}
+      SELECT ${restoredSelectSql}
+      FROM restored
+      RETURNING *
+      `,
+      [JSON.stringify(recoveryCopy)]
+    );
+
+    restoredRow = restoreResult.rows[0] || null;
+
+    if (!restoredRow) {
+      throw new Error("The deleted archive record could not be restored");
+    }
+
+    await client.query(
+      `
+      UPDATE public.record_registry
+      SET
+        status = 'restored',
+        restored_at = now(),
+        restored_by_app_user_id = $2,
+        restored_by = $3,
+        restore_notes = $4
+      WHERE id = $1
+      `,
+      [registryRow.id, userId, username, restoreNotes]
+    );
+
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+
+    console.error("Archive reinstate failed:", error);
+
+    return res.status(500).json({
+      ok: false,
+      error: "Archive reinstate failed",
+      detail: error.message
+    });
+  } finally {
+    client.release();
+  }
+
+  try {
+    await reactivateResourceRelationsForRestoredRecord(pool, {
+      caalId: registryRow.caal_id,
+      deletedAt: registryRow.deleted_at,
+      sourceSchema: registryRow.source_schema,
+      sourceTable: registryRow.source_table,
+      currentSession
+    });
+  } catch (error) {
+    // The record itself is restored; surface the relation problem for diagnostics only.
+    console.error("Archive restored but relation reactivation failed:", error);
+  }
+
+  const lang =
+    req.query.lang ||
+    currentSession.profile?.preferred_language ||
+    "en";
+
+  const sourceScope = deletedArchiveSourceScope(registryRow, currentSession);
+  const storageScope = deletedArchiveStorageScope(registryRow);
+
+  const record = buildArchiveRecord(
+    {
+      ...restoredRow,
+      source_scope: sourceScope,
+      storage_scope: storageScope,
+      is_promoted: storageScope === "public_caal",
+      is_editable: true
+    },
+    lang
+  );
+
+  record.source.is_deleted = false;
+  record.relations = await getResourceRelations(pool, registryRow.caal_id);
+  record.holding_institution = await getArchiveHoldingInstitution(
+    pool,
+    registryRow.caal_id
+  );
+
+  return res.json({
+    ok: true,
+    record,
+    cache_refresh_required: storageScope === "public_caal"
+  });
 });
 
 module.exports = router;

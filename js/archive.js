@@ -1,3 +1,5 @@
+const archiveResultsRefreshState = { active: false, pending: null };
+
 // ========================================================
 // ARCHIVE PAGE LOGIC
 // Backend-driven version using:
@@ -53,6 +55,16 @@ const archiveSaveBtn = document.getElementById("archiveSaveBtn");
 const archiveCancelEditBtn = document.getElementById("archiveCancelEditBtn");
 const archiveEditBtn = document.getElementById("archiveEditBtn");
 const archiveDeleteBtn = document.getElementById("archiveDeleteBtn");
+let archiveReinstateBtn = document.getElementById("archiveReinstateBtn");
+
+if (!archiveReinstateBtn && archiveDeleteBtn) {
+  archiveReinstateBtn = archiveDeleteBtn.cloneNode(false);
+  archiveReinstateBtn.id = "archiveReinstateBtn";
+  archiveReinstateBtn.removeAttribute("data-archive-label");
+  archiveReinstateBtn.hidden = true;
+  archiveReinstateBtn.textContent = "Reinstate";
+  archiveDeleteBtn.insertAdjacentElement("afterend", archiveReinstateBtn);
+}
 const archiveCloseRecordBtn = document.getElementById("archiveCloseRecordBtn");
 
 const archiveCacheStatusLine = document.getElementById("archiveCacheStatusLine");
@@ -83,6 +95,152 @@ let archivePreviewRecord = null;
 let archiveJustSavedRecordId = null;
 
 let archiveRecentlySavedRecords = [];
+
+let archiveDeletedSinceCacheRecords = [];
+
+function archiveDeletedCaalIdMap() {
+  return new Map(
+    (archiveDeletedSinceCacheRecords || [])
+      .map((record) => [archiveAnyCaalId(record).toLowerCase(), record])
+      .filter(([key]) => key)
+  );
+}
+
+function reconcileDeletedArchiveRecord(record) {
+  if (!record) return record;
+
+  const caalId = archiveAnyCaalId(record).toLowerCase();
+  if (!caalId) return record;
+
+  const deleted = archiveDeletedCaalIdMap().get(caalId);
+  if (!deleted) return record;
+
+  // Use the full recovery snapshot, but keep the scope this cached result came back in.
+  return {
+    ...deleted,
+    source: {
+      ...(deleted.source || {}),
+      scope: record.source?.scope || deleted.source?.scope,
+      storage: record.source?.storage || deleted.source?.storage,
+      is_editable: false,
+      is_deleted: true
+    }
+  };
+}
+
+async function loadDeletedSinceCacheArchive() {
+  const scopes = getArchiveEnabledScopes();
+
+  if (!scopes.length) {
+    archiveDeletedSinceCacheRecords = [];
+    return [];
+  }
+
+  const params = new URLSearchParams();
+  params.set("lang", archiveCurrentLanguageCode());
+  params.set("scopes", scopes.join(","));
+
+  const response = await fetch(
+    `/api/archive/deleted-since-cache?${params.toString()}`,
+    {
+      method: "GET",
+      credentials: "include"
+    }
+  );
+
+  const data = await response.json();
+
+  if (!response.ok || !data.ok) {
+    throw new Error(
+      data.detail || data.error || "Failed to load deleted archive records"
+    );
+  }
+
+  archiveDeletedSinceCacheRecords = Array.isArray(data.records) ? data.records : [];
+  return archiveDeletedSinceCacheRecords;
+}
+
+function archiveDeletionNoticeHtml(record) {
+  if (record?.source?.is_deleted !== true) return "";
+
+  const deletion = record?.deletion || {};
+
+  const metaHtml = deletion.can_reinstate
+    ? `
+      <div class="deleted-record-admin-meta">
+        ${deletion.deleted_by ? `<div><strong>${t("deleted_by", "Deleted by")}:</strong> ${safeArchiveValue(deletion.deleted_by)}</div>` : ""}
+        ${deletion.deleted_at ? `<div><strong>${t("deleted_at", "Deleted")}:</strong> ${safeArchiveValue(archiveFormatCacheTimestamp(deletion.deleted_at))}</div>` : ""}
+        ${deletion.delete_reason ? `<div><strong>${t("delete_reason", "Reason")}:</strong> ${safeArchiveValue(deletion.delete_reason)}</div>` : ""}
+      </div>
+    `
+    : "";
+
+  return `
+    <div class="deleted-record-notice">
+      <strong>${t("deleted_since_cache_refresh", "Deleted since cache refresh")}</strong>
+      <p>${t("deleted_cache_notice", "This record has been deleted and is shown temporarily until the browse cache is refreshed.")}</p>
+      ${metaHtml}
+    </div>
+  `;
+}
+
+async function archiveReinstateCurrentRecord() {
+  const record = archiveSelectedRecord;
+  const caalId = archiveAnyCaalId(record);
+
+  if (!caalId || record?.deletion?.can_reinstate !== true) return;
+
+  const confirmed = window.confirm(
+    t("confirm_reinstate_archive_record", "Reinstate this deleted archive record?")
+  );
+
+  if (!confirmed) return;
+
+  setArchiveLoading(true, t("reinstating_record", "Reinstating record..."));
+
+  try {
+    const response = await fetch(
+      `/api/archive/${encodeURIComponent(caalId)}/reinstate?lang=${encodeURIComponent(archiveCurrentLanguageCode())}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        credentials: "include",
+        body: JSON.stringify({})
+      }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok || !data.ok) {
+      throw new Error(data.detail || data.error || "Archive reinstate failed");
+    }
+
+    archiveSelectedRecord = data.record || null;
+    archiveIsEditMode = false;
+    archiveIsDirty = false;
+
+    await loadArchiveRecords(archiveLimit, archiveOffset, {
+      preserveSelection: true
+    });
+
+    if (data.record) {
+      archiveSelectedRecord = data.record;
+      archiveRenderRecordDetails(data.record);
+      archiveRenderActionBar({
+        hasRecord: true,
+        canEdit: canEditArchiveRecord(data.record)
+      });
+      archiveUpdateSelectedResultCard();
+    }
+
+    showArchiveToast(t("archive_record_reinstated", "Archive record reinstated"));
+  } catch (error) {
+    console.error("Archive reinstate failed:", error);
+    alert(error.message || t("archive_reinstate_failed", "Archive reinstate failed"));
+  } finally {
+    setArchiveLoading(false);
+  }
+}
 
 let archiveLastSaveSummary = null;
 
@@ -128,12 +286,13 @@ function getRecentlySavedArchiveRecord(record) {
 }
 
 async function loadRecentlySavedArchiveRecords() {
-  if (!archiveUserCanUseLiveCacheWorkaround()) {
+  if (!archiveUserCanSeeRecentSaves()) {
     archiveRecentlySavedRecords = [];
     return [];
   }
 
   const response = await fetch("/api/archive/live-edited-records", {
+    cache: "no-store",
     method: "GET",
     credentials: "include"
   });
@@ -357,6 +516,10 @@ function setArchiveRecordOpening(isOpening) {
 }
 
 function setArchiveResultsCountText(text) {
+  if (archiveResultsRefreshState.active) {
+    archiveResultsRefreshState.pending = text;
+    return;
+  }
   if (archiveResultsCount) {
     archiveResultsCount.textContent = text;
   }
@@ -367,7 +530,9 @@ function setArchiveResultsCountText(text) {
 }
 
 function setArchiveResultsCountLoading(message = null) {
-  const label = message || t("searching", "Searching...");
+  const label = archiveResultsRefreshState.active
+    ? t("refreshing_results_list", "Refreshing results list...")
+    : message || t("searching", "Searching...");
 
   if (archiveResultsCount) {
     archiveResultsCount.innerHTML = `<span class="mini-spinner"></span>${label}`;
@@ -423,6 +588,12 @@ function archiveUserCanUseLiveCacheWorkaround() {
   );
 
   return accessLevel === 9;
+}
+
+// Any signed-in user; the backend scopes the response to their own records.
+function archiveUserCanSeeRecentSaves() {
+  const session = window.appSession || {};
+  return Boolean(session.user || session.profile);
 }
 
 // Cache helper
@@ -582,6 +753,18 @@ function archiveScopeLabel(scope) {
     default:
       return normalisedScope || t("unknown", "Unknown");
   }
+}
+
+// Results show provenance only when the source is a national workspace.
+function archiveResultWorkspaceBadge(record) {
+  const storage = String(record?.source?.storage || "").trim().toLowerCase();
+  const match = storage.match(/^([a-z][a-z0-9_]*)_workspace$/);
+  if (!match || match[1] === "caal") return "";
+
+  const label = t("scope_country_workspace", "{code} workspace")
+    .replace("{code}", match[1].toUpperCase());
+
+  return `<span class="${archiveScopeBadgeClass(record)}">${safeArchiveValue(label)}</span>`;
 }
 
 function archiveScopeBadgeClass(record) {
@@ -1599,11 +1782,43 @@ function archiveGetActiveFilterChips() {
   return chips;
 }
 
+// Keep active chips (including text searches) above the full-width filter toggle.
+// Move the existing clear button, preserving its translations and click handler.
+function archiveSyncFilterToolbar(hasActiveFilters = null) {
+  const strip = archiveActiveFilterStrip;
+  const chips = archiveActiveFilterChips;
+  const clear = clearArchiveFiltersBtn;
+  const toggle = toggleArchiveFiltersBtn;
+  const panel = archiveFiltersPanel;
+  if (!strip || !chips || !clear || !toggle || !panel) return;
+  const row = toggle.closest(".filter-action-row");
+  const anchor = row || toggle;
+  if (!anchor.parentElement || strip.contains(anchor)) return;
+  if (strip.parentElement !== anchor.parentElement || strip.nextElementSibling !== anchor) {
+    anchor.parentElement.insertBefore(strip, anchor);
+  }
+  if (clear.parentElement !== strip) strip.appendChild(clear);
+  strip.classList.add("caal-active-filter-row");
+  clear.classList.add("caal-clear-filters");
+  toggle.classList.add("caal-advanced-toggle");
+  row?.classList.add("caal-filter-action-row");
+  toggle.setAttribute("aria-controls", panel.id);
+  toggle.setAttribute("aria-expanded", String(!panel.hidden));
+  if (hasActiveFilters !== null) {
+    // Keep keyboard focus on a visible control when the final chip disappears.
+    if (!hasActiveFilters && strip.contains(document.activeElement)) toggle.focus();
+    strip.hidden = !hasActiveFilters;
+  }
+}
+
+archiveSyncFilterToolbar();
+
 function archiveRenderActiveFilterChips() {
   if (!archiveActiveFilterStrip || !archiveActiveFilterChips) return;
 
   const chips = archiveGetActiveFilterChips();
 
+  archiveSyncFilterToolbar(chips.length > 0);
   archiveActiveFilterStrip.hidden = chips.length === 0;
   archiveActiveFilterChips.innerHTML = "";
 
@@ -2273,8 +2488,10 @@ async function archiveDeleteCurrentRecord() {
 
   if (!record?.identity?.id) return;
 
-  if (record.source?.scope !== "workspace") {
-    alert(archiveLabel("Only workspace records can be deleted.", "Only workspace records can be deleted."));
+  const deleteStorage = String(record.source?.storage || "").trim();
+
+  if (deleteStorage !== "public_caal" && !deleteStorage.endsWith("_workspace")) {
+    alert(archiveLabel("This record cannot be deleted from here.", "This record cannot be deleted from here."));
     return;
   }
 
@@ -3192,10 +3409,15 @@ async function loadFullArchiveRecord(record, langOverride = null) {
     return record;
   }
 
+  // Deleted records are shown from their recovery snapshot; there is nothing to fetch.
+  if (record?.source?.is_deleted === true) {
+    return record;
+  }
+
   const lang = archiveCurrentLanguageCode(langOverride);
 
-  if (
-    archiveUserCanUseLiveCacheWorkaround() &&
+    if (
+    (archiveUserCanUseLiveCacheWorkaround() || archiveIsSavedSinceCacheRefresh(record)) &&
     recordId !== null &&
     recordId !== undefined &&
     String(record?.source?.storage || "") === "public_caal"
@@ -4136,18 +4358,35 @@ function canEditArchiveRecord(record) {
 
 function archiveRenderActionBar({ hasRecord = false, canEdit = false } = {}) {
   const isEditing = archiveIsEditMode;
+  const isDeleted = archiveSelectedRecord?.source?.is_deleted === true;
+
+  const deleteStorageScope = String(
+    archiveSelectedRecord?.source?.storage || ""
+  ).trim();
+
+  const isSupportedDeleteStorage =
+    deleteStorageScope === "public_caal" ||
+    deleteStorageScope.endsWith("_workspace");
+
   const canDelete =
+    !isDeleted &&
     isEditing &&
     hasRecord &&
     canEdit &&
-    archiveSelectedRecord?.source?.scope === "workspace" &&
+    isSupportedDeleteStorage &&
     archiveSelectedRecord?.identity?.id;
 
   if (addArchiveBtn) addArchiveBtn.hidden = isEditing;
-  if (archiveEditBtn) archiveEditBtn.hidden = isEditing || !hasRecord || !canEdit;
-  if (archiveSaveBtn) archiveSaveBtn.hidden = !isEditing;
-  if (archiveCancelEditBtn) archiveCancelEditBtn.hidden = !isEditing;
+  if (archiveEditBtn) archiveEditBtn.hidden = isDeleted || isEditing || !hasRecord || !canEdit;
+  if (archiveSaveBtn) archiveSaveBtn.hidden = !isEditing || isDeleted;
+  if (archiveCancelEditBtn) archiveCancelEditBtn.hidden = !isEditing || isDeleted;
   if (archiveDeleteBtn) archiveDeleteBtn.hidden = !canDelete;
+
+  if (archiveReinstateBtn) {
+    archiveReinstateBtn.textContent = t("reinstate_record", "Reinstate");
+    archiveReinstateBtn.hidden =
+      !isDeleted || archiveSelectedRecord?.deletion?.can_reinstate !== true;
+  }
 
   if (archiveCloseRecordBtn) {
     archiveCloseRecordBtn.hidden = isEditing || !hasRecord;
@@ -4170,6 +4409,7 @@ function applyArchiveStaticLabels() {
     const key = el.dataset.archiveLabel;
     el.textContent = archiveLabel(key, el.textContent);
   });
+  ensureArchiveResultsRefreshButton();
 }
 
 async function loadArchiveLabels(langOverride = null) {
@@ -4385,7 +4625,103 @@ function getArchiveEnabledScopes() {
   return scopes;
 }
 
+// Refresh results without discarding the record or an unsaved editing form.
+let archiveResultsLoadCount = 0;
+let archiveSaveInProgress = false;
+
+function ensureArchiveResultsRefreshButton() {
+  const heading = archiveResultsList?.closest(".results-panel")?.querySelector(".results-panel-header h3");
+  if (!heading) return;
+  heading.classList.add("caal-results-heading");
+  let button = document.getElementById("refreshArchiveResultsBtn");
+  if (!button) {
+    button = document.createElement("button");
+    button.id = "refreshArchiveResultsBtn";
+    button.type = "button";
+    button.className = "icon-action-btn caal-results-refresh";
+    button.innerHTML = '<svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15.36-6.36L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.36 6.36L3 16"/><path d="M3 21v-5h5"/></svg>';
+    heading.appendChild(button);
+    button.addEventListener("click", async () => {
+      if (button.disabled || archiveResultsLoadCount > 0 || archiveSaveInProgress || archiveRecordOpenInProgress) return;
+      if (archiveFilterDebounceTimer) {
+        clearTimeout(archiveFilterDebounceTimer);
+        archiveFilterDebounceTimer = null;
+      }
+      archiveResultsRefreshState.pending = null;
+      setArchiveResultsCountText(t("refreshing_results_list", "Refreshing results list..."));
+      archiveResultsRefreshState.active = true;
+      button.disabled = true;
+      button.setAttribute("aria-busy", "true");
+      setArchiveLoading(true, t("refreshing_results_list", "Refreshing results list..."));
+      try {
+        await loadArchiveRecords(archiveLimit, archiveOffset, { preserveSelection: true });
+      } catch (error) {
+        archiveResultsRefreshState.pending = t("refresh_results_failed", "Could not refresh results. Please try again.");
+        console.error("Archive results refresh failed:", error);
+        showArchiveToast(t("refresh_results_failed", "Could not refresh results. Please try again."), "warning");
+      } finally {
+        archiveResultsRefreshState.active = false;
+        setArchiveResultsCountText(archiveResultsRefreshState.pending ?? t("refresh_results_failed", "Could not refresh results. Please try again."));
+        archiveResultsRefreshState.pending = null;
+        button.disabled = false;
+        button.setAttribute("aria-busy", "false");
+        setArchiveLoading(false);
+      }
+    });
+  }
+  const label = t("refresh_results", "Refresh results");
+  button.title = label;
+  button.setAttribute("aria-label", label);
+}
+
+async function archiveRefreshResultsAfterSave(savedRecord, { isNewRecord = false } = {}) {
+  if (archiveFilterDebounceTimer) {
+    clearTimeout(archiveFilterDebounceTimer);
+    archiveFilterDebounceTimer = null;
+  }
+  try {
+    // Public and workspace records both take this path.
+    await loadArchiveRecords(archiveLimit, isNewRecord ? 0 : archiveOffset, {
+      preserveSelection: true
+    });
+    // Keep an existing returned card current even if the server's list is cached.
+    // Do not inject records absent from the server-filtered/paginated results.
+    const savedId = archiveAnyCaalId(savedRecord);
+    const updateCard = (item) => {
+      if (!savedId || archiveAnyCaalId(item) !== savedId || item?.source?.is_deleted) return item;
+      return { ...savedRecord, source: { ...savedRecord.source, ...item.source } };
+    };
+    archiveAllRecords = archiveAllRecords.map(updateCard);
+    archiveVisibleRecords = archiveVisibleRecords.map(updateCard);
+    renderArchiveResultsList(archiveVisibleRecords);
+    return true;
+  } catch (error) {
+    console.error("Archive reload after save failed:", error);
+    showArchiveToast(
+      t("archive_saved_reload_failed", "Record was saved, but the results list could not be refreshed."),
+      "warning"
+    );
+    return false;
+  } finally {
+    // The save response is authoritative; do not replace it with cached details.
+    archiveSelectedRecord = savedRecord;
+    archiveRenderRecordDetails(savedRecord);
+    archiveRenderActionBar({ hasRecord: true, canEdit: canEditArchiveRecord(savedRecord) });
+    archiveUpdateSelectedResultCard();
+  }
+}
+
 async function loadArchiveRecords(limit = 100, offset = 0, options = {}) {
+  ensureArchiveResultsRefreshButton();
+  archiveResultsLoadCount += 1;
+  try {
+    return await archiveFetchRecords(limit, offset, options);
+  } finally {
+    archiveResultsLoadCount -= 1;
+  }
+}
+
+async function archiveFetchRecords(limit = 100, offset = 0, options = {}) {
   const { preserveSelection = false } = options;
   const scopes = getArchiveEnabledScopes();
 
@@ -4414,6 +4750,7 @@ async function loadArchiveRecords(limit = 100, offset = 0, options = {}) {
   //console.log("Archive fetch URL:", `/api/archive?${params.toString()}`);
 
   const response = await fetch(`/api/archive?${params.toString()}`, {
+    cache: "no-store",
     method: "GET",
     credentials: "include"
   });
@@ -4424,7 +4761,14 @@ async function loadArchiveRecords(limit = 100, offset = 0, options = {}) {
     throw new Error(data.detail || data.error || "Failed to load archive records");
   }
 
-  archiveAllRecords = data.records || [];
+  try {
+    await loadDeletedSinceCacheArchive();
+  } catch (error) {
+    console.warn("Deleted archive reconciliation unavailable:", error);
+    archiveDeletedSinceCacheRecords = [];
+  }
+
+  archiveAllRecords = (data.records || []).map(reconcileDeletedArchiveRecord);
   archiveTotalCount = data.total || 0;
   archiveLimit = data.limit || limit;
   archiveOffset = data.offset || offset;
@@ -4751,6 +5095,7 @@ function updateArchiveGroupedResultsCountText() {
 
 function renderArchiveResultsList(records) {
   if (!archiveResultsList) return;
+  ensureArchiveResultsRefreshButton();
 
   updateArchiveGroupedResultsCountText();
 
@@ -4774,6 +5119,7 @@ function renderArchiveResultsList(records) {
     .map((record, index) => {
       const s = record.summary || {};
       const isRecentSave = archiveIsSavedSinceCacheRefresh(record);
+      const isDeleted = record?.source?.is_deleted === true;
 
       const caalId =
         record.identity?.caal_id ||
@@ -4790,7 +5136,7 @@ function renderArchiveResultsList(records) {
 
       return `
         <div
-          class="result-card ${archiveSelectedRecord?.identity?.id === record.identity?.id ? "is-selected" : ""} ${isRecentSave ? "recent-save-card" : ""}"
+          class="result-card ${archiveSelectedRecord?.identity?.id === record.identity?.id ? "is-selected" : ""} ${isRecentSave ? "recent-save-card" : ""} ${isDeleted ? "deleted-cache-card" : ""}"
           data-archive-result-index="${index}"
           data-archive-record-id="${record.identity?.id ?? ""}"
           title="${
@@ -4804,9 +5150,16 @@ function renderArchiveResultsList(records) {
         >
           <div class="result-card-topline">
             <strong>${safeArchiveValue(title)}</strong>
-            <span class="${archiveScopeBadgeClass(record)}">
-              ${safeArchiveValue(archiveScopeLabel(record.source?.scope))}
-            </span>
+            ${
+              isDeleted
+                ? `<div class="result-card-badges">
+                     <span class="record-status-badge record-status-deleted">
+                       ${t("deleted_since_cache_refresh", "Deleted since cache refresh")}
+                     </span>
+                     ${archiveResultWorkspaceBadge(record)}
+                   </div>`
+                : archiveResultWorkspaceBadge(record)
+            }
           </div>
 
           <div class="result-card-meta">${safeArchiveValue(caalId)}</div>
@@ -5362,6 +5715,7 @@ function archiveRenderDisplayMode(record) {
   : `<span class="record-status-badge record-status-readonly">${archiveLabel("Read only", "Read only")}</span>`;
 
   archiveRecordDetails.innerHTML = `
+    ${archiveDeletionNoticeHtml(record)}
     <div class="${archiveRecordTitleClass(record)}">
       <div class="record-title-row">
         <div>
@@ -5648,7 +6002,8 @@ if (archiveCancelEditBtn) {
 
 if (archiveSaveBtn) {
   archiveSaveBtn.onclick = async () => {
-    if (archiveSaveBtn.disabled) return;
+    if (archiveSaveBtn.disabled || archiveSaveInProgress) return;
+    archiveSaveInProgress = true;
 
     archiveSaveBtn.disabled = true;
     archiveSaveBtn.classList.add("is-disabled");
@@ -5727,142 +6082,15 @@ if (archiveSaveBtn) {
         canEdit: canEditArchiveRecord(savedRecord)
       });
 
-      const savedStorage =
-        savedRecord?.source?.storage ||
-        record?.source?.storage ||
-        archiveSelectedRecord?.source?.storage ||
-        null;
+      showArchiveToast(
+        isNewRecord
+          ? t("archive_record_created", "Archive record created")
+          : t("archive_record_saved", "Archive record saved"),
+        "success",
+        3000
+      );
 
-      const isPublicCaalArchiveRecord = savedStorage === "public_caal";
-
-      if (isNewRecord && isPublicCaalArchiveRecord) {
-        showArchiveToast(
-          t(
-            "caal_archive_record_created_cache_pending",
-            "Archive record saved to the public CAAL table. It may not appear in search/list results until the CAAL cache refreshes."
-          ),
-          "success",
-          10000
-        );
-
-        setTimeout(() => {
-          archiveJustSavedRecordId = null;
-          archiveUpdateSelectedResultCard();
-        }, 2500);
-
-        return;
-      }
-
-      if (isNewRecord) {
-        showArchiveToast(
-          t("archive_record_created", "Archive record created"),
-          "success",
-          3000
-        );
-      } else if (isPublicCaalArchiveRecord) {
-        showArchiveToast(
-          t(
-            "caal_archive_record_saved_cache_pending",
-            "Record saved. This is a CAAL archive record, so search/list values may not update until the CAAL cache refreshes. Your changes have been saved, but they may not appear immediately in the results list."
-          ),
-          "success",
-          12000
-        );
-      } else {
-        showArchiveToast(
-          saveSummary?.caal_id
-            ? `${t("archive_record_saved", "Archive record saved")}: ${saveSummary.caal_id}`
-            : t("archive_record_saved", "Archive record saved"),
-          "success",
-          3000
-        );
-      }
-      
-      if (!isNewRecord && isPublicCaalArchiveRecord && data.record) {
-        const currentRecord = {
-          ...data.record,
-          source: {
-            ...(data.record.source || {}),
-            scope: data.record.source?.scope || record.source?.scope || "all_caal",
-            storage: data.record.source?.storage || savedStorage,
-            is_promoted: data.record.source?.is_promoted ?? true,
-            is_editable: true
-          }
-        };
-
-        archivePendingNewRecord = null;
-        archiveSelectedRecord = currentRecord;
-        archiveIsEditMode = false;
-        archiveIsDirty = false;
-        archiveJustSavedRecordId = currentRecord.identity.id;
-
-        archiveRenderRecordDetails(currentRecord);
-        archiveRenderActionBar({
-          hasRecord: true,
-          canEdit: canEditArchiveRecord(currentRecord)
-        });
-
-        try {
-          await loadRecentlySavedArchiveRecords();
-          archiveUpdateSelectedResultCard();
-        } catch (error) {
-          console.warn("Could not refresh recently saved archive markers:", error);
-        }
-
-        showArchiveToast(
-          t(
-            "caal_archive_record_saved_cache_pending",
-            "Record saved. This is a CAAL archive record, so search/list values may not update until the CAAL cache refreshes. Your changes have been saved, but they may not appear immediately in the results list."
-          ),
-          "success",
-          12000
-        );
-
-        return;
-      }
-      
-      try {
-        await loadArchiveRecords(archiveLimit, archiveOffset, {
-          preserveSelection: true
-        });
-
-        const refreshedLightRecord = archiveAllRecords.find(
-          (item) => Number(item?.identity?.id) === Number(savedRecord.identity.id)
-        );
-
-        if (refreshedLightRecord) {
-          try {
-            const refreshedFullRecord = await loadFullArchiveRecord(refreshedLightRecord);
-
-            archiveSelectedRecord = refreshedFullRecord;
-            archiveRenderRecordDetails(refreshedFullRecord);
-            applyArchiveStaticLabels();
-          } catch (error) {
-            console.error("Failed to reload full archive record after save:", error);
-
-            archiveSelectedRecord = savedRecord;
-            archiveRenderRecordDetails(savedRecord);
-          }
-        } else {
-          archiveSelectedRecord = savedRecord;
-          archiveRenderRecordDetails(savedRecord);
-        }
-
-        archiveUpdateSelectedResultCard();
-      } catch (reloadError) {
-        console.error("Archive reload after save failed:", reloadError);
-
-        archiveSelectedRecord = savedRecord;
-        archiveRenderRecordDetails(savedRecord);
-
-        showArchiveToast(
-          t(
-            "archive_saved_reload_failed",
-            "Record was saved, but the results list could not be refreshed."
-          ),
-          "warning"
-        );
-      }
+      await archiveRefreshResultsAfterSave(savedRecord, { isNewRecord });
 
       setTimeout(() => {
         archiveJustSavedRecordId = null;
@@ -5883,6 +6111,7 @@ if (archiveSaveBtn) {
       archiveIsDirty = true;
       archiveSyncModeVisualState();
     } finally {
+      archiveSaveInProgress = false;
       archiveSaveBtn.disabled = false;
       archiveSaveBtn.classList.remove("is-disabled");
       archiveSaveBtn.setAttribute("aria-busy", "false");
@@ -5902,6 +6131,10 @@ if (archiveSaveBtn) {
 
 if (archiveDeleteBtn) {
   archiveDeleteBtn.onclick = archiveDeleteCurrentRecord;
+}
+
+if (archiveReinstateBtn) {
+  archiveReinstateBtn.onclick = archiveReinstateCurrentRecord;
 }
 
   archiveWireEditMultiSelects();
@@ -5927,6 +6160,7 @@ if (toggleArchiveFiltersBtn && archiveFiltersPanel) {
   toggleArchiveFiltersBtn.addEventListener("click", () => {
     const isHidden = archiveFiltersPanel.hidden;
     archiveFiltersPanel.hidden = !isHidden;
+    archiveSyncFilterToolbar();
     toggleArchiveFiltersBtn.textContent = isHidden
       ? t("hide_advanced_filters", "Hide advanced filters")
       : t("advanced_filters", "Advanced filters");

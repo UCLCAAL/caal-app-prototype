@@ -17,6 +17,20 @@ const {
 
 const router = express.Router();
 
+const {
+  buildMonumentRecordData,
+  loadMonumentRecordFieldLabels,
+  loadMonumentRecordDocumentLabels
+} = require("./recordDocuments/monument/monumentRecordData");
+
+const {
+  buildMonumentRecordModel
+} = require("./recordDocuments/monument/monumentRecordModel");
+
+const {
+  renderMonumentRecordPdf
+} = require("./recordDocuments/monument/monumentRecordRenderer");
+
 // ========================================================
 // CONFIG
 // ========================================================
@@ -3209,7 +3223,13 @@ router.get("/records", async (req, res) => {
           'Interpretation', b.list_interpretation,
           'Comments', b.list_comments,
           'Notes on Condition', b.list_notes_condition,
-          'Notes on Risk', b.list_notes_risk
+          'Notes on Risk', b.list_notes_risk,
+
+          'Content Type',
+            COALESCE(
+              archive_public."Content Type"::text,
+              archive_kz."Content Type"::text
+            )
         ) AS raw,
 
         rel.relation_summary
@@ -3219,6 +3239,17 @@ router.get("/records", async (req, res) => {
         AND b.source_table  = p.source_table
         AND b.source_row_id = p.source_row_id
         AND b.record_type   = p.record_type
+      LEFT JOIN public."CAAL_Archive" archive_public
+        ON p.record_type = 'archive'
+        AND p.source_schema = 'public'
+        AND p.source_table = 'CAAL_Archive'
+        AND archive_public.id::text = p.source_row_id
+
+      LEFT JOIN kz."CAAL_Archive" archive_kz
+        ON p.record_type = 'archive'
+        AND p.source_schema = 'kz'
+        AND p.source_table = 'CAAL_Archive'
+        AND archive_kz.id::text = p.source_row_id
       LEFT JOIN LATERAL (
         SELECT jsonb_build_object(
           'count', COUNT(r.edge_id)::integer,
@@ -3387,7 +3418,13 @@ router.get("/records-by-type", async (req, res) => {
           'Interpretation', b.list_interpretation,
           'Comments', b.list_comments,
           'Notes on Condition', b.list_notes_condition,
-          'Notes on Risk', b.list_notes_risk
+          'Notes on Risk', b.list_notes_risk,
+
+          'Content Type',
+            COALESCE(
+              archive_public."Content Type"::text,
+              archive_kz."Content Type"::text
+            )
         ) AS raw,
 
         rel.relation_summary
@@ -3397,6 +3434,18 @@ router.get("/records-by-type", async (req, res) => {
         AND b.source_table  = p.source_table
         AND b.source_row_id = p.source_row_id
         AND b.record_type   = p.record_type
+      LEFT JOIN public."CAAL_Archive" archive_public
+        ON p.record_type = 'archive'
+        AND p.source_schema = 'public'
+        AND p.source_table = 'CAAL_Archive'
+        AND archive_public.id::text = p.source_row_id
+
+      LEFT JOIN kz."CAAL_Archive" archive_kz
+        ON p.record_type = 'archive'
+        AND p.source_schema = 'kz'
+        AND p.source_table = 'CAAL_Archive'
+        AND archive_kz.id::text = p.source_row_id
+
       LEFT JOIN LATERAL (
         SELECT jsonb_build_object(
           'count', COUNT(r.edge_id)::integer,
@@ -3924,96 +3973,304 @@ router.get("/centroids", async (req, res) => {
   }
 });
 
+// full record get
+async function loadViewerIdentityForRecordRequest(
+  req,
+  session,
+  lang
+) {
+  const sourceSchema =
+    String(
+      req.query.source_schema || ""
+    ).trim();
+
+  const sourceTable =
+    String(
+      req.query.source_table || ""
+    ).trim();
+
+  const sourceRowId =
+    String(
+      req.query.source_row_id || ""
+    ).trim();
+
+  const caalId =
+    String(
+      req.query.caal_id ||
+      req.query.caalId ||
+      ""
+    ).trim();
+
+  const workspaceCode =
+    getSessionWorkspaceCode(session) ||
+    "caal";
+
+  const allowedScopes =
+    allowedScopesForSession(session);
+
+  if (!allowedScopes.length) {
+    return null;
+  }
+
+  const selectSql = `
+    SELECT
+      v.record_type,
+      v.dataset_label,
+      v.source_schema,
+      v.source_table,
+      v.source_row_id,
+      v.caal_id,
+      v.display_label,
+      v.details_json,
+
+      ${sourceScopeCaseSql(
+        "$1",
+        "v"
+      )} AS source_scope,
+
+      ${storageScopeCaseSql(
+        "v"
+      )} AS storage_scope,
+
+      ${isEditableSql(
+        "$1",
+        "v"
+      )} AS is_editable,
+
+      ${viewerDisplayJsonSql(
+        "v",
+        lang
+      )} AS display,
+
+      ${viewerMonumentTypePathDisplaySql(
+        "v",
+        lang
+      )} AS monument_type_path,
+
+      ${viewerMonumentTypeConceptPathSql(
+        "v"
+      )} AS monument_type_concept_path,
+
+      ${viewerCanonicalJsonSql(
+        "v"
+      )} AS canonical,
+
+      ST_AsGeoJSON(
+        v.geom_4326
+      )::json AS geometry
+
+    FROM ${VIEWER_BASE_MV} v
+  `;
+
+  // Exact source identity is preferred.
+  if (
+    sourceSchema &&
+    sourceTable &&
+    sourceRowId
+  ) {
+    const result =
+      await pool.query(
+        `
+        ${selectSql}
+
+        WHERE
+          v.source_schema = $2
+          AND v.source_table = $3
+          AND v.source_row_id = $4
+
+          AND ${sourceScopeCaseSql(
+            "$1",
+            "v"
+          )} = ANY($5::text[])
+
+        LIMIT 1
+        `,
+        [
+          workspaceCode,
+          sourceSchema,
+          sourceTable,
+          sourceRowId,
+          allowedScopes
+        ]
+      );
+
+    return result.rows[0] || null;
+  }
+
+  // CAAL ID is the fallback where exact source identity
+  // has not been supplied.
+  if (caalId) {
+    const result =
+      await pool.query(
+        `
+        ${selectSql}
+
+        WHERE
+          lower(trim(v.caal_id)) =
+          lower(trim($2))
+
+          AND ${sourceScopeCaseSql(
+            "$1",
+            "v"
+          )} = ANY($3::text[])
+
+        ORDER BY
+          CASE
+            WHEN v.source_schema = $1
+            THEN 0
+            ELSE 1
+          END,
+
+          v.record_type,
+          v.source_row_id
+
+        LIMIT 1
+        `,
+        [
+          workspaceCode,
+          caalId,
+          allowedScopes
+        ]
+      );
+
+    return result.rows[0] || null;
+  }
+
+  return null;
+}
+
 router.get("/record", async (req, res) => {
+  const session =
+    requireSession(req, res);
+
+  if (!session) return;
+
+  const lang =
+    viewerLangFromReq(
+      req,
+      session
+    );
+
+  const sourceSchema =
+    String(
+      req.query.source_schema || ""
+    ).trim();
+
+  const sourceTable =
+    String(
+      req.query.source_table || ""
+    ).trim();
+
+  const sourceRowId =
+    String(
+      req.query.source_row_id || ""
+    ).trim();
+
+  const caalId =
+    String(
+      req.query.caal_id ||
+      req.query.caalId ||
+      ""
+    ).trim();
+
+  /*
+    Preserve the existing 400 response when
+    the request contains no usable identity.
+  */
+  if (
+    !(
+      sourceSchema &&
+      sourceTable &&
+      sourceRowId
+    ) &&
+    !caalId
+  ) {
+    return res.status(400).json({
+      ok: false,
+      error:
+        "Provide source_schema, source_table and source_row_id, or provide caal_id"
+    });
+  }
+
+  try {
+    const identityRow =
+      await loadViewerIdentityForRecordRequest(
+        req,
+        session,
+        lang
+      );
+
+    if (!identityRow) {
+      return res.status(404).json({
+        ok: false,
+        error:
+          "Viewer record not found"
+      });
+    }
+
+    const rawSourceRow =
+      await loadViewerRawSourceRow(
+        identityRow
+      );
+
+    const record =
+      buildViewerRecord({
+        ...identityRow,
+
+        // Full detail pane uses
+        // original table fields.
+        raw:
+          rawSourceRow || {},
+
+        // Optional structured sections
+        // stay separate.
+        detail_sections:
+          viewerStructuredDetailSections(
+            identityRow.details_json
+          )
+      });
+
+    record.relations =
+      await loadViewerRelationsForCaalId(
+        identityRow.caal_id
+      );
+
+    return res.json({
+      ok: true,
+      record
+    });
+  } catch (error) {
+    console.error(
+      "Resource viewer record failed:",
+      error
+    );
+
+    return res.status(500).json({
+      ok: false,
+      error:
+        "Failed to load viewer record",
+      detail: error.message
+    });
+  }
+});
+
+// pdf get route
+router.get("/record/document.pdf", async (req, res) => {
   const session = requireSession(req, res);
   if (!session) return;
 
+  // Assumption for v1: a downloadable PDF follows the same capability
+  // restriction as other Viewer downloads.
+  if (!requireExportCapability(req, res, session)) return;
+
   const lang = viewerLangFromReq(req, session);
 
-  const sourceSchema = String(req.query.source_schema || "").trim();
-  const sourceTable = String(req.query.source_table || "").trim();
-  const sourceRowId = String(req.query.source_row_id || "").trim();
-  const caalId = String(req.query.caal_id || req.query.caalId || "").trim();
-
   try {
-    let identityRow = null;
-
-    if (sourceSchema && sourceTable && sourceRowId) {
-      const identityResult = await pool.query(
-        `
-        SELECT
-          v.record_type,
-          v.dataset_label,
-          v.source_schema,
-          v.source_table,
-          v.source_row_id,
-          v.caal_id,
-          v.display_label,
-          v.details_json,
-          ${sourceScopeCaseSql("$1", "v")} AS source_scope,
-          ${storageScopeCaseSql("v")} AS storage_scope,
-          ${isEditableSql("$1", "v")} AS is_editable,
-          ${viewerDisplayJsonSql("v", lang)} AS display,
-          ${viewerMonumentTypePathDisplaySql("v", lang)} AS monument_type_path,
-          ${viewerMonumentTypeConceptPathSql("v")} AS monument_type_concept_path,
-          ${viewerCanonicalJsonSql("v")} AS canonical,
-          ST_AsGeoJSON(v.geom_4326)::json AS geometry
-        FROM ${VIEWER_BASE_MV} v
-        WHERE v.source_schema = $2
-          AND v.source_table = $3
-          AND v.source_row_id = $4
-        LIMIT 1
-        `,
-        [
-          getSessionWorkspaceCode(session) || "caal",
-          sourceSchema,
-          sourceTable,
-          sourceRowId
-        ]
-      );
-
-      identityRow = identityResult.rows[0] || null;
-    } else if (caalId) {
-      const identityResult = await pool.query(
-        `
-        SELECT
-          v.record_type,
-          v.dataset_label,
-          v.source_schema,
-          v.source_table,
-          v.source_row_id,
-          v.caal_id,
-          v.display_label,
-          v.details_json,
-          ${sourceScopeCaseSql("$1", "v")} AS source_scope,
-          ${storageScopeCaseSql("v")} AS storage_scope,
-          ${isEditableSql("$1", "v")} AS is_editable,
-          ${viewerDisplayJsonSql("v", lang)} AS display,
-          ${viewerMonumentTypePathDisplaySql("v", lang)} AS monument_type_path,
-          ${viewerMonumentTypeConceptPathSql("v")} AS monument_type_concept_path,
-          ${viewerCanonicalJsonSql("v")} AS canonical,
-          ST_AsGeoJSON(v.geom_4326)::json AS geometry
-        FROM ${VIEWER_BASE_MV} v
-        WHERE lower(trim(v.caal_id)) = lower(trim($2))
-        ORDER BY
-          CASE WHEN v.source_schema = $1 THEN 0 ELSE 1 END,
-          v.record_type,
-          v.source_row_id
-        LIMIT 1
-        `,
-        [
-          getSessionWorkspaceCode(session) || "caal",
-          caalId
-        ]
-      );
-
-      identityRow = identityResult.rows[0] || null;
-    } else {
-      return res.status(400).json({
-        ok: false,
-        error: "Provide source_schema, source_table and source_row_id, or provide caal_id"
-      });
-    }
+    const identityRow = await loadViewerIdentityForRecordRequest(
+      req,
+      session,
+      lang
+    );
 
     if (!identityRow) {
       return res.status(404).json({
@@ -4022,34 +4279,107 @@ router.get("/record", async (req, res) => {
       });
     }
 
+    if (identityRow.record_type !== "monument") {
+      return res.status(400).json({
+        ok: false,
+        error: "Monument Record PDF is currently available for Monument records only"
+      });
+    }
+
     const rawSourceRow = await loadViewerRawSourceRow(identityRow);
 
-    const record = buildViewerRecord({
-      ...identityRow,
+    if (!rawSourceRow) {
+      return res.status(404).json({
+        ok: false,
+        error: "Monument source row not found"
+      });
+    }
 
-      // Full detail pane uses original table fields.
-      raw: rawSourceRow || {},
+    const [
+      recordData,
+      fieldLabels,
+      documentLabels
+    ] = await Promise.all([
+      buildMonumentRecordData(pool, {
+        raw: rawSourceRow,
+        identity: identityRow,
+        lang
+      }),
+      loadMonumentRecordFieldLabels(
+        pool,
+        lang
+      ),
+      loadMonumentRecordDocumentLabels(
+        pool,
+        lang
+      )
+    ]);
 
-      // Optional structured sections stay separate.
-      detail_sections: viewerStructuredDetailSections(identityRow.details_json)
-    });
+    const labels = {
+      ...fieldLabels,
+      ...documentLabels
+    };
 
-    record.relations = await loadViewerRelationsForCaalId(identityRow.caal_id);
+    const relations =
+      await loadViewerRelationsForCaalId(
+        identityRow.caal_id
+      );
 
-    return res.json({
-      ok: true,
-      record
-    });
+    const relatedResources =
+      relations.map((relation) => ({
+        relationship:
+          relation.relation_type,
+
+        record_type:
+          relation.related_record_type,
+
+        label:
+          relation.related_display_label ||
+          relation.related_dataset_label ||
+          relation.related_caal_id,
+
+        caal_id:
+          relation.related_caal_id
+      }));
+
+    const model =
+      buildMonumentRecordModel(
+        recordData,
+        {
+          lang,
+          labels,
+
+          branding: {
+            organisation: ""
+          },
+
+          relatedResources
+        }
+      );
+
+    const pdf = await renderMonumentRecordPdf(model);
+
+    const safeId = String(recordData.caal_id || "monument")
+      .replace(/[^A-Za-z0-9._-]+/g, "_");
+
+    res.setHeader("Content-Type", "application/pdf");
+    res.setHeader(
+      "Content-Disposition",
+      `attachment; filename="${safeId}_monument_record.pdf"`
+    );
+
+    return res.send(pdf);
   } catch (error) {
-    console.error("Resource viewer record failed:", error);
+    console.error("Monument Record PDF failed:", error);
 
     return res.status(500).json({
       ok: false,
-      error: "Failed to load viewer record",
+      error: "monument_record_pdf_failed",
       detail: error.message
     });
   }
 });
+//
 
 router.get("/counts", async (req, res) => {
   const session = requireSession(req, res);

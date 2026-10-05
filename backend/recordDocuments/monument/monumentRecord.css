@@ -1,0 +1,332 @@
+@page {
+  size: A4;
+  margin: 15mm 16mm 18mm;
+}
+
+:root {
+  font-family: Arial, Helvetica, sans-serif;
+  color: #202020;
+  background: #ffffff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: #eeeeee;
+  font-size: 10.5pt;
+  line-height: 1.42;
+}
+
+.record-document {
+  width: 210mm;
+  min-height: 297mm;
+  margin: 0 auto;
+  padding: 15mm 16mm 18mm;
+  background: #ffffff;
+}
+
+.record-header {
+  padding-bottom: 9mm;
+  border-bottom: 1.5px solid #222222;
+  margin-bottom: 8mm;
+}
+
+.record-branding {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8mm;
+  min-height: 15mm;
+}
+
+.record-branding-left {
+  display: flex;
+  align-items: center;
+  gap: 4mm;
+}
+
+.record-logo {
+  max-width: 34mm;
+  max-height: 13mm;
+  object-fit: contain;
+}
+
+.record-logo-secondary {
+  margin-left: auto;
+}
+
+.record-organisation {
+  font-size: 9.5pt;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.record-organisation-subtitle {
+  margin-top: 1mm;
+  font-size: 8.5pt;
+  color: #555555;
+}
+
+.record-title-block {
+  margin-top: 10mm;
+  text-align: center;
+}
+
+.record-kicker {
+  font-size: 18pt;
+  font-weight: 700;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+
+.record-title-block h1 {
+  margin: 6mm 0 1.5mm;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 21pt;
+  font-weight: 600;
+  line-height: 1.15;
+}
+
+.record-secondary-name {
+  margin-top: 1mm;
+  font-size: 11pt;
+}
+
+.record-id {
+  display: flex;
+  justify-content: center;
+  gap: 2.5mm;
+  margin-top: 5mm;
+  font-weight: 700;
+}
+
+.record-id-label {
+  color: #555555;
+  font-weight: 500;
+}
+
+.record-location-summary {
+  margin-top: 2mm;
+  color: #555555;
+  font-size: 9.5pt;
+}
+
+.record-section {
+  margin: 0 0 8mm;
+  break-inside: auto;
+}
+
+.record-section > h2 {
+  margin: 0 0 4mm;
+  padding: 0 0 1.7mm;
+  border-bottom: 1px solid #777777;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 12.5pt;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.035em;
+}
+
+.record-section-number {
+  display: inline-block;
+  min-width: 9mm;
+}
+
+.record-subgroup {
+  margin-bottom: 4.5mm;
+}
+
+.record-subgroup h3,
+.record-description-block h3 {
+  margin: 0 0 2mm;
+  font-size: 9pt;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #555555;
+}
+
+.record-field-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  column-gap: 8mm;
+  row-gap: 0;
+  margin: 0;
+}
+
+.record-field {
+  display: grid;
+  grid-template-columns: minmax(34mm, 0.8fr) minmax(0, 1.2fr);
+  gap: 3mm;
+  padding: 2mm 0;
+  border-bottom: 0.4px solid #d2d2d2;
+  break-inside: avoid;
+}
+
+.record-field-wide {
+  grid-column: 1 / -1;
+}
+
+.record-field dt {
+  margin: 0;
+  color: #555555;
+  font-size: 8.7pt;
+}
+
+.record-field dd {
+  margin: 0;
+  font-weight: 500;
+  overflow-wrap: anywhere;
+}
+
+.record-multiline {
+  white-space: pre-wrap;
+}
+
+.record-description-block {
+  margin-bottom: 6mm;
+}
+
+.record-description-block p {
+  margin: 0;
+  font-family: Georgia, "Times New Roman", serif;
+  font-size: 10.7pt;
+  line-height: 1.52;
+  white-space: pre-wrap;
+  text-align: left;
+}
+
+.record-map {
+  margin: 6mm 0 0;
+  break-inside: avoid;
+}
+
+.record-map-image,
+.record-map-placeholder {
+  display: block;
+  width: 100%;
+  height: 72mm;
+  border: 0.6px solid #777777;
+}
+
+.record-map-image {
+  object-fit: cover;
+}
+
+.record-map-placeholder {
+  position: relative;
+  background:
+    linear-gradient(90deg, transparent 49.8%, #ececec 50%, transparent 50.2%),
+    linear-gradient(0deg, transparent 49.8%, #ececec 50%, transparent 50.2%);
+}
+
+.record-map-crosshair {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  transform: translate(-50%, -52%);
+  font-size: 24pt;
+  line-height: 1;
+}
+
+.record-map-placeholder-text {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 4mm;
+  text-align: center;
+  color: #777777;
+  font-size: 8.5pt;
+}
+
+.record-map figcaption {
+  display: flex;
+  justify-content: space-between;
+  gap: 6mm;
+  margin-top: 1.5mm;
+  font-size: 7.7pt;
+  color: #666666;
+}
+
+.record-related-resources {
+  break-inside: avoid;
+}
+
+.record-related-reserved {
+  min-height: 48mm;
+  border-bottom: 0.4px solid #d2d2d2;
+}
+
+.record-related-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 9pt;
+}
+
+.record-related-table th,
+.record-related-table td {
+  padding: 2mm 2.5mm;
+  text-align: left;
+  vertical-align: top;
+  border-bottom: 0.4px solid #d2d2d2;
+}
+
+.record-related-table th {
+  font-weight: 700;
+  color: #555555;
+}
+
+.record-documentary {
+  break-before: page;
+}
+
+.record-documentary-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7mm;
+}
+
+.record-documentary-item {
+  margin: 0;
+  break-inside: avoid;
+}
+
+.record-documentary-item img {
+  width: 100%;
+  max-height: 105mm;
+  object-fit: contain;
+  border: 0.4px solid #cccccc;
+}
+
+.record-documentary-item figcaption {
+  margin-top: 2mm;
+  font-size: 8.5pt;
+  color: #555555;
+}
+
+.record-footer {
+  margin-top: 10mm;
+  padding-top: 2.5mm;
+  border-top: 0.6px solid #999999;
+  display: flex;
+  justify-content: space-between;
+  gap: 8mm;
+  font-size: 7.8pt;
+  color: #666666;
+}
+
+@media print {
+  body {
+    background: #ffffff;
+  }
+
+  .record-document {
+    width: auto;
+    min-height: 0;
+    margin: 0;
+    padding: 0;
+  }
+}

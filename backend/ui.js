@@ -20,6 +20,8 @@ function viewNameForPage(page) {
       return "ui.v_label_monuments";
     case "archive":
       return "ui.v_label_archive";
+    case "monument_record":
+      return "ui.v_label_monument_record";
     default:
       return null;
   }
@@ -34,7 +36,7 @@ router.get("/labels", async (req, res) => {
   if (!viewName) {
     return res.status(400).json({
       ok: false,
-      error: "Unsupported page. Use page=monuments or page=archive"
+      error: "Unsupported UI label page"
     });
   }
 

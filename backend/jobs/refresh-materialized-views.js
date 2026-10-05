@@ -223,7 +223,7 @@ async function markCacheChecked(cacheKey, note) {
   );
 }
 
-async function markCacheRefreshed(cacheKey, viewName) {
+async function markCacheRefreshed(cacheKey, viewName, snapshotAt) {
   if (!cacheKey) return;
 
   await pool.query(
@@ -238,7 +238,7 @@ async function markCacheRefreshed(cacheKey, viewName) {
     )
     VALUES (
       $1,
-      now(),
+      COALESCE($3::timestamptz, now()),
       'cron',
       now(),
       'cron',
@@ -254,7 +254,8 @@ async function markCacheRefreshed(cacheKey, viewName) {
     `,
     [
       cacheKey,
-      `${viewName} refreshed by materialized-view cron job`
+      `${viewName} refreshed by materialized-view cron job`,
+      snapshotAt || null
     ]
   );
 }
@@ -273,12 +274,21 @@ async function refreshView(viewConfig) {
     return;
   }
 
+  // Capture the snapshot time BEFORE refreshing. The MV reflects data as of
+  // roughly this moment, so refreshed_at must mean "data as of", not "finished at".
+  // The 30 s margin covers rows whose Tstamp was set just before their commit;
+  // overlaps are harmless because the frontend suppresses cached duplicates by CAAL_ID.
+  const { rows: startRows } = await pool.query(
+    `SELECT clock_timestamp() - interval '30 seconds' AS snapshot_at`
+  );
+  const snapshotAt = startRows[0].snapshot_at;
+
   console.log(`[MV refresh] Refreshing ${viewName}...`);
 
   await pool.query(`REFRESH MATERIALIZED VIEW CONCURRENTLY ${viewName}`);
   await pool.query(`ANALYZE ${viewName}`);
 
-  await markCacheRefreshed(cacheKey, viewName);
+  await markCacheRefreshed(cacheKey, viewName, snapshotAt);
 
   refreshedThisRun.add(viewName);
   console.log(`[MV refresh] Done ${viewName}`);

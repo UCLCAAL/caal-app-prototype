@@ -1,3 +1,5 @@
+const viewerResultsRefreshState = { active: false, pending: null };
+
 // ========================================================
 // RESOURCE VIEWER PAGE LOGIC
 // Read-only v1:
@@ -64,6 +66,10 @@ let viewerMonumentLookups = {};
 let viewerArchiveLookups = {};
 
 let viewerLabels = {};
+let viewerMonumentLabels = {};
+let viewerArchiveLabels = {};
+let viewerLabelIndexes = { viewer: new Map(), monuments: new Map(), archive: new Map() };
+let viewerLabelLoadVersion = 0;
 
 let viewerOverviewAbortController = null;
 let viewerOverviewRequestSequence = 0;
@@ -1405,17 +1411,17 @@ function renderViewerMeasurementsGroup(raw,
 
           <div class="measurement-row-fields">
             <div class="measurement-field">
-              <span class="detail-label">${escapeHtml(t("value", "Value"))}</span>
+              <span class="detail-label">${escapeHtml(vLabel("Value", "Value"))}</span>
               <div class="detail-value">${viewerSafeDisplayValue(row.value)}</div>
             </div>
 
             <div class="measurement-field">
-              <span class="detail-label">${escapeHtml(t("unit", "Unit"))}</span>
+              <span class="detail-label">${escapeHtml(vLabel("Unit", "Unit"))}</span>
               <div class="detail-value">${viewerSafeDisplayValue(unitTransform(row.unit))}</div>
             </div>
 
             <div class="measurement-field">
-              <span class="detail-label">${escapeHtml(t("type", "Type"))}</span>
+              <span class="detail-label">${escapeHtml(vLabel("Type", "Type"))}</span>
               <div class="detail-value">${viewerSafeDisplayValue(typeTransform(row.type))}</div>
             </div>
           </div>
@@ -1621,7 +1627,7 @@ function renderViewerTypeOfAnomalyGroup(raw) {
 
         <div class="detail-item full-width viewer-assessment-block">
           <div class="viewer-subsection-header">
-            <span>${escapeHtml(vLabel("type", "Type"))}</span>
+            <span>${escapeHtml(vLabel("Type", "Type"))}</span>
           </div>
           ${renderViewerBooleanIndicatorGrid(raw, VIEWER_ANOMALY_TYPE_FIELDS)}
         </div>
@@ -2377,6 +2383,12 @@ function renderViewerRelatedResourcesGroup(record) {
                   >
                     ${escapeHtml(t("clear_related_from_map", "Clear relationships from map"))}
                   </button>
+                  <div class="caal-relationship-controls viewer-relationship-controls" hidden>
+                    <label><input type="checkbox" data-viewer-relationship-visibility="records" checked>
+                      <span>${escapeHtml(t("show_related_records", "Show related records"))}</span></label>
+                    <label><input type="checkbox" data-viewer-relationship-visibility="lines" checked>
+                      <span>${escapeHtml(t("show_relationship_lines", "Show relationship lines"))}</span></label>
+                  </div>
                 </div>
               `
               : ""
@@ -3034,6 +3046,10 @@ function setViewerStatus(message = "", { hidden = false, isError = false } = {})
 }
 
 function setViewerResultsCountText(text) {
+  if (viewerResultsRefreshState.active) {
+    viewerResultsRefreshState.pending = text;
+    return;
+  }
   const el =
     document.getElementById("filterResultsCount") ||
     document.getElementById("viewerFilterResultsCount");
@@ -3181,9 +3197,10 @@ function viewerDisplayForField(record, fieldName, rawValue) {
   );
 }
 
+// These are independent type selections, potentially from different branches.
 function viewerMonumentTypeLine(record) {
   const path = record?.summary?.monument_type_path || [];
-  return path.filter(Boolean).join(" › ");
+  return path.filter(Boolean).join("; ");
 }
 
 function viewerBestMonumentType(record) {
@@ -3192,12 +3209,25 @@ function viewerBestMonumentType(record) {
 }
 
 function viewerRecordTitle(record) {
-  if (record?.identity?.record_type === "survey_grid") {
+  const recordType =
+    record?.identity?.record_type || "";
+
+  if (recordType === "survey_grid") {
     return compactViewerText(
       firstNonBlank(
         record?.raw?.gridcode,
         record?.identity?.caal_id,
         record?.summary?.display_label
+      ),
+      90
+    );
+  }
+
+  if (recordType === "archive") {
+    return compactViewerText(
+      firstNonBlank(
+        record?.summary?.display_label,
+        record?.identity?.caal_id
       ),
       90
     );
@@ -3214,16 +3244,53 @@ function viewerRecordTitle(record) {
   );
 }
 
-function viewerResultDescription(record, maxLength = 140) {
-  const text = firstNonBlank(
-    record?.raw?.Comments,
-    record?.raw?.Interpretation,
-    record?.raw?.["Notes on Condition"],
-    record?.raw?.["Notes on Risk"],
-    record?.summary?.display_label
-  );
+function viewerResultDescription(
+  record,
+  maxLength = 140
+) {
+  const recordType =
+    record?.identity?.record_type || "";
 
-  return compactViewerText(text, maxLength);
+  if (recordType === "archive") {
+    const rawContentType =
+      firstNonBlank(
+        record?.raw?.["Content Type"],
+        record?.raw?.content_type
+      );
+
+    if (!rawContentType) {
+      return "";
+    }
+
+    const contentType =
+      viewerLookupLabel(
+        viewerArchiveLookups,
+        "content_type",
+        rawContentType
+      );
+
+    return compactViewerText(
+      `${t(
+        "archive_content_type",
+        "Content Type"
+      )}: ${contentType || rawContentType}`,
+      maxLength
+    );
+  }
+
+  const text =
+    firstNonBlank(
+      record?.raw?.Comments,
+      record?.raw?.Interpretation,
+      record?.raw?.["Notes on Condition"],
+      record?.raw?.["Notes on Risk"],
+      record?.summary?.display_label
+    );
+
+  return compactViewerText(
+    text,
+    maxLength
+  );
 }
 
 function viewerRecordSubtitle(record) {
@@ -3233,36 +3300,6 @@ function viewerRecordSubtitle(record) {
   ].filter(Boolean);
 
   return parts.join(" · ");
-}
-
-function viewerScopeLabel(record) {
-  const scope = record?.source?.scope || "";
-
-  if (scope === "workspace") {
-    return t("monuments_workspace_records", "My workspace records");
-  }
-
-  if (scope === "national_ref") {
-    return t("monuments_national_records", "National CAAL records");
-  }
-
-  if (scope === "all_caal") {
-    return viewerUserIsGlobalCaal()
-      ? t("monuments_all_records", "All CAAL records")
-      : t("monuments_other_records", "Other CAAL records");
-  }
-
-  return scope || t("read_only", "Read-only");
-}
-
-function viewerScopeBadgeClass(record) {
-  const scope = record?.source?.scope || "";
-
-  if (scope === "workspace") {
-    return "scope-badge scope-badge-editable";
-  }
-
-  return "scope-badge scope-badge-readonly";
 }
 
 function viewerRecordKey(record) {
@@ -3724,14 +3761,8 @@ function buildViewerQueryParams({
 // VIEWER LOOKUPS / ADVANCED FILTER TREE PICKER
 // Copied from Monuments, but Viewer-scoped.
 // --------------------------------------------------------
-function vLabel(key, fallback = "") {
-  return (
-    viewerLabels?.[key] ||
-    viewerLabels?.[String(key).trim()] ||
-    t(viewerLabelKey(key), fallback || key)
-  );
-}
-
+// Field labels share the canonical page dictionaries used by Monuments/Archive.
+// General interface strings still use t(); record values are not modified.
 function viewerLabelKey(value) {
   return String(value || "")
     .trim()
@@ -3740,24 +3771,85 @@ function viewerLabelKey(value) {
     .replace(/^_+|_+$/g, "");
 }
 
+function viewerBuildLabelIndex(labels) {
+  const index = new Map();
+  for (const [key, value] of Object.entries(labels || {})) {
+    if (value !== null && value !== undefined && String(value).trim() !== "") {
+      const normalized = viewerLabelKey(key);
+      // Keep first normalized match; exact keys are always checked first.
+      if (!index.has(normalized)) index.set(normalized, value);
+    }
+  }
+  return index;
+}
+
+function vLabel(key, fallback = "", sourcePage = "") {
+  const recordType = viewerSelectedRecord?.identity?.record_type;
+  const page = sourcePage || (
+    recordType === "archive" ? "archive" :
+    recordType === "monument" ? "monuments" : "viewer"
+  );
+  const sources = {
+    viewer: viewerLabels,
+    monuments: viewerMonumentLabels,
+    archive: viewerArchiveLabels
+  };
+  const order = page === "archive"
+    ? ["archive", "viewer", "monuments"]
+    : page === "monuments"
+      ? ["monuments", "viewer", "archive"]
+      : ["viewer", "monuments", "archive"];
+  const trimmed = String(key ?? "").trim();
+  const normalized = viewerLabelKey(trimmed);
+  for (const name of order) {
+    const labels = sources[name];
+    const exact = labels?.[trimmed];
+    if (exact !== null && exact !== undefined && String(exact).trim() !== "") {
+      return exact;
+    }
+    const matched = viewerLabelIndexes[name].get(normalized);
+    if (matched !== undefined) return matched;
+  }
+  return t(normalized, fallback || key);
+}
+
 async function loadViewerLabels() {
+  const version = ++viewerLabelLoadVersion;
   const lang =
     (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
     window.appSession?.profile?.preferred_language ||
     "en";
-
-  const response = await fetch(
-    `/api/viewer/labels?lang=${encodeURIComponent(lang)}`,
-    { method: "GET", credentials: "include" }
-  );
-
-  const data = await response.json();
-
-  if (!response.ok || !data.ok) {
-    throw new Error(data.error || "Failed to load viewer labels");
+  const encodedLang = encodeURIComponent(lang);
+  const urls = [
+    `/api/viewer/labels?lang=${encodedLang}`,
+    `/api/ui/labels?page=monuments&lang=${encodedLang}`,
+    `/api/ui/labels?page=archive&lang=${encodedLang}`
+  ];
+  const results = await Promise.allSettled(urls.map(async (url) => {
+    const response = await fetch(url, { method: "GET", credentials: "include" });
+    const data = await response.json();
+    if (!response.ok || !data.ok) {
+      throw new Error(data.error || "Failed to load record labels");
+    }
+    return data.labels || {};
+  }));
+  // A slower earlier language request must not overwrite the current language.
+  if (version !== viewerLabelLoadVersion) return;
+  if (results[0].status === "rejected") throw results[0].reason;
+  viewerLabels = results[0].value;
+  // Unavailable supplementary dictionaries do not prevent the Viewer loading.
+  viewerMonumentLabels = results[1].status === "fulfilled" ? results[1].value : {};
+  viewerArchiveLabels = results[2].status === "fulfilled" ? results[2].value : {};
+  viewerLabelIndexes = {
+    viewer: viewerBuildLabelIndex(viewerLabels),
+    monuments: viewerBuildLabelIndex(viewerMonumentLabels),
+    archive: viewerBuildLabelIndex(viewerArchiveLabels)
+  };
+  for (const [index, page] of [[1, "monuments"], [2, "archive"]]) {
+    if (results[index].status === "rejected") {
+      console.warn(`Viewer could not reuse ${page} labels; using available translations.`, results[index].reason);
+    }
   }
-
-  viewerLabels = data.labels || {};
 }
 
 function decorateViewerLayerFilterIcons() {
@@ -4870,6 +4962,37 @@ function populateViewerFilterLookups() {
   renderViewerActiveFilterChips();
 }
 
+// Keep active chips (including text searches) above the full-width filter toggle.
+// Move the existing clear button, preserving its translations and click handler.
+function viewerSyncFilterToolbar(hasActiveFilters = null) {
+  const strip = viewerActiveFilterStrip;
+  const chips = viewerActiveFilterChips;
+  const clear = clearViewerFiltersBtn;
+  const toggle = toggleViewerFiltersBtn;
+  const panel = viewerFiltersPanel;
+  if (!strip || !chips || !clear || !toggle || !panel) return;
+  const row = toggle.closest(".filter-action-row");
+  const anchor = row || toggle;
+  if (!anchor.parentElement || strip.contains(anchor)) return;
+  if (strip.parentElement !== anchor.parentElement || strip.nextElementSibling !== anchor) {
+    anchor.parentElement.insertBefore(strip, anchor);
+  }
+  if (clear.parentElement !== strip) strip.appendChild(clear);
+  strip.classList.add("caal-active-filter-row");
+  clear.classList.add("caal-clear-filters");
+  toggle.classList.add("caal-advanced-toggle");
+  row?.classList.add("caal-filter-action-row");
+  toggle.setAttribute("aria-controls", panel.id);
+  toggle.setAttribute("aria-expanded", String(!panel.hidden));
+  if (hasActiveFilters !== null) {
+    // Keep keyboard focus on a visible control when the final chip disappears.
+    if (!hasActiveFilters && strip.contains(document.activeElement)) toggle.focus();
+    strip.hidden = !hasActiveFilters;
+  }
+}
+
+viewerSyncFilterToolbar();
+
 function renderViewerActiveFilterChips() {
   if (!viewerActiveFilterStrip || !viewerActiveFilterChips) return;
 
@@ -4973,6 +5096,7 @@ function renderViewerActiveFilterChips() {
     });
   }
 
+  viewerSyncFilterToolbar(chips.length > 0);
   viewerActiveFilterStrip.hidden = chips.length === 0;
   viewerActiveFilterChips.innerHTML = "";
 
@@ -5298,7 +5422,7 @@ function viewerPopupMonumentTypeLine(props = {}) {
   const rawPath = props.monument_type_path;
 
   if (Array.isArray(rawPath)) {
-    return rawPath.filter(Boolean).join(" › ");
+    return rawPath.filter(Boolean).join("; ");
   }
 
   if (typeof rawPath === "string" && rawPath.trim()) {
@@ -5306,7 +5430,7 @@ function viewerPopupMonumentTypeLine(props = {}) {
       const parsed = JSON.parse(rawPath);
 
       if (Array.isArray(parsed)) {
-        return parsed.filter(Boolean).join(" › ");
+        return parsed.filter(Boolean).join("; ");
       }
     } catch {
       return rawPath.trim();
@@ -5328,6 +5452,7 @@ function viewerPopupMonumentTypeLine(props = {}) {
 // LIST / RESULTS
 // --------------------------------------------------------
 async function loadViewerRecords() {
+  ensureViewerResultsRefreshButton();
   const params = buildViewerQueryParams({
     includePaging: true,
     includeMapBbox: false
@@ -5337,6 +5462,7 @@ async function loadViewerRecords() {
     `/api/viewer/records?${params.toString()}`,
     {
       method: "GET",
+      cache: "no-store",
       credentials: "include"
     }
   );
@@ -5423,6 +5549,7 @@ async function loadViewerRecordsForType(recordType, { offset = 0 } = {}) {
 
   try {
     const response = await fetch(`/api/viewer/records-by-type?${params.toString()}`, {
+      cache: "no-store",
       method: "GET",
       credentials: "include"
     });
@@ -5550,8 +5677,56 @@ function groupViewerRecordsByType(records = []) {
   });
 }
 
+function ensureViewerResultsRefreshButton() {
+  const heading = viewerResultsList?.closest(".results-panel")?.querySelector(".results-panel-header h3");
+  if (!heading) return;
+  heading.classList.add("caal-results-heading");
+  let button = document.getElementById("refreshViewerResultsBtn");
+  if (!button) {
+    button = document.createElement("button");
+    button.id = "refreshViewerResultsBtn";
+    button.type = "button";
+    button.className = "icon-action-btn caal-results-refresh";
+    button.innerHTML = '<svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15.36-6.36L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.36 6.36L3 16"/><path d="M3 21v-5h5"/></svg>';
+    heading.appendChild(button);
+    button.addEventListener("click", async () => {
+      if (button.disabled || viewerIsLoading || viewerLoadingTypes.size > 0) return;
+      if (viewerSearchDebounceTimer) {
+        clearTimeout(viewerSearchDebounceTimer);
+        viewerSearchDebounceTimer = null;
+      }
+      viewerResultsRefreshState.pending = null;
+      setViewerResultsCountText(t("refreshing_results_list", "Refreshing results list..."));
+      viewerResultsRefreshState.active = true;
+      button.disabled = true;
+      button.setAttribute("aria-busy", "true");
+      setViewerLoading(true, t("refreshing_results_list", "Refreshing results list..."));
+      try {
+        await loadViewerRecords();
+        await reloadOpenViewerResultGroups();
+        await loadViewerMap();
+      } catch (error) {
+        viewerResultsRefreshState.pending = t("refresh_results_failed", "Could not refresh results. Please try again.");
+        console.error("Viewer results refresh failed:", error);
+        setViewerStatus(t("refresh_results_failed", "Could not refresh results. Please try again."), { isError: true });
+      } finally {
+        viewerResultsRefreshState.active = false;
+        setViewerResultsCountText(viewerResultsRefreshState.pending ?? t("refresh_results_failed", "Could not refresh results. Please try again."));
+        viewerResultsRefreshState.pending = null;
+        button.disabled = false;
+        button.setAttribute("aria-busy", "false");
+        setViewerLoading(false);
+      }
+    });
+  }
+  const label = t("refresh_results", "Refresh results");
+  button.title = label;
+  button.setAttribute("aria-label", label);
+}
+
 function renderViewerResults() {
   if (!viewerResultsList) return;
+  ensureViewerResultsRefreshButton();
 
   setViewerResultsCountText(
     `${formatCount(viewerTotalCount)} ${viewerTotalCount === 1 ? t("record", "record") : t("records", "records")}`
@@ -5661,10 +5836,6 @@ function renderViewerResults() {
                                 >
                                   <div class="result-card-topline">
                                     <strong>${escapeHtml(title)}</strong>
-
-                                    <span class="${viewerScopeBadgeClass(record)}">
-                                      ${escapeHtml(viewerScopeLabel(record))}
-                                    </span>
                                   </div>
 
                                   <div class="result-card-meta">
@@ -7318,7 +7489,7 @@ function renderViewerArchiveContentGroup(record) {
 
 function renderViewerArchiveDigitalGroup(record) {
   return renderViewerConfiguredGroup(
-    t("digital", "Digital"),
+    t("digital_files", "Digital Files"),
     record,
     [
       {
@@ -7490,7 +7661,7 @@ function renderViewerInstitutionDetailsGroup(record) {
         names: ["CAAL_ID", "caal_id"]
       },
       {
-        label: t("primary_name", "Primary Name"),
+        label: vLabel("Primary Name", "Primary Name"),
         names: [
           "Primary Name",
           "primary_name"
@@ -7507,7 +7678,7 @@ function renderViewerInstitutionDetailsGroup(record) {
         fullWidth: true
       },
       {
-        label: t("other_names", "Other Names"),
+        label: vLabel("Other Names", "Other Names"),
         names: [
           "Other Names",
           "other_names"
@@ -7536,10 +7707,7 @@ function renderViewerInstitutionDetailsGroup(record) {
         fullWidth: true
       },
       {
-        label: t(
-          "external_reference",
-          "External Reference"
-        ),
+        label: vLabel("External Reference", "External Reference"),
         html: (currentRecord) => {
           const value = viewerRecordFieldValue(
             currentRecord,
@@ -7928,6 +8096,33 @@ function renderViewerRecordDetails(record) {
     <div class="record-title">
       <div class="record-title-actions record-title-actions-topright">
         ${statusBadge}
+        ${
+          record?.identity?.record_type ===
+            "monument" &&
+          viewerCanExportData()
+            ? `
+              <button
+                type="button"
+                class="icon-action-btn record-title-icon-btn"
+                id="viewerDownloadMonumentRecordBtn"
+                title="${escapeHtml(
+                  t(
+                    "download_monument_record",
+                    "Download Monument Record"
+                  )
+                )}"
+                aria-label="${escapeHtml(
+                  t(
+                    "download_monument_record",
+                    "Download Monument Record"
+                  )
+                )}"
+              >
+                ${viewerDownloadRecordIconSvg()}
+              </button>
+            `
+            : ""
+        }
 
         ${
           record?.geometry
@@ -7995,7 +8190,33 @@ function renderViewerRecordDetails(record) {
       zoomViewerRecordOnMap(record);
     });
   }
+
+  const downloadRecordBtn = document.getElementById("viewerDownloadMonumentRecordBtn");
+
+  downloadRecordBtn?.addEventListener("click", async () => {
+      try {
+        await downloadViewerMonumentRecord(
+          record,
+          downloadRecordBtn
+        );
+      } catch (error) {
+        console.error(
+          "Monument Record download failed:",
+          error
+        );
+
+        alert(
+          error.message ||
+          t(
+            "monument_record_download_failed",
+            "Monument Record download failed"
+          )
+        );
+      }
+    }
+  );
 }
+
 
 function closeViewerRecord() {
   viewerSelectedRecord = null;
@@ -8215,6 +8436,8 @@ const VIEWER_RELATED_LAYERS = [
 ];
 
 let viewerRelatedOverlayActive = false;
+let viewerRelatedRecordsVisible = true;
+let viewerRelationshipLinesVisible = true;
 
 let viewerRelatedPopupsBound = false;
 
@@ -8404,6 +8627,9 @@ async function showViewerRelatedOnMap(caalId) {
   });
 
   viewerRelatedOverlayActive = true;
+  viewerRelatedRecordsVisible = true;
+  viewerRelationshipLinesVisible = true;
+  setViewerRelationshipLayerVisibility();
   bringViewerRelatedOverlayToFront();
   
   renderViewerLegend();
@@ -8476,7 +8702,35 @@ function wireViewerRelatedMapButtons() {
   updateViewerRelatedMapButtonState();
 }
 
+function syncViewerRelationshipControls() {
+  document.querySelectorAll(".viewer-relationship-controls").forEach((panel) => {
+    panel.hidden = !viewerRelatedOverlayActive;
+  });
+  document.querySelectorAll("[data-viewer-relationship-visibility]").forEach((input) => {
+    const records = input.dataset.viewerRelationshipVisibility === "records";
+    input.checked = records ? viewerRelatedRecordsVisible : viewerRelationshipLinesVisible;
+    if (input.dataset.relationshipWired === "true") return;
+    input.dataset.relationshipWired = "true";
+    input.addEventListener("change", () => {
+      if (records) viewerRelatedRecordsVisible = input.checked;
+      else viewerRelationshipLinesVisible = input.checked;
+      setViewerRelationshipLayerVisibility();
+    });
+  });
+}
+
+function setViewerRelationshipLayerVisibility() {
+  if (viewerMap) VIEWER_RELATED_LAYERS.forEach((id) => {
+    if (!viewerMap.getLayer(id)) return;
+    const visible = id === "viewer-relationship-lines-layer"
+      ? viewerRelationshipLinesVisible : viewerRelatedRecordsVisible;
+    viewerMap.setLayoutProperty(id, "visibility", visible ? "visible" : "none");
+  });
+  syncViewerRelationshipControls();
+}
+
 function updateViewerRelatedMapButtonState() {
+  syncViewerRelationshipControls();
   document.querySelectorAll(".js-show-related-map").forEach((button) => {
     button.hidden = viewerRelatedOverlayActive === true;
   });
@@ -14188,7 +14442,7 @@ function viewerExportEstimateLine() {
       (st.format === "kml" && !st.centroidsOnly ? `, or tick centroids only` : ``) + `.`);
   }
   const related = st.includeRelated
-    ? ` + ${est.relatedRecordCount} ${t("export_related_short", "related")}` : "";
+    ? ` + ${est.relatedRecordCount} ${t("related", "related")}` : "";
   const modeNote = (st.format === "kml" && est.kmlMode) ? ` \u2014 ${est.kmlMode}` : "";
   return `${est.selectedRecordCount} ${t("export_records_short", "records")}${related}${modeNote}`;
 }
@@ -14656,7 +14910,7 @@ function viewerResultsExportEstimateLine() {
     state.includeRelated &&
     Number(estimate.relatedRecordCount || 0) > 0
       ? ` + ${formatCount(estimate.relatedRecordCount)} ` +
-        t("export_related_short", "related")
+        t("related", "related")
       : "";
 
   const modeText =
@@ -15382,6 +15636,148 @@ function wireViewerResultsExportMenu() {
 
 // end of results export menu
 
+// monument pdf download
+function viewerDownloadRecordIconSvg() {
+  return `
+    <svg
+      aria-hidden="true"
+      viewBox="0 0 24 24"
+      width="18"
+      height="18"
+    >
+      <path
+        d="M12 3v11m0 0-4-4m4 4 4-4M5 19h14"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      />
+    </svg>
+  `;
+}
+
+async function downloadViewerMonumentRecord(
+  record,
+  button = null
+) {
+  if (
+    record?.identity?.record_type !== "monument" ||
+    !record?.source?.schema ||
+    !record?.source?.table ||
+    !record?.source?.row_id
+  ) {
+    return;
+  }
+
+  const lang =
+    (
+      typeof window.getCurrentLanguage === "function" &&
+      window.getCurrentLanguage()
+    ) ||
+    window.appSession?.profile?.preferred_language ||
+    "en";
+
+  const params =
+    new URLSearchParams();
+
+  params.set(
+    "source_schema",
+    record.source.schema
+  );
+
+  params.set(
+    "source_table",
+    record.source.table
+  );
+
+  params.set(
+    "source_row_id",
+    record.source.row_id
+  );
+
+  params.set(
+    "lang",
+    lang
+  );
+
+  if (button) {
+    button.disabled = true;
+    button.setAttribute(
+      "aria-busy",
+      "true"
+    );
+  }
+
+  try {
+    const response =
+      await fetch(
+        `/api/viewer/record/document.pdf?${params.toString()}`,
+        {
+          method: "GET",
+          credentials: "include"
+        }
+      );
+
+    if (!response.ok) {
+      let message =
+        t(
+          "monument_record_download_failed",
+          "Monument Record download failed"
+        );
+
+      try {
+        const data =
+          await response.json();
+
+        message =
+          data.detail ||
+          data.error ||
+          message;
+      } catch {
+        // Non-JSON error response.
+      }
+
+      throw new Error(message);
+    }
+
+    const blob =
+      await response.blob();
+
+    const objectUrl =
+      URL.createObjectURL(blob);
+
+    const link =
+      document.createElement("a");
+
+    link.href = objectUrl;
+
+    link.download =
+      `${
+        record.identity?.caal_id ||
+        "monument"
+      }_monument_record.pdf`;
+
+    document.body.appendChild(link);
+
+    link.click();
+    link.remove();
+
+    window.setTimeout(
+      () => URL.revokeObjectURL(objectUrl),
+      1000
+    );
+  } finally {
+    if (button) {
+      button.disabled = false;
+
+      button.removeAttribute(
+        "aria-busy"
+      );
+    }
+  }
+}
+
 function closeViewerMapLayersPanel() {
   if (!viewerMapLayersPanel) {
     return;
@@ -15811,7 +16207,7 @@ function getCurrentViewerMapLegendItems() {
     viewerLegendShouldShowLayer("monument")
   ) {
     items.push({
-      label: t("viewer_layer_monument", "Monuments"),
+      label: t("nav_monuments", "Monuments"),
       color: VIEWER_COLOURS.monument,
       type: "circle"
     });
@@ -15856,7 +16252,7 @@ function getCurrentViewerMapLegendItems() {
     viewerLegendShouldShowLayer("vernacular")
   ) {
     items.push({
-      label: t("viewer_layer_vernacular", "Vernacular"),
+      label: t("vernacular", "Vernacular"),
       color: VIEWER_COLOURS.vernacular,
       type: "fill"
     });

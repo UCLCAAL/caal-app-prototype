@@ -977,7 +977,9 @@ async function reactivateResourceRelationsForRestoredRecord(db, {
     latest_actions AS (
       SELECT DISTINCT ON (l.edge_id)
         l.edge_id,
-        l.action
+        l.action,
+        l.source_field,
+        l.new_values
       FROM public."CAAL_Resource_Relations_web_edit_log" l
       JOIN candidate_edges c
         ON c.edge_id = l.edge_id
@@ -1000,7 +1002,17 @@ async function reactivateResourceRelationsForRestoredRecord(db, {
         E'\\nReactivated because deleted resource was restored.'
     FROM latest_actions a
     WHERE e.edge_id = a.edge_id
-      AND a.action = 'deactivated_on_delete'
+      AND (
+        -- written by the app's own delete handling
+        a.action = 'deactivated_on_delete'
+        OR (
+          -- written by the database delete trigger, for THIS record's deletion only
+          a.action = 'deactivated'
+          AND a.source_field = 'DELETE trigger'
+          AND lower(trim(a.new_values::jsonb ->> 'deleted_resource_caal_id'))
+              = lower(trim($1))
+        )
+      )
     RETURNING
       e.edge_id,
       e.parent_id,

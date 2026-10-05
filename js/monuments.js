@@ -521,8 +521,9 @@ async function loadUncachedLiveEditedMonuments() {
     "en";
 
   const response = await fetch(
-    `/api/monuments/live-edited-map-records?lang=${encodeURIComponent(lang)}`,
+    `/api/monuments/live-edited-map-records?${buildMonumentQueryParams({ includePaging: false }).toString()}`,
     {
+      cache: "no-store",
       method: "GET",
       credentials: "include"
     }
@@ -732,7 +733,7 @@ function isRecentlySavedMonument(record) {
 
   if (!caalId) return false;
 
-  return liveEditedCaalIdSet().has(caalId);
+  return record?.source?.cache_pending === true || liveEditedCaalIdSet().has(caalId);
 }
 
 function getRecentlySavedLiveRecord(record) {
@@ -1568,11 +1569,12 @@ function renderMonumentLegend() {
 
   const rows = [];
 
-  const hasUncachedLive =
-    Array.isArray(monumentUncachedLiveRecords) &&
-    monumentUncachedLiveRecords.some((record) =>
-      Array.isArray(record?.geometry?.coordinates)
-    );
+  let hasUncachedLive = false;
+  if (map?.getLayer("monuments-uncached-live-ring")) {
+    try {
+      hasUncachedLive = map.queryRenderedFeatures({ layers: ["monuments-uncached-live-ring"] }).length > 0;
+    } catch { /* The style can be between reloads. */ }
+  }
 
   if (hasWorkspace) {
     rows.push(`
@@ -5424,21 +5426,46 @@ function updateMapOptionsState() {
   }
 
   updateMapLabelHelpText();
+  syncMonumentRelationshipControls();
+}
+
+function syncMonumentRelationshipControls() {
+  const active = relatedOverlayExists();
+  const panel = document.getElementById("monumentRelationshipControls");
+  if (panel) panel.hidden = !active;
+  for (const [id, source] of [
+    ["monumentDetailRelatedRecords", showRelatedPointsCheckbox],
+    ["monumentDetailRelationshipLines", showRelationshipLinesCheckbox]
+  ]) {
+    const input = document.getElementById(id);
+    if (!input) continue;
+    input.checked = source?.checked !== false;
+    input.disabled = !source;
+    if (input.dataset.relationshipWired === "true") continue;
+    input.dataset.relationshipWired = "true";
+    input.addEventListener("change", () => {
+      if (!source) return;
+      source.checked = input.checked;
+      source.dataset.userChanged = "true";
+      setRelationshipLayerVisibility();
+    });
+  }
+  const button = document.getElementById("toggleRelatedMapBtn");
+  if (button) button.textContent = active
+    ? t("clear_relationship_map", "Clear relationship map")
+    : t("show_relationships_on_map", "Show relationships on map");
 }
 
 function setRelationshipLayerVisibility() {
+  syncMonumentRelationshipControls();
   if (!map) return;
 
   const showPoints = showRelatedPointsCheckbox?.checked !== false;
   const showLines = showRelationshipLinesCheckbox?.checked !== false;
 
-  if (map.getLayer("monument-related-points")) {
-    map.setLayoutProperty(
-      "monument-related-points",
-      "visibility",
-      showPoints ? "visible" : "none"
-    );
-  }
+  ["monument-related-points", "monument-related-fill", "monument-related-outline", "monument-related-linegeom"].forEach((id) => {
+    if (map.getLayer(id)) map.setLayoutProperty(id, "visibility", showPoints ? "visible" : "none");
+  });
 
   [
     "monument-related-lines-halo",
@@ -5459,12 +5486,9 @@ function selectedRecordHasRelatedIds(record = monumentSelectedRecord) {
 }
 
 function relatedOverlayExists() {
-  return !!monumentSelectedRecord?.geometry?.coordinates &&
-    !!monumentRelatedSelectionGeojson?.features?.some(
-      (feature) =>
-        feature?.geometry?.type === "Point" &&
-        feature?.properties?.role === "related"
-    );
+  return !!monumentRelatedSelectionGeojson?.features?.some(
+    (feature) => feature?.geometry && feature?.properties?.role === "related"
+  );
 }
 
 function getLiveMapLabelExpression() {
@@ -5806,7 +5830,13 @@ function setMonumentRecordOpening(isOpening) {
     });
 }
 
+const monumentResultsRefreshState = { active: false, pending: null };
+
 function setMonumentResultsCountText(text) {
+  if (monumentResultsRefreshState.active) {
+    monumentResultsRefreshState.pending = text;
+    return;
+  }
   if (resultsCount) {
     resultsCount.textContent = text;
   }
@@ -5817,7 +5847,9 @@ function setMonumentResultsCountText(text) {
 }
 
 function setResultsCountLoading(message = null) {
-  const label = message || t("searching", "Searching...");
+  const label = monumentResultsRefreshState.active
+    ? t("refreshing_results_list", "Refreshing results list...")
+    : message || t("searching", "Searching...");
 
   if (resultsCount) {
     resultsCount.innerHTML = `<span class="mini-spinner"></span>${label}`;
@@ -5956,11 +5988,43 @@ function getActiveFilterChips() {
 }
 
 // chip removal filter
+// Keep active chips (including text searches) above the full-width filter toggle.
+// Move the existing clear button, preserving its translations and click handler.
+function monumentsSyncFilterToolbar(hasActiveFilters = null) {
+  const strip = activeFilterStrip;
+  const chips = activeFilterChips;
+  const clear = clearFiltersBtn;
+  const toggle = toggleFiltersBtn;
+  const panel = filtersPanel;
+  if (!strip || !chips || !clear || !toggle || !panel) return;
+  const row = toggle.closest(".filter-action-row");
+  const anchor = row || toggle;
+  if (!anchor.parentElement || strip.contains(anchor)) return;
+  if (strip.parentElement !== anchor.parentElement || strip.nextElementSibling !== anchor) {
+    anchor.parentElement.insertBefore(strip, anchor);
+  }
+  if (clear.parentElement !== strip) strip.appendChild(clear);
+  strip.classList.add("caal-active-filter-row");
+  clear.classList.add("caal-clear-filters");
+  toggle.classList.add("caal-advanced-toggle");
+  row?.classList.add("caal-filter-action-row");
+  toggle.setAttribute("aria-controls", panel.id);
+  toggle.setAttribute("aria-expanded", String(!panel.hidden));
+  if (hasActiveFilters !== null) {
+    // Keep keyboard focus on a visible control when the final chip disappears.
+    if (!hasActiveFilters && strip.contains(document.activeElement)) toggle.focus();
+    strip.hidden = !hasActiveFilters;
+  }
+}
+
+monumentsSyncFilterToolbar();
+
 function renderActiveFilterChips() {
   if (!activeFilterStrip || !activeFilterChips) return;
 
   const chips = getActiveFilterChips();
 
+  monumentsSyncFilterToolbar(chips.length > 0);
   activeFilterStrip.hidden = chips.length === 0;
   activeFilterChips.innerHTML = "";
 
@@ -8674,16 +8738,7 @@ function monumentUserIsCaalAdmin() {
 }
 
 function monumentUserCanUseLiveCacheWorkaround() {
-  const session = window.appSession || {};
-
-  const accessLevel = Number(
-    session.user?.access_level ??
-    session.profile?.access_level ??
-    session.permissions?.access_level ??
-    0
-  );
-
-  return accessLevel === 9;
+  return !!window.appSession?.user?.user_id;
 }
 
 function monumentUserCanEditMasterId() {
@@ -8900,6 +8955,18 @@ function monumentScopeLabelForRecord(record) {
     default:
       return normalisedScope || t("unknown", "Unknown");
   }
+}
+
+// Results show provenance only when the source is a national workspace.
+function monumentResultWorkspaceBadge(record) {
+  const storage = String(record?.source?.storage || "").trim().toLowerCase();
+  const match = storage.match(/^([a-z][a-z0-9_]*)_workspace$/);
+  if (!match || match[1] === "caal") return "";
+
+  const label = t("scope_country_workspace", "{code} workspace")
+    .replace("{code}", match[1].toUpperCase());
+
+  return `<span class="${monumentScopeBadgeClass(record)}">${mSafeValue(label)}</span>`;
 }
 
 function monumentScopeBadgeClass(record) {
@@ -10699,7 +10766,10 @@ function clearRelatedMonumentsMap() {
       "monument-live-labels",
       "monument-related-lines-halo",
       "monument-related-lines",
-      "monument-related-points"
+      "monument-related-points",
+      "monument-related-fill",
+      "monument-related-outline",
+      "monument-related-linegeom"
     ].forEach((layerId) => {
       if (map.getLayer(layerId)) {
         map.removeLayer(layerId);
@@ -13450,6 +13520,7 @@ async function loadMonumentMapRecords() {
       }
 
       const response = await fetch(`/api/monuments/map?${params.toString()}`, {
+        cache: "no-store",
         method: "GET",
         credentials: "include"
       });
@@ -13577,6 +13648,7 @@ async function loadMonumentListRecords() {
     const params = buildMonumentQueryParams({ includePaging: true });
 
     const response = await fetch(`/api/monuments?${params.toString()}`, {
+      cache: "no-store",
       method: "GET",
       credentials: "include"
     });
@@ -13596,7 +13668,8 @@ async function loadMonumentListRecords() {
       reconcileDeletedMonumentRecord
     );
     monumentTotalCount = data.total || 0;
-    monumentTotalIsExact = data.total_is_exact !== false;
+    monumentTotalIsExact = data.total_is_exact !== false ||
+      (monumentListRecords.length < monumentPageLimit && (monumentListRecords.length > 0 || monumentPageOffset === 0));
 
     renderMonumentResultsList(monumentListRecords);
     updateShowResultsOnMapButton();
@@ -13649,6 +13722,47 @@ async function loadFullMonumentRecord(record) {
     (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
     window.appSession?.profile?.preferred_language ||
     "en";
+
+  // Records saved since the last cache refresh are not in the cached views that
+  // /api/records/resolve may read, so load them live. The backend limits this to
+  // the user's own records (admins: their scope).
+  const liveRecordId = record?.identity?.id;
+
+  if (
+    isRecentlySavedMonument(record) &&
+    liveRecordId !== null &&
+    liveRecordId !== undefined &&
+    String(record?.source?.storage || "public_caal") === "public_caal"
+  ) {
+    const liveResponse = await fetch(
+      `/api/monuments/${encodeURIComponent(liveRecordId)}/live-full-record?lang=${encodeURIComponent(lang)}`,
+      {
+        method: "GET",
+        credentials: "include"
+      }
+    );
+
+    const liveData = await liveResponse.json();
+
+    if (!liveResponse.ok || !liveData.ok || !liveData.record) {
+      throw new Error(
+        liveData.detail ||
+        liveData.error ||
+        t("could_not_load_full_monument_record", "Could not load full monument record")
+      );
+    }
+
+    liveData.record.source = liveData.record.source || {};
+
+    if (record?.source) {
+      liveData.record.source.scope = record.source.scope;
+      liveData.record.source.storage = record.source.storage;
+      liveData.record.source.is_promoted = record.source.is_promoted;
+      liveData.record.source.is_editable = record.source.is_editable === true;
+    }
+
+    return liveData.record;
+  }
 
   const response = await fetch(
     `/api/records/resolve?caal_id=${encodeURIComponent(caalId)}&lang=${encodeURIComponent(lang)}`,
@@ -13740,7 +13854,7 @@ function monumentGroupPaginationHtml({
       </button>
 
       <span class="monument-result-group-page-info">
-        ${t("page_x_of_y", "Page {page} of {total}")
+        ${(kind === "monuments" && !monumentTotalIsExact ? t("page_x", "Page {page}") : t("page_x_of_y", "Page {page} of {total}"))
           .replace("{page}", String(info.currentPage))
           .replace("{total}", String(info.totalPages))}
       </span>
@@ -13885,7 +13999,7 @@ function syncOpenMonumentAfterBrowseReload() {
   renderMonumentLegend();
 }
 
-async function applyMonumentFilters({ includeMap = true, listFirst = true } = {}) {
+async function applyMonumentFilters({ includeMap = true, listFirst = true, throwOnError = false } = {}) {
   monumentPageOffset = 0;
 
   const selectedBefore = monumentSelectedRecord;
@@ -13897,7 +14011,8 @@ async function applyMonumentFilters({ includeMap = true, listFirst = true } = {}
   setMonumentsLoading(true, t("updating_results", "Updating results..."));
 
   try {
-    await loadDeletedSinceCacheMonuments();
+    try { await loadDeletedSinceCacheMonuments(); }
+    catch (error) { console.warn("Deleted record reconciliation unavailable:", error); }
     if (listFirst) {
       await loadMonumentListRecords();
 
@@ -13939,6 +14054,7 @@ async function applyMonumentFilters({ includeMap = true, listFirst = true } = {}
     );
 
     monumentDeletedSinceCacheRecords = [];
+    if (throwOnError) throw error;
   } finally {
     setMonumentsLoading(false);
   }
@@ -16214,6 +16330,56 @@ function monumentRelatedTypeSummaryHtml(record) {
   `;
 }
 
+function ensureMonumentResultsRefreshButton() {
+  const heading = resultsList?.closest(".results-panel")?.querySelector(".results-panel-header h3");
+  if (!heading) return;
+  let button = document.getElementById("refreshMonumentResultsBtn");
+  const label = t("refresh_results", "Refresh results");
+  if (!button) {
+    button = document.createElement("button");
+    button.id = "refreshMonumentResultsBtn";
+    button.type = "button";
+    button.className = "icon-action-btn caal-results-refresh";
+    button.innerHTML = '<svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15.36-6.36L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.36 6.36L3 16"/><path d="M3 21v-5h5"/></svg>';
+    heading.classList.add("caal-results-heading");
+    heading.appendChild(button);
+    button.addEventListener("click", async () => {
+      if (button.disabled || monumentsIsLoading || monumentSaveInProgress) return;
+      monumentResultsRefreshState.pending = null;
+      setMonumentResultsCountText(t("refreshing_results_list", "Refreshing results list..."));
+      monumentResultsRefreshState.active = true;
+      if (monumentFilterDebounceTimer) {
+        clearTimeout(monumentFilterDebounceTimer);
+        monumentFilterDebounceTimer = null;
+      }
+      button.disabled = true;
+      button.setAttribute("aria-busy", "true");
+      try {
+        await applyMonumentFilters({ includeMap: true, listFirst: true, throwOnError: true });
+      } catch (error) {
+        monumentResultsRefreshState.pending = t("refresh_results_failed", "Could not refresh results. Please try again.");
+        console.error("Results refresh failed:", error);
+        alert(t("refresh_results_failed", "Could not refresh results. Please try again."));
+      } finally {
+        monumentResultsRefreshState.active = false;
+        setMonumentResultsCountText(monumentResultsRefreshState.pending ?? t("refresh_results_failed", "Could not refresh results. Please try again."));
+        monumentResultsRefreshState.pending = null;
+        button.disabled = false;
+        button.setAttribute("aria-busy", "false");
+      }
+    });
+  }
+  button.title = label;
+  button.setAttribute("aria-label", label);
+}
+
+
+function monumentResultsCountLabel() {
+  const count = Number(monumentTotalCount || 0);
+  // The server adds a sentinel row to enable Next when a full page has no count.
+  return monumentTotalIsExact ? formatCount(count) : `${formatCount(Math.max(0, count - 1))}+`;
+}
+
 function updateMonumentGroupedResultsCountText() {
   const groupedRelated = monumentGroupResourceSearchRecords(
     monumentResourceSearchRecords || []
@@ -16224,7 +16390,7 @@ function updateMonumentGroupedResultsCountText() {
 
   if (relatedCount > 0) {
     setMonumentResultsCountText(
-      `${formatCount(monumentCount)} ${t("nav_monuments", "Monuments").toLowerCase()} + ${formatCount(relatedCount)} ${t("related_records", "Related records").toLowerCase()}`
+      `${monumentResultsCountLabel()} ${t("nav_monuments", "Monuments").toLowerCase()} + ${formatCount(relatedCount)} ${t("related_records", "Related records").toLowerCase()}`
     );
     return;
   }
@@ -16238,17 +16404,13 @@ function updateMonumentGroupedResultsCountText() {
   }
 
   setMonumentResultsCountText(
-    t("matching_records", "Matching records")
+    t("results_count_total_only", "{total} total").replace("{total}", monumentResultsCountLabel())
   );
 }
 
 function renderMonumentResultsList(records) {
   if (!resultsList) return;
-
-  const countText = monumentTotalIsExact
-    ? t("results_count_total_only", "{total} total")
-        .replace("{total}", formatCount(monumentTotalCount))
-    : t("results_count_matching_only", "Matching records");
+  ensureMonumentResultsRefreshButton();
 
   updateMonumentGroupedResultsCountText();
 
@@ -16269,6 +16431,7 @@ function renderMonumentResultsList(records) {
       const isRecentSave = isRecentlySavedMonument(record);
       const relatedSummaryHtml = monumentRelatedTypeSummaryHtml(record);
       const isDeleted = record?.source?.is_deleted === true;
+      const workspaceBadge = monumentResultWorkspaceBadge(record);
 
       const classification = String(mSummary(record, "classification") || "").trim();
       const monumentType = String(mSummary(record, "monument_type1") || "").trim();
@@ -16288,23 +16451,16 @@ function renderMonumentResultsList(records) {
           <div class="result-card-topline">
             <strong>${mSafeValue(monumentResultTitle(record))}</strong>
 
-            <div class="result-card-badges">
-              ${
-                isDeleted
-                  ? `
-                    <span class="record-status-badge record-status-deleted">
-                      ${t(
-                        "deleted_since_cache_refresh",
-                        "Deleted since cache refresh"
-                      )}
-                    </span>
-                  `
-                  : ""
-              }
-              <span class="${monumentScopeBadgeClass(record)}">
-                ${mSafeValue(monumentScopeLabelForRecord(record))}
-              </span>
-            </div>
+            ${isDeleted || workspaceBadge ? `
+              <div class="result-card-badges">
+                ${isDeleted ? `
+                  <span class="record-status-badge record-status-deleted">
+                    ${t("deleted_since_cache_refresh", "Deleted since cache refresh")}
+                  </span>
+                ` : ""}
+                ${workspaceBadge}
+              </div>
+            ` : ""}
           </div>
 
           <div class="result-card-meta">
@@ -16393,7 +16549,7 @@ function renderMonumentResultsList(records) {
         </span>
 
         <span class="monument-result-group-count">
-          (${formatCount(monumentTotalCount || records.length)})
+          (${monumentResultsCountLabel()})
         </span>
 
         <span class="monument-result-group-chevron" aria-hidden="true">
@@ -17059,6 +17215,12 @@ function renderMonumentDisplayMode(record) {
               : t("show_relationships_on_map", "Show relationships on map")
           }
         </button>
+        <div id="monumentRelationshipControls" class="caal-relationship-controls" hidden>
+          <label><input type="checkbox" id="monumentDetailRelatedRecords" checked>
+            <span>${t("show_related_records", "Show related records")}</span></label>
+          <label><input type="checkbox" id="monumentDetailRelationshipLines" checked>
+            <span>${t("show_relationship_lines", "Show relationship lines")}</span></label>
+        </div>
       </div>
     `,
 
@@ -17089,6 +17251,8 @@ function renderMonumentDisplayMode(record) {
   ].join("");
 
   recordDetails.innerHTML = `
+    ${deletionNoticeHtml}
+
     <div class="record-title">
       <div class="record-title-actions record-title-actions-topright">
         ${statusBadge}
@@ -17137,8 +17301,6 @@ function renderMonumentDisplayMode(record) {
       ${renderMasterIdChip(record)}
     </div>
 
-    ${deletionNoticeHtml}
-
     ${
       saveSummary && typeof window.renderSaveSummaryCard === "function"
         ? window.renderSaveSummaryCard(saveSummary)
@@ -17157,6 +17319,7 @@ function renderMonumentDisplayMode(record) {
   `;
 
   wireCopyFieldButtons(recordDetails);
+  syncMonumentRelationshipControls();
 
   window.wireSaveSummaryDismiss?.(recordDetails);
 
@@ -17181,6 +17344,33 @@ function renderMonumentDisplayMode(record) {
       await centreLightRecordOnMap(record);
     });
   }
+
+  const downloadRecordBtn =
+    document.getElementById(
+      "downloadMonumentRecordBtn"
+    );
+
+  downloadRecordBtn?.addEventListener(
+    "click",
+    async () => {
+      try {
+        await downloadOpenMonumentRecord(record);
+      } catch (error) {
+        console.error(
+          "Monument Record download failed:",
+          error
+        );
+
+        alert(
+          error.message ||
+          t(
+            "monument_record_download_failed",
+            "Monument Record download failed"
+          )
+        );
+      }
+    }
+  );
 
   wireRelatedRecordChips();
   wireMasterIdChip();
@@ -17319,6 +17509,77 @@ async function showRelatedMonumentsOnMap(record = monumentSelectedRecord) {
 
   updateMapOptionsState();
   renderMonumentLegend();
+}
+
+async function downloadOpenMonumentRecord(record) {
+  if (!record?.identity?.id) return;
+
+  const lang =
+    (
+      typeof window.getCurrentLanguage === "function" &&
+      window.getCurrentLanguage()
+    ) ||
+    window.appSession?.profile?.preferred_language ||
+    "en";
+
+  const params = new URLSearchParams();
+
+  params.set(
+    "storage_scope",
+    record.source?.storage || ""
+  );
+
+  params.set("lang", lang);
+
+  const url =
+    `/api/monuments/${encodeURIComponent(record.identity.id)}` +
+    `/document.pdf?${params.toString()}`;
+
+  const response = await fetch(url, {
+    method: "GET",
+    credentials: "include"
+  });
+
+  if (!response.ok) {
+    let message =
+      t(
+        "monument_record_download_failed",
+        "Monument Record download failed"
+      );
+
+    try {
+      const data = await response.json();
+
+      message =
+        data.detail ||
+        data.error ||
+        message;
+    } catch {
+      // PDF/HTML/non-JSON error response.
+    }
+
+    throw new Error(message);
+  }
+
+  const blob = await response.blob();
+
+  const objectUrl =
+    URL.createObjectURL(blob);
+
+  const link =
+    document.createElement("a");
+
+  link.href = objectUrl;
+
+  link.download =
+    `${record.identity?.caal_id || "monument"}_monument_record.pdf`;
+
+  document.body.appendChild(link);
+
+  link.click();
+  link.remove();
+
+  URL.revokeObjectURL(objectUrl);
 }
 
 // --------------------------------------------------------
@@ -18017,6 +18278,16 @@ window.monumentCanChangeLanguage = function () {
 };
 
 // button logic 
+async function refreshMonumentResultsAfterSave({ includeMap = false } = {}) {
+  try {
+    await loadMonumentListRecords();
+    if (includeMap) await loadMonumentMapRecords();
+  } catch (error) {
+    console.warn("Record saved but results reload failed:", error);
+    showToast(t("saved_results_refresh_failed", "Record saved, but results could not refresh. Use Refresh results to try again."), 10000);
+  }
+}
+
 async function saveCurrentMonumentRecord() {
   if (monumentSaveInProgress) return;
 
@@ -18117,30 +18388,12 @@ async function saveCurrentMonumentRecord() {
 
     const isPublicCaalRecord = savedStorage === "public_caal";
 
-    if (isPublicCaalRecord && monumentUserIsCaalAdmin()) {
-      showToast(
-        t(
-          "caal_record_saved_cache_refresh_needed",
-          "Record saved. This is a CAAL record, so the map position and search/list values may not update until the CAAL cache is refreshed. Use Refresh CAAL cache to update them now."
-        ),
-        12000
-      );
-    } else if (isPublicCaalRecord) {
-      showToast(
-        t(
-          "caal_record_saved_cache_pending",
-          "Record saved. This is a CAAL record, so the map position and search/list values may not update until the CAAL cache refreshes. Your changes have been saved, but they may not appear immediately in the map or search results."
-        ),
-        12000
-      );
-    } else {
-      showToast(
-        saveSummary?.caal_id
-          ? `${t("record_saved", "Record saved")}: ${saveSummary.caal_id}`
-          : t("record_saved", "Record saved"),
-        3000
-      );
-    }
+    showToast(
+      saveSummary?.caal_id
+        ? `${t("record_saved", "Record saved")}: ${saveSummary.caal_id}`
+        : t("record_saved", "Record saved"),
+      3000
+    );
 
     monumentPendingNewRecord = null;
     monumentEditOriginalRecord = null;
@@ -18187,15 +18440,8 @@ async function saveCurrentMonumentRecord() {
             ensureRecordVisibleOnMap(savedRecord);
           }
 
-          /*
-            Reloading list/map before MV refresh will not necessarily show the new public row.
-            For public CAAL records, leave the returned record open and rely on cache refresh.
-          */
-          if (!isPublicCaalRecord) {
-            await loadMonumentMapRecords();
-            await loadMonumentListRecords();
-            updateSelectedResultCard();
-          }
+          await refreshMonumentResultsAfterSave({ includeMap: true });
+          updateSelectedResultCard();
 
           return;
         }
@@ -18230,6 +18476,8 @@ async function saveCurrentMonumentRecord() {
             console.warn("Could not refresh uncached live edit overlay:", error);
           }
 
+          await refreshMonumentResultsAfterSave();
+          updateSelectedResultCard();
           return;
         }
 
@@ -18833,6 +19081,7 @@ if (toggleFiltersBtn && filtersPanel) {
   toggleFiltersBtn.addEventListener("click", () => {
     const isHidden = filtersPanel.hidden;
     filtersPanel.hidden = !isHidden;
+    monumentsSyncFilterToolbar();
     toggleFiltersBtn.textContent = isHidden
       ? t("hide_advanced_filters", "Hide advanced filters")
       : t("advanced_filters", "Advanced filters");
@@ -19646,7 +19895,10 @@ document.addEventListener("DOMContentLoaded", async () => {
       }
     });
 
+    map.on("idle", renderMonumentLegend);
+
     map.on("moveend", () => {
+      renderMonumentLegend();
       if (suppressNextMapMoveReload) {
         suppressNextMapMoveReload = false;
         return;

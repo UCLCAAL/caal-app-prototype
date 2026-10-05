@@ -880,6 +880,120 @@ router.get("/resolve", async (req, res) => {
       }
     }
 
+    // 5. Live fallback for public records saved since the last cache refresh.
+    // The cached views above do not contain them yet. Visible to their creator,
+    // or to administrators within their scope.
+    if (scopes.length) {
+      const liveUserId = currentSession?.user?.user_id ?? null;
+      const liveIsCaalAdmin = canEditCaal(currentSession);
+      const liveIsNationalAdmin =
+        getAccessLevel(currentSession) === 9 &&
+        Boolean(workspaceCode) &&
+        workspaceCode !== "caal";
+
+      const liveParams = [
+        caalId,
+        liveUserId,
+        workspaceCode,
+        liveIsCaalAdmin,
+        liveIsNationalAdmin
+      ];
+
+      const liveScopeSql = (alias) => `
+        (
+          $4::boolean = true
+          OR (
+            $5::boolean = true
+            AND lower(trim(COALESCE(${alias}.workspace_code, ''))) = $3
+          )
+          OR ${alias}.created_by_app_user_id = $2::bigint
+          OR EXISTS (
+            SELECT 1
+            FROM public.record_registry rr
+            WHERE rr.caal_id = ${alias}."CAAL_ID"
+              AND rr.created_by_app_user_id = $2::bigint
+              AND COALESCE(rr.status, '') <> 'deleted'
+          )
+        )
+      `;
+
+      const liveSourceScopeSql = (alias) => `
+        CASE
+          WHEN ${alias}.created_by_app_user_id = $2::bigint THEN 'workspace'
+          WHEN NULLIF(${alias}.workspace_code, '') IS NOT NULL
+            AND lower(${alias}.workspace_code) = $3 THEN 'national_ref'
+          ELSE 'all_caal'
+        END
+      `;
+
+      const liveMonument = await pool.query(
+        `
+        SELECT
+          v.*,
+          COALESCE(country.display_${safeLang}, country.display_${fallbackLang}, country.display_en, v."Country") AS country_display,
+          COALESCE(cls.display_${safeLang}, cls.display_${fallbackLang}, cls.display_en, v."Classification") AS classification_display,
+          COALESCE(desig.display_${safeLang}, desig.display_${fallbackLang}, desig.display_en, v."Designation") AS designation_display,
+          COALESCE(mt1.display_${safeLang}, mt1.display_${fallbackLang}, mt1.display_en, v."Monument Type1") AS monument_type1_display,
+          COALESCE(cp1.display_${safeLang}, cp1.display_${fallbackLang}, cp1.display_en, v."Cultural Period1") AS cultural_period1_display,
+          COALESCE(rel1.display_${safeLang}, rel1.display_${fallbackLang}, rel1.display_en, v."Religion1") AS religion1_display,
+          'public_caal'::text AS storage_scope,
+          ${liveSourceScopeSql("v")} AS source_scope
+        FROM public."CAAL_Monuments" v
+        LEFT JOIN ui.v_lkp_countries country
+          ON country.canonical_value = v."Country"
+        LEFT JOIN ui.v_lkp_classifications cls
+          ON cls.canonical_value = v."Classification"
+        LEFT JOIN ui.v_lkp_designation_type desig
+          ON desig.canonical_value = v."Designation"
+        LEFT JOIN ui.v_lkp_site_types_context mt1
+          ON mt1.canonical_value = v."Monument Type1"
+        LEFT JOIN ui.v_lkp_cultural_periods_context cp1
+          ON cp1.canonical_value = v."Cultural Period1"
+        LEFT JOIN ui.v_lkp_religion rel1
+          ON rel1.canonical_value = v."Religion1"
+        WHERE v."CAAL_ID" = $1
+          AND ${liveScopeSql("v")}
+        LIMIT 1
+        `,
+        liveParams
+      );
+
+      if (liveMonument.rows.length) {
+        const record = buildResolvedMonumentRecord(
+          stripMonumentInternalFields(liveMonument.rows[0]),
+          lang,
+          currentSession
+        );
+
+        return sendResolvedRecord(res, "monument", record);
+      }
+
+      // The MV's own source view, so the row has every derived column.
+      const liveArchive = await pool.query(
+        `
+        SELECT
+          v.*,
+          'public_caal'::text AS storage_scope,
+          ${liveSourceScopeSql("v")} AS source_scope
+        FROM ui.v_archive_grid_base_caal_app v
+        WHERE v."CAAL_ID" = $1
+          AND ${liveScopeSql("v")}
+        LIMIT 1
+        `,
+        liveParams
+      );
+
+      if (liveArchive.rows.length) {
+        const record = buildResolvedArchiveRecord(
+          stripMonumentInternalFields(liveArchive.rows[0]),
+          lang,
+          currentSession
+        );
+
+        return sendResolvedRecord(res, "archive", record);
+      }
+    }
+
     return res.status(404).json({
       ok: false,
       error: "Related record not found"
