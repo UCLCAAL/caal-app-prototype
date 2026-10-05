@@ -4,16 +4,14 @@ const pool = require("../db-maintenance");
 // number contends for the same lock, preventing overlapping refresh runs.
 const REFRESH_LOCK_ID = 823401;
 
-// Safety bound for change-check skips: even if no Tstamp change is detected,
-// force a refresh when the last one is older than this. Covers changes the
-// Tstamp check cannot see (row DELETEs, thesaurus/lookup edits that alter
-// resolved labels without touching source-row timestamps).
-const MAX_SKIP_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
-const FORCE_REFRESH_HOUR_UTC = 2; // overnight UTC
-
+// Timestamp checks cannot detect every source/lookup change. During the
+// 02:00 UTC hour, refresh if the cache has not been rebuilt today (UTC).
+// Do not require a 24-hour age as well: that can skip an entire night.
+const FORCE_REFRESH_HOUR_UTC = 2;
 
 // Change-check for the resource viewer family: any source row edited since
-// the last recorded refresh of the base cache?
+// the last recorded refresh of the base cache? Also include public audit
+// events and registry deletions, which survive removal of the source row.
 const VIEWER_SOURCES_CHANGED_SQL = `
   SELECT GREATEST(
     (SELECT max("Tstamp") FROM public."CAAL_RS3_Poly"),
@@ -34,7 +32,11 @@ const VIEWER_SOURCES_CHANGED_SQL = `
     (SELECT max("Tstamp") FROM kz."CAAL_Archive"),
 
     (SELECT max("Tstamp") FROM public."CAAL_Datasets"),
-    (SELECT max("Tstamp") FROM public."CAAL_Cartography")
+    (SELECT max("Tstamp") FROM public."CAAL_Cartography"),
+    (SELECT max(edited_at) FROM public."CAAL_Monuments_web_edit_log"),
+    (SELECT max(edited_at) FROM public."CAAL_Archive_web_edit_log"),
+    (SELECT max(deleted_at) FROM public.record_registry
+      WHERE status = 'deleted' AND source_schema IN ('public', 'kz'))
   ) > (
     SELECT refreshed_at FROM ui.app_cache_status
     WHERE cache_key = 'resource_viewer_base_cache'
@@ -60,7 +62,12 @@ const RS_DISPLAY_OVERNIGHT_SQL = `
 const MONUMENTS_CHANGED_SQL = `
   SELECT GREATEST(
     (SELECT max("Tstamp") FROM public."CAAL_Monuments"),
-    (SELECT max("Tstamp") FROM kz."CAAL_Monuments")
+    (SELECT max("Tstamp") FROM kz."CAAL_Monuments"),
+    (SELECT max(edited_at) FROM public."CAAL_Monuments_web_edit_log"),
+    (SELECT max(deleted_at) FROM public.record_registry
+      WHERE status = 'deleted'
+        AND source_schema IN ('public', 'kz')
+        AND source_table = 'CAAL_Monuments')
   ) > (
     SELECT refreshed_at FROM ui.app_cache_status
     WHERE cache_key = 'monuments_caal_cache'
@@ -118,7 +125,8 @@ const MATERIALIZED_VIEWS = [
   {
     name: "ui.mv_resource_rs_display_geometry",
     cacheKey: "resource_rs_display_geometry_cache",
-    changeCheck: RS_DISPLAY_OVERNIGHT_SQL
+    changeCheck: RS_DISPLAY_OVERNIGHT_SQL,
+    overnightOnly: true
   },
   { name: "ui.mv_resource_viewer_rs3_poly_map",     cacheKey: "resource_viewer_rs3_poly_map_cache",     dependsOn: "ui.mv_resource_viewer_base" },
   { name: "ui.mv_resource_viewer_rs3_line_map",     cacheKey: "resource_viewer_rs3_line_map_cache",     dependsOn: "ui.mv_resource_viewer_base" },
@@ -139,22 +147,23 @@ const refreshedThisRun = new Set();
 const skippedThisRun = new Set();
 const failedThisRun = new Set();
 
-async function cacheAgeMs(cacheKey) {
+async function cacheRefreshState(cacheKey) {
   const { rows } = await pool.query(
-    `SELECT extract(epoch FROM (now() - refreshed_at)) * 1000 AS age_ms
-     FROM ui.app_cache_status WHERE cache_key = $1`,
-    [cacheKey]
+    `SELECT
+       s.refreshed_at IS NULL AS missing_refresh,
+       EXTRACT(HOUR FROM now() AT TIME ZONE 'UTC') = $2
+       AND COALESCE(s.refreshed_at, 'epoch'::timestamptz) <
+           (date_trunc('day', now() AT TIME ZONE 'UTC') AT TIME ZONE 'UTC')
+         AS overnight_due
+     FROM (SELECT 1) AS seed
+     LEFT JOIN ui.app_cache_status s ON s.cache_key = $1`,
+    [cacheKey, FORCE_REFRESH_HOUR_UTC]
   );
-  if (!rows.length || rows[0].age_ms === null) return Infinity;
-  return Number(rows[0].age_ms);
-}
-
-function isOvernightForceRefreshWindow(now = new Date()) {
-  return now.getUTCHours() === FORCE_REFRESH_HOUR_UTC;
+  return rows[0];
 }
 
 async function shouldSkip(viewConfig) {
-  const { name, cacheKey, changeCheck, dependsOn } = viewConfig;
+  const { name, cacheKey, changeCheck, dependsOn, overnightOnly } = viewConfig;
 
   // Skip if the view this one derives from failed this run.
   if (dependsOn && failedThisRun.has(dependsOn)) {
@@ -173,14 +182,16 @@ async function shouldSkip(viewConfig) {
 
   if (!changeCheck) return false;
 
-  // Staleness bound: only force heavy refreshes in the overnight window.
-  // This still catches deletes / lookup edits, but avoids surprise heavy
-  // refreshes during daytime hourly runs.
-  const ageMs = await cacheAgeMs(cacheKey);
-
-  if (ageMs > MAX_SKIP_AGE_MS && isOvernightForceRefreshWindow()) {
-    console.log(`[MV refresh] Forcing ${name}; cache age exceeds overnight threshold`);
-    return false;
+  // Keep the expensive RS display geometry on its existing overnight-only
+  // schedule. Other change-checked caches also need an initial population.
+  if (!overnightOnly) {
+    const state = await cacheRefreshState(cacheKey);
+    if (state.missing_refresh || state.overnight_due) {
+      console.log(`[MV refresh] Forcing ${name}; ${
+        state.missing_refresh ? "no recorded refresh" : "daily overnight refresh due"
+      }`);
+      return false;
+    }
   }
 
   const { rows } = await pool.query(changeCheck);
@@ -268,7 +279,7 @@ async function refreshView(viewConfig) {
 
     await markCacheChecked(
       cacheKey,
-      `${viewName} checked by materialized-view cron job; refresh skipped because cache is current`
+      `${viewName} checked by materialized-view cron job; refresh skipped; see job log for change-check or dependency reason`
     );
 
     return;
@@ -295,14 +306,16 @@ async function refreshView(viewConfig) {
 }
 
 async function rebuildMonumentAdminBoundaryMembership() {
-  // Membership derives from mv_monuments_caal; if monuments was skipped
-  // this run, membership cannot have changed either.
-  if (skippedThisRun.has("ui.mv_monuments_caal")) {
-    console.log("[MV refresh] Skipping ui.monument_admin_boundary_membership (monuments MV was skipped)");
+  // Do not rebuild membership from a base that was skipped or failed.
+  if (
+    skippedThisRun.has("ui.mv_monuments_caal") ||
+    failedThisRun.has("ui.mv_monuments_caal")
+  ) {
+    console.log("[MV refresh] Skipping ui.monument_admin_boundary_membership (monuments MV was skipped or failed)");
 
     await markCacheChecked(
       "monument_admin_boundary_membership",
-      "Monument admin boundary membership checked by materialized-view cron job; rebuild skipped because monuments cache is current"
+      "Monument admin boundary membership checked by materialized-view cron job; rebuild skipped because monuments cache was skipped or failed"
     );
 
     return;
