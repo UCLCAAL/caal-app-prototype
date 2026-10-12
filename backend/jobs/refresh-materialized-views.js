@@ -16,27 +16,34 @@ const VIEWER_SOURCES_CHANGED_SQL = `
   SELECT GREATEST(
     (SELECT max("Tstamp") FROM public."CAAL_RS3_Poly"),
     (SELECT max("Tstamp") FROM kz."CAAL_RS3_Poly"),
+    (SELECT max("Tstamp") FROM kg."CAAL_RS3_Poly"),
     (SELECT max("Tstamp") FROM public."CAAL_RS3_Line"),
     (SELECT max("Tstamp") FROM kz."CAAL_RS3_Line"),
+    (SELECT max("Tstamp") FROM kg."CAAL_RS3_Line"),
     (SELECT max("Tstamp") FROM public."CAAL_RS3_Group"),
     (SELECT max("Tstamp") FROM kz."CAAL_RS3_Group"),
+    (SELECT max("Tstamp") FROM kg."CAAL_RS3_Group"),
     (SELECT max("Tstamp") FROM public."CAAL_Institution"),
     (SELECT max("Tstamp") FROM kz."CAAL_Institution"),
+    (SELECT max("Tstamp") FROM kg."CAAL_Institution"),
     (SELECT max("Tstamp") FROM public."CAAL_Vernacular"),
     (SELECT max("Tstamp") FROM kz."CAAL_Vernacular"),
+    (SELECT max("Tstamp") FROM kg."CAAL_Vernacular"),
 
     (SELECT max("Tstamp") FROM public."CAAL_Monuments"),
     (SELECT max("Tstamp") FROM kz."CAAL_Monuments"),
+    (SELECT max("Tstamp") FROM kg."CAAL_Monuments"),
 
     (SELECT max("Tstamp") FROM public."CAAL_Archive"),
     (SELECT max("Tstamp") FROM kz."CAAL_Archive"),
+    (SELECT max("Tstamp") FROM kg."CAAL_Archive"),
 
     (SELECT max("Tstamp") FROM public."CAAL_Datasets"),
     (SELECT max("Tstamp") FROM public."CAAL_Cartography"),
     (SELECT max(edited_at) FROM public."CAAL_Monuments_web_edit_log"),
     (SELECT max(edited_at) FROM public."CAAL_Archive_web_edit_log"),
     (SELECT max(deleted_at) FROM public.record_registry
-      WHERE status = 'deleted' AND source_schema IN ('public', 'kz'))
+      WHERE status = 'deleted' AND source_schema IN ('public', 'kz', 'kg'))
   ) > (
     SELECT refreshed_at FROM ui.app_cache_status
     WHERE cache_key = 'resource_viewer_base_cache'
@@ -63,10 +70,11 @@ const MONUMENTS_CHANGED_SQL = `
   SELECT GREATEST(
     (SELECT max("Tstamp") FROM public."CAAL_Monuments"),
     (SELECT max("Tstamp") FROM kz."CAAL_Monuments"),
+    (SELECT max("Tstamp") FROM kg."CAAL_Monuments"),
     (SELECT max(edited_at) FROM public."CAAL_Monuments_web_edit_log"),
     (SELECT max(deleted_at) FROM public.record_registry
       WHERE status = 'deleted'
-        AND source_schema IN ('public', 'kz')
+        AND source_schema IN ('public', 'kz', 'kg')
         AND source_table = 'CAAL_Monuments')
   ) > (
     SELECT refreshed_at FROM ui.app_cache_status
@@ -121,6 +129,11 @@ const MATERIALIZED_VIEWS = [
     name: "ui.mv_resource_viewer_base",
     cacheKey: "resource_viewer_base_cache",
     changeCheck: VIEWER_SOURCES_CHANGED_SQL
+  },
+  {
+    name: "ui.mv_viewer_national_coverage",
+    cacheKey: "viewer_national_coverage_cache",
+    dependsOn: "ui.mv_resource_viewer_base"
   },
   {
     name: "ui.mv_resource_rs_display_geometry",

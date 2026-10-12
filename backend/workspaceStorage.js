@@ -19,6 +19,17 @@ const WORKSPACE_STORAGE = {
     archiveView: "v_archive_grid_base",
     archiveAppView: "v_archive_grid_base_app",
     enabled: true
+  },
+
+  kg: {
+    schema: "kg",
+    storageScope: "kg_workspace",
+    monumentTable: "CAAL_Monuments",
+    archiveTable: "CAAL_Archive",
+    monumentView: "v_monuments_grid_base",
+    archiveView: "v_archive_grid_base",
+    archiveAppView: "v_archive_grid_base_app",
+    enabled: true
   }
 };
 

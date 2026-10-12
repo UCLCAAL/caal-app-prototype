@@ -10,13 +10,14 @@ document.addEventListener("DOMContentLoaded", async () => {
       .trim()
       .toLowerCase() === "caal";
 
-  homeCanAccessViewer = isCaalUser;
+  const canOpenViewer = window.canAccessViewer(session);
+  homeCanAccessViewer = canOpenViewer;
 
   if (fullSearchButton) {
-    fullSearchButton.disabled = !isCaalUser;
-    fullSearchButton.setAttribute("aria-disabled", String(!isCaalUser));
+    fullSearchButton.disabled = !canOpenViewer;
+    fullSearchButton.setAttribute("aria-disabled", String(!canOpenViewer));
 
-    if (isCaalUser) {
+    if (canOpenViewer) {
       fullSearchButton.addEventListener("click", () => {
         window.location.href = "viewer.html";
       });
@@ -24,9 +25,14 @@ document.addEventListener("DOMContentLoaded", async () => {
   }
 
   if (fullSearchWrapper) {
+    fullSearchWrapper.removeAttribute("data-i18n-title");
     fullSearchWrapper.title = isCaalUser
       ? "Open the full CAAL database viewer."
-      : "Full database search is currently available to CAAL users only.";
+      : "Open your national resource viewer.";
+    if (!isCaalUser && fullSearchButton) {
+      fullSearchButton.setAttribute("data-i18n", "open_national_viewer");
+      fullSearchButton.textContent = t("open_national_viewer", "Open national Viewer");
+    }
   }
 
   const logoutBtn =

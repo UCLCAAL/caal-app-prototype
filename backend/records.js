@@ -8,7 +8,8 @@ const {
   workspaceStorageScopeSql,
   viewSql,
   tableSql,
-  enabledWorkspaceStorageConfigs
+  enabledWorkspaceStorageConfigs,
+  storageFromScope
 } = require("./workspaceStorage");
 
 function resolveWorkspaceStoragesForSession(currentSession) {
@@ -269,24 +270,20 @@ function canEditWorkspace(session) {
 }
 
 function isEditableResolvedRow(row, session) {
-  const currentAppUserId = session?.user?.user_id ?? null;
-  const recordAppUserId = row?.created_by_app_user_id ?? null;
-
-  const isOwner =
-    currentAppUserId !== null &&
-    recordAppUserId !== null &&
-    Number(currentAppUserId) === Number(recordAppUserId);
-
-  const isSuperUser = canEditCaal(session);
-  const isWorkspaceRecord = row?.source_scope === "workspace";
-  const isCaalRecord =
-    row?.source_scope === "national_ref" ||
-    row?.source_scope === "all_caal";
-
-  return (
-    (isWorkspaceRecord && canEditWorkspace(session) && (isOwner || isSuperUser)) ||
-    (isCaalRecord && isSuperUser)
-  );
+  const workspace = getSessionWorkspaceCode(session);
+  const userId = session?.user?.user_id;
+  const ownerId = row?.created_by_app_user_id;
+  const isOwner = userId != null && ownerId != null && Number(userId) === Number(ownerId);
+  const storage = storageFromScope(row?.storage_scope);
+  const ownNationalStorage = workspace !== "caal" && storage?.workspaceCode === workspace;
+  const nationalPublicRecord = row?.storage_scope === "public_caal" &&
+    String(row?.workspace_code || "").trim().toLowerCase() === workspace;
+  const nationalAdmin = Number(session?.user?.access_level ?? session?.profile?.access_level) === 9 &&
+    session?.permissions?.can_edit_national_caal === true;
+  if (canEditCaal(session)) return true;
+  if (nationalAdmin) return ownNationalStorage || nationalPublicRecord;
+  return canEditWorkspace(session) && isOwner && (ownNationalStorage ||
+    row?.source_scope === "workspace" && row?.storage_scope === "public_caal");
 }
 
 async function sendResolvedRecord(res, recordType, record) {

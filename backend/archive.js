@@ -130,7 +130,8 @@ function archiveAllWorkspaceStorageConfigs() {
     });
 }
 
-function ownedWorkspaceArchiveSql(storage, userId) {
+function ownedWorkspaceArchiveSql(storage, userId, currentSession) {
+  const editable = canEditArchive(currentSession) ? "true" : "false";
   const archiveView = viewSql(
     storage.schema,
     storage.archiveAppView || storage.archiveView
@@ -147,9 +148,9 @@ function ownedWorkspaceArchiveSql(storage, userId) {
       ${archiveBrowseColumnSql("v")},
       v."Preferred Language" AS preferred_language,
       'workspace'::text AS source_scope,
-      true AS is_editable,
+      ${editable} AS is_editable,
       'workspace'::text AS source_scope_override,
-      true AS is_editable_override,
+      ${editable} AS is_editable_override,
       ${storageScope}::text AS storage_scope,
       false AS is_promoted
     FROM ${archiveView} v
@@ -177,6 +178,32 @@ function ownedWorkspaceArchiveSql(storage, userId) {
       AND rr.deleted_at > COALESCE(
         (SELECT refreshed_at FROM ui.app_cache_status
          WHERE cache_key = 'archive_caal_cache' LIMIT 1), now() - interval '2 hours')
+  `;
+}
+
+// National browsing includes active rows created by other users in this schema.
+// Owned rows remain in workspace scope, avoiding duplicates in the combined list.
+function nationalWorkspaceArchiveSql(storage, currentSession) {
+  const archiveView = viewSql(storage.schema, storage.archiveAppView || storage.archiveView);
+  const sourceSchema = sqlTextLiteral(storage.schema);
+  const storageScope = sqlTextLiteral(storage.storageScope);
+  const userId = currentAppUserIdFromSession(currentSession) ?? -1;
+  const editable = isNationalAdmin(currentSession) ? "true" : "false";
+  return `
+    SELECT ${archiveBrowseColumnSql("v")},
+      v."Preferred Language" AS preferred_language,
+      'national_ref'::text AS source_scope,
+      ${editable} AS is_editable,
+      'national_ref'::text AS source_scope_override,
+      ${editable} AS is_editable_override,
+      ${storageScope}::text AS storage_scope,
+      false AS is_promoted
+    FROM ${archiveView} v
+    LEFT JOIN public.record_registry rr
+      ON rr.source_schema = ${sourceSchema}
+     AND rr.source_table = 'CAAL_Archive' AND rr.source_row_id = v.id
+    WHERE COALESCE(rr.status, '') <> 'deleted'
+      AND COALESCE(v.created_by_app_user_id, -1) <> ${userId}
   `;
 }
 
@@ -403,7 +430,7 @@ function makeArchiveBrowseScopeConfig(currentSession) {
   `;
 
   const workspaceSchemaSql = archiveOwnedWorkspaceStorageConfigs(currentSession)
-    .map((storage) => ownedWorkspaceArchiveSql(storage, userId))
+    .map((storage) => ownedWorkspaceArchiveSql(storage, userId, currentSession))
     .join("\nUNION ALL\n");
 
   const workspacePublicOwnedSql = `
@@ -411,9 +438,9 @@ function makeArchiveBrowseScopeConfig(currentSession) {
       ${archiveBrowseColumnSql("m")},
       a."Preferred Language" AS preferred_language,
       'workspace'::text AS source_scope,
-      true AS is_editable,
+      ${canEditArchive(currentSession) ? "true" : "false"} AS is_editable,
       'workspace'::text AS source_scope_override,
-      true AS is_editable_override,
+      ${canEditArchive(currentSession) ? "true" : "false"} AS is_editable_override,
       'public_caal'::text AS storage_scope,
       true AS is_promoted
     FROM current_public_archive m
@@ -429,6 +456,8 @@ function makeArchiveBrowseScopeConfig(currentSession) {
   `;
 
   const allWorkspaceArchivesSql = "";
+  const nationalWorkspaceSql = workspaceCode === "caal" ? "" :
+    nationalWorkspaceArchiveSql(getWorkspaceStorage(currentSession), currentSession);
 
   return {
     workspace: {
@@ -438,7 +467,7 @@ function makeArchiveBrowseScopeConfig(currentSession) {
     },
 
     national_ref: {
-      sql: `
+      sql: [nationalWorkspaceSql, `
         SELECT
           ${archiveBrowseColumnSql("m")},
           a."Preferred Language" AS preferred_language,
@@ -454,7 +483,7 @@ function makeArchiveBrowseScopeConfig(currentSession) {
         WHERE ${nationalWhere}
           AND COALESCE(m.created_by_app_user_id, -1) <> ${userId}
           AND ${ownPromotedExclusion}
-      `
+      `].filter(Boolean).join("\nUNION ALL\n")
     },
 
 
@@ -2091,7 +2120,7 @@ router.patch("/:id", async (req, res) => {
           )
         RETURNING *
         `,
-        [...values, id, isCaalAdmin(currentSession), userId]
+        [...values, id, isCaalAdmin(currentSession) || isNationalAdmin(currentSession), userId]
       );
 
       returnedScope = "workspace";

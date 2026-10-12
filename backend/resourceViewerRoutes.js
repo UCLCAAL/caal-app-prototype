@@ -10,6 +10,7 @@
 
 const express = require("express");
 const pool = require("./db");
+const { getViewerAccessPolicy } = require("./viewerAccess");
 
 const {
   getSessionWorkspaceCode
@@ -78,7 +79,15 @@ const VIEWER_RAW_TABLES = {
   "kz.CAAL_Institution": 'kz."CAAL_Institution"',
   "kz.CAAL_Vernacular": 'kz."CAAL_Vernacular"',
   "kz.CAAL_Monuments": 'kz."CAAL_Monuments"',
-  "kz.CAAL_Archive": 'kz."CAAL_Archive"'
+  "kz.CAAL_Archive": 'kz."CAAL_Archive"',
+
+  "kg.CAAL_RS3_Poly": 'kg."CAAL_RS3_Poly"',
+  "kg.CAAL_RS3_Line": 'kg."CAAL_RS3_Line"',
+  "kg.CAAL_RS3_Group": 'kg."CAAL_RS3_Group"',
+  "kg.CAAL_Institution": 'kg."CAAL_Institution"',
+  "kg.CAAL_Vernacular": 'kg."CAAL_Vernacular"',
+  "kg.CAAL_Monuments": 'kg."CAAL_Monuments"',
+  "kg.CAAL_Archive": 'kg."CAAL_Archive"'
 };
 
 const ALLOWED_RECORD_TYPES = new Set([
@@ -236,11 +245,21 @@ function requireSession(req, res) {
     return null;
   }
 
+  if (!getViewerAccessPolicy(session).can_view) {
+    res.status(403).json({ ok: false, error: "viewer_not_permitted" });
+    return null;
+  }
   return session;
 }
 
+router.get("/policy", (req, res) => {
+  const session = requireSession(req, res);
+  if (!session) return;
+  return res.json({ ok: true, policy: getViewerAccessPolicy(session) });
+});
+
 function requireExportCapability(req, res, session) {
-  if (session?.permissions?.can_export_data) return true;
+  if (getViewerAccessPolicy(session).can_export_data) return true;
   res.status(403).json({
     ok: false,
     error: "export_not_permitted",
@@ -409,34 +428,7 @@ function parseAdminBoundaryId(value) {
 }
 
 function allowedScopesForSession(session) {
-  const scopes = [];
-
-  if (session?.permissions?.can_view_workspace) {
-    scopes.push("workspace");
-  }
-
-  if (session?.permissions?.can_view_national_ref) {
-    scopes.push("national_ref");
-  }
-
-  if (session?.permissions?.can_view_all_caal) {
-    scopes.push("all_caal");
-  }
-
-  /*
-    Temporary compatibility fallback.
-    Remove once all active sessions reliably contain permissions.
-  */
-  if (!scopes.length) {
-    if (isCaalWorkspace(session)) {
-      scopes.push("all_caal");
-    } else {
-      scopes.push("workspace");
-      scopes.push("national_ref");
-    }
-  }
-
-  return unique(scopes);
+  return getViewerAccessPolicy(session).allowed_scopes;
 }
 
 function requestedScopes(req, session) {
@@ -505,7 +497,7 @@ function sqlIdentFromSafeMv(mvName) {
 }
 
 
-async function loadViewerRelationsForCaalId(caalId) {
+async function loadViewerRelationsForCaalId(caalId, session) {
   const id = String(caalId || "").trim();
 
   if (!id) return [];
@@ -533,15 +525,16 @@ async function loadViewerRelationsForCaalId(caalId) {
         WHEN related_source_row_id IS NOT NULL THEN true
         ELSE false
       END AS related_id_exists
-    FROM ui.mv_resource_related_search
+    FROM ui.mv_resource_related_search r
     WHERE lower(trim(returned_caal_id)) = lower(trim($1))
+      AND ${relatedViewerVisibilitySql("r", "$2", "$3")}
     ORDER BY
       related_record_type,
       related_display_label NULLS LAST,
       related_caal_id,
       relation_type
     `,
-    [id]
+    [id, getSessionWorkspaceCode(session), allowedScopesForSession(session)]
   );
 
   return result.rows.map((row) => ({
@@ -570,8 +563,22 @@ async function loadViewerRelationsForCaalId(caalId) {
 // SOURCE SCOPE SQL
 // ========================================================
 
-function sourceScopeCaseSql(workspaceCodeParam = "$1", tableAlias = "") {
-  const p = tableAlias ? `${tableAlias}.` : "";
+function relatedViewerVisibilitySql(alias, workspaceParam, scopesParam) {
+  return ["returned", "related"].map(endpoint => `EXISTS (
+    SELECT 1 FROM ${VIEWER_BASE_MV} permitted_${endpoint}
+    WHERE permitted_${endpoint}.record_type = ${alias}.${endpoint}_record_type
+      AND permitted_${endpoint}.source_schema = ${alias}.${endpoint}_source_schema
+      AND permitted_${endpoint}.source_table = ${alias}.${endpoint}_source_table
+      AND permitted_${endpoint}.source_row_id = ${alias}.${endpoint}_source_row_id
+      AND ${sourceScopeCaseSql(workspaceParam, "permitted_" + endpoint)} = ANY(${scopesParam}::text[])
+  )`).join(" AND ");
+}
+
+function sourceScopeCaseSql(workspaceCodeParam = "$1", tableAlias = "v") {
+  if (!/^[a-z_][a-z0-9_]*$/i.test(tableAlias || "")) {
+    throw new Error("Viewer visibility requires a qualified source alias");
+  }
+  const p = `${tableAlias}.`;
 
   return `
     CASE
@@ -581,6 +588,17 @@ function sourceScopeCaseSql(workspaceCodeParam = "$1", tableAlias = "") {
            AND ${p}source_schema = 'public'
            AND ${p}assigned_workspace_code = ${workspaceCodeParam}
         THEN 'national_ref'
+
+      WHEN ${workspaceCodeParam} <> 'caal'
+           AND ${p}record_type IN ('dataset', 'cartography')
+           AND EXISTS (
+             SELECT 1 FROM ui.mv_viewer_national_coverage coverage
+             WHERE coverage.workspace_code = ${workspaceCodeParam}
+               AND coverage.record_type = ${p}record_type
+               AND coverage.source_schema = ${p}source_schema
+               AND coverage.source_table = ${p}source_table
+               AND coverage.source_row_id = ${p}source_row_id
+           ) THEN 'national_ref'
 
       ELSE 'all_caal'
     END
@@ -706,21 +724,9 @@ function monumentTypeDescendantFilterSql(columnSql, paramSql) {
   `;
 }
 
-function isEditableSql(workspaceCodeParam = "$1", tableAlias = "") {
-  const p = tableAlias ? `${tableAlias}.` : "";
-
-  return `
-    CASE
-      WHEN ${p}source_schema = ${workspaceCodeParam} THEN true
-
-      WHEN ${workspaceCodeParam} <> 'caal'
-           AND ${p}source_schema = 'public'
-           AND ${p}assigned_workspace_code = ${workspaceCodeParam}
-        THEN true
-
-      ELSE false
-    END
-  `;
+function isEditableSql() {
+  // Editing remains on Monuments/Archive; Viewer is read-only for every caller.
+  return "false";
 }
 
 function parseIntCsvParam(value) {
@@ -1226,6 +1232,7 @@ function buildExportEstimateSql({ whereSql, scopesParam, includeRelated }) {
       JOIN sel_dedup s
         ON lower(btrim(r.returned_caal_id)) = s.caal_id_norm
       WHERE r.related_caal_id IS NOT NULL
+        AND ${relatedViewerVisibilitySql("r", "$1", scopesParam)}
     ),
     visible_related AS (
       SELECT DISTINCT v.caal_id_norm
@@ -1677,6 +1684,7 @@ function exportCtesSql({ whereSql, scopesParam, includeRelated }) {
       FROM ui.mv_resource_related_search r
       JOIN sel_dedup s ON lower(btrim(r.returned_caal_id)) = s.caal_id_norm
       WHERE r.related_caal_id IS NOT NULL
+        AND ${relatedViewerVisibilitySql("r", "$1", scopesParam)}
     ),
     visible_related AS (
       SELECT DISTINCT v.caal_id_norm
@@ -3200,7 +3208,7 @@ router.get("/records", async (req, res) => {
         p.total_count,
         ${sourceScopeCaseSql("$1", "b")} AS source_scope,
         ${storageScopeCaseSql("b")} AS storage_scope,
-        ${isEditableSql("$1", "b")} AS is_editable,
+        ${isEditableSql("$1", "b", session)} AS is_editable,
 
         ${viewerDisplayJsonSql("b", lang)} AS display,
         ${viewerMonumentTypePathDisplaySql("b", lang)} AS monument_type_path,
@@ -3228,7 +3236,8 @@ router.get("/records", async (req, res) => {
           'Content Type',
             COALESCE(
               archive_public."Content Type"::text,
-              archive_kz."Content Type"::text
+              archive_kz."Content Type"::text,
+              archive_kg."Content Type"::text
             )
         ) AS raw,
 
@@ -3250,6 +3259,11 @@ router.get("/records", async (req, res) => {
         AND p.source_schema = 'kz'
         AND p.source_table = 'CAAL_Archive'
         AND archive_kz.id::text = p.source_row_id
+      LEFT JOIN kg."CAAL_Archive" archive_kg
+        ON p.record_type = 'archive'
+        AND p.source_schema = 'kg'
+        AND p.source_table = 'CAAL_Archive'
+        AND archive_kg.id::text = p.source_row_id
       LEFT JOIN LATERAL (
         SELECT jsonb_build_object(
           'count', COUNT(r.edge_id)::integer,
@@ -3278,6 +3292,7 @@ router.get("/records", async (req, res) => {
         ) AS relation_summary
         FROM ui.mv_resource_related_search r
         WHERE lower(btrim(r.returned_caal_id)) = p.caal_id_norm
+          AND ${relatedViewerVisibilitySql("r", "$1", "$2")}
       ) rel ON true
       ORDER BY
         CASE p.record_type
@@ -3395,7 +3410,7 @@ router.get("/records-by-type", async (req, res) => {
 
         ${sourceScopeCaseSql("$1", "b")} AS source_scope,
         ${storageScopeCaseSql("b")} AS storage_scope,
-        ${isEditableSql("$1", "b")} AS is_editable,
+        ${isEditableSql("$1", "b", session)} AS is_editable,
 
         ${viewerDisplayJsonSql("b", lang)} AS display,
         ${viewerMonumentTypePathDisplaySql("b", lang)} AS monument_type_path,
@@ -3423,7 +3438,8 @@ router.get("/records-by-type", async (req, res) => {
           'Content Type',
             COALESCE(
               archive_public."Content Type"::text,
-              archive_kz."Content Type"::text
+              archive_kz."Content Type"::text,
+              archive_kg."Content Type"::text
             )
         ) AS raw,
 
@@ -3445,6 +3461,11 @@ router.get("/records-by-type", async (req, res) => {
         AND p.source_schema = 'kz'
         AND p.source_table = 'CAAL_Archive'
         AND archive_kz.id::text = p.source_row_id
+      LEFT JOIN kg."CAAL_Archive" archive_kg
+        ON p.record_type = 'archive'
+        AND p.source_schema = 'kg'
+        AND p.source_table = 'CAAL_Archive'
+        AND archive_kg.id::text = p.source_row_id
 
       LEFT JOIN LATERAL (
         SELECT jsonb_build_object(
@@ -3474,6 +3495,7 @@ router.get("/records-by-type", async (req, res) => {
         ) AS relation_summary
         FROM ui.mv_resource_related_search r
         WHERE lower(btrim(r.returned_caal_id)) = p.caal_id_norm
+          AND ${relatedViewerVisibilitySql("r", "$1", "$2")}
       ) rel ON true
       ORDER BY
         p.display_label NULLS LAST,
@@ -3530,6 +3552,11 @@ router.get("/map", async (req, res) => {
       if (
         VIEWER_REFERENCE_LAYERS.has(recordType)
       ) {
+        if (!getViewerAccessPolicy(session).can_view_survey_metadata &&
+            recordType !== "admin_boundary") {
+          layers[recordType] = emptyFeatureCollection();
+          continue;
+        }
         layers[recordType] =
           await loadReferenceLayer(
             recordType,
@@ -3708,7 +3735,7 @@ router.get("/map", async (req, res) => {
           } AS storage_scope,
 
           ${
-            isEditableSql("$1", "v")
+            isEditableSql("$1", "v", session)
           } AS is_editable,
 
           ${geometrySelectSql}
@@ -3924,7 +3951,7 @@ router.get("/centroids", async (req, res) => {
         ${viewerMonumentTypePathDisplaySql("v", lang)} AS monument_type_path,
         ${sourceScopeCaseSql("$1", "v")} AS source_scope,
         ${storageScopeCaseSql("v")} AS storage_scope,
-        ${isEditableSql("$1", "v")} AS is_editable,
+        ${isEditableSql("$1", "v", session)} AS is_editable,
         ST_AsGeoJSON(v.centroid_4326, 6)::json AS geometry
       FROM ${VIEWER_BASE_MV} v
       ${filter.whereSql}
@@ -4034,7 +4061,8 @@ async function loadViewerIdentityForRecordRequest(
 
       ${isEditableSql(
         "$1",
-        "v"
+        "v",
+        session
       )} AS is_editable,
 
       ${viewerDisplayJsonSql(
@@ -4232,7 +4260,7 @@ router.get("/record", async (req, res) => {
 
     record.relations =
       await loadViewerRelationsForCaalId(
-        identityRow.caal_id
+        identityRow.caal_id, session
       );
 
     return res.json({
@@ -4322,7 +4350,7 @@ router.get("/record/document.pdf", async (req, res) => {
 
     const relations =
       await loadViewerRelationsForCaalId(
-        identityRow.caal_id
+        identityRow.caal_id, session
       );
 
     const relatedResources =
@@ -4479,10 +4507,11 @@ router.get("/related-summary", async (req, res) => {
       FROM ui.mv_resource_related_search r
       WHERE lower(btrim(r.returned_caal_id)) = lower(btrim($1::text))
         AND r.related_caal_id IS NOT NULL
+        AND ${relatedViewerVisibilitySql("r", "$2", "$3")}
       GROUP BY r.related_record_type
       ORDER BY r.related_record_type
       `,
-      [caalId]
+      [caalId, getSessionWorkspaceCode(session), allowedScopesForSession(session)]
     );
 
     return res.json({ ok: true, summary: result.rows });
@@ -4514,9 +4543,15 @@ router.get("/boundary-summary", async (req, res) => {
     const result = await pool.query(
       `
       WITH members AS (
-        SELECT record_type, source_schema, source_table, source_row_id
-        FROM ui.resource_admin_boundary_membership
-        WHERE boundary_id = $1
+        SELECT m.record_type, m.source_schema, m.source_table, m.source_row_id
+        FROM ui.resource_admin_boundary_membership m
+        JOIN ${VIEWER_BASE_MV} permitted
+          ON permitted.record_type = m.record_type
+         AND permitted.source_schema = m.source_schema
+         AND permitted.source_table = m.source_table
+         AND permitted.source_row_id = m.source_row_id
+        WHERE m.boundary_id = $1
+          AND ${sourceScopeCaseSql("$2", "permitted")} = ANY($3::text[])
       ),
 
       type_counts AS (
@@ -4572,7 +4607,7 @@ router.get("/boundary-summary", async (req, res) => {
         (SELECT avg_condition FROM condition_stats)            AS avg_condition,
         (SELECT records_with_condition FROM condition_stats)   AS records_with_condition
       `,
-      [boundaryId]
+      [boundaryId, getSessionWorkspaceCode(session), allowedScopesForSession(session)]
     );
 
     const row = result.rows[0] || {};
@@ -4673,7 +4708,9 @@ router.get("/related-map", async (req, res) => {
           r.relation_type_norm,
           r.relation_direction
         FROM ui.mv_resource_related_search r
-        WHERE lower(btrim(r.returned_caal_id)) =
+        WHERE EXISTS (SELECT 1 FROM selected_record)
+          AND ${relatedViewerVisibilitySql("r", "$2", "$3")}
+          AND lower(btrim(r.returned_caal_id)) =
               lower(btrim($1::text))
           AND r.related_caal_id IS NOT NULL
           AND btrim(r.related_caal_id) <> ''

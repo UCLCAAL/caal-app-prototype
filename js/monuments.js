@@ -5050,8 +5050,7 @@ function resetMapView() {
   }
 
   map.easeTo({
-    center: [66.9, 48.2],
-    zoom: 4.2,
+    ...window.getSessionDefaultMapView(window.appSession),
     duration: 700
   });
 }
@@ -8527,7 +8526,7 @@ function updateMonumentActionBar() {
     !!record?.identity?.id;
 
   if (addMonumentBtn) {
-    addMonumentBtn.hidden = monumentIsEditMode;
+    addMonumentBtn.hidden = monumentIsEditMode || !window.appSession?.permissions?.can_edit_workspace;
   }
 
   if (monumentEditBtn) {
@@ -8695,6 +8694,7 @@ async function monumentReinstateCurrentRecord() {
 }
 
 function canEditMonumentRecord(record) {
+  if (!window.appSession?.permissions?.can_edit_workspace && !window.appSession?.permissions?.can_edit_caal) return false;
   if (record?.source?.is_deleted === true) {
     return false;
   }
@@ -14061,19 +14061,7 @@ async function applyMonumentFilters({ includeMap = true, listFirst = true, throw
 }
 
 function resetMonumentBrowseAfterSave() {
-  // Show the user's own editable/workspace records.
-  if (showWorkspaceRecords) {
-    showWorkspaceRecords.checked = true;
-  }
-
-  // Suppress broader scopes so the newest user-created/edited record is not buried.
-  if (showNationalRecords && !showNationalRecords.disabled) {
-    showNationalRecords.checked = false;
-  }
-
-  if (showAllCaalRecords && !showAllCaalRecords.disabled) {
-    showAllCaalRecords.checked = false;
-  }
+  // Preserve the selected workspace, national and All CAAL scopes after saving.
 
   // Clear text filters.
   if (siteSearch) siteSearch.value = "";
@@ -19772,12 +19760,13 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   if (mapElement && typeof maplibregl !== "undefined") {
     const initialBasemap = basemapSelect ? basemapSelect.value : "osm";
+    const defaultMapView = window.getSessionDefaultMapView(window.appSession);
 
     map = new maplibregl.Map({
       container: "map",
       style: getBasemapStyle(initialBasemap),
-      center: directLinkedRecord?.geometry?.coordinates || [66.9, 48.2],
-      zoom: directLinkedRecord?.geometry?.coordinates ? 8 : 4.2,
+      center: directLinkedRecord?.geometry?.coordinates || defaultMapView.center,
+      zoom: directLinkedRecord?.geometry?.coordinates ? 8 : defaultMapView.zoom,
 
       preserveDrawingBuffer: true,
       canvasContextAttributes: {

@@ -1,5 +1,6 @@
 const express = require("express");
 const pool = require("./db");
+const { getSessionWorkspaceCode } = require("./workspaceStorage");
 
 const router = express.Router();
 
@@ -35,6 +36,16 @@ router.get("/search/resources", async (req, res) => {
     });
   }
 
+  const permissions = currentSession.permissions || {};
+  const workspaceCode = getSessionWorkspaceCode(currentSession);
+  const canViewAll = permissions.can_view_all_caal === true;
+  const canViewWorkspace = permissions.can_view_workspace === true;
+  const canViewNational = permissions.can_view_national_ref === true;
+  if ((!canViewAll && !workspaceCode) ||
+      (!canViewAll && !canViewWorkspace && !canViewNational)) {
+    return res.status(403).json({ ok: false, error: "No permitted resource search scope" });
+  }
+
   const q = normaliseSearchTerm(req.query.q || req.query.text);
   const context = parseContext(req.query.context);
   const limit = parseLimit(req.query.limit);
@@ -53,6 +64,32 @@ router.get("/search/resources", async (req, res) => {
       `
       WITH q AS (
         SELECT lower(trim($1::text)) AS term
+      ),
+
+      visible_identity AS (
+        SELECT ri.*
+        FROM ui.mv_resource_identity ri
+        WHERE $4::boolean OR EXISTS (
+          SELECT 1 FROM ui.mv_resource_viewer_base v
+          WHERE v.source_schema = ri.source_schema
+            AND v.source_table = ri.source_table
+            AND v.source_row_id = ri.source_row_id
+            AND v.record_type = ri.record_type
+            AND (
+              ($5::boolean AND v.source_schema = $3::text)
+              OR ($6::boolean AND $3::text <> 'caal'
+                  AND v.source_schema = 'public'
+                  AND v.assigned_workspace_code = $3::text)
+              OR ($6::boolean AND v.record_type IN ('dataset', 'cartography') AND EXISTS (
+                SELECT 1 FROM ui.mv_viewer_national_coverage coverage
+                WHERE coverage.workspace_code = $3::text
+                  AND coverage.record_type = v.record_type
+                  AND coverage.source_schema = v.source_schema
+                  AND coverage.source_table = v.source_table
+                  AND coverage.source_row_id = v.source_row_id
+              ))
+            )
+        )
       ),
 
       exact_hits AS (
@@ -74,7 +111,7 @@ router.get("/search/resources", async (req, res) => {
           NULL::text AS matched_related_display_label,
           NULL::text AS relation_type,
           NULL::text AS relation_direction
-        FROM ui.mv_resource_identity ri, q
+        FROM visible_identity ri, q
         WHERE lower(trim(ri.caal_id)) = q.term
       ),
 
@@ -103,7 +140,7 @@ router.get("/search/resources", async (req, res) => {
           NULL::text AS matched_related_display_label,
           NULL::text AS relation_type,
           NULL::text AS relation_direction
-        FROM ui.mv_resource_identity ri, q
+        FROM visible_identity ri, q
         WHERE ri.name_blob ILIKE '%' || q.term || '%'
       ),
 
@@ -134,6 +171,20 @@ router.get("/search/resources", async (req, res) => {
           rs.relation_direction
         FROM ui.mv_resource_related_search rs, q
         WHERE rs.related_name_blob ILIKE '%' || q.term || '%'
+          AND EXISTS (
+            SELECT 1 FROM visible_identity returned
+            WHERE returned.record_type = rs.returned_record_type
+              AND returned.source_schema = rs.returned_source_schema
+              AND returned.source_table = rs.returned_source_table
+              AND returned.source_row_id = rs.returned_source_row_id
+          )
+          AND EXISTS (
+            SELECT 1 FROM visible_identity related
+            WHERE related.record_type = rs.related_record_type
+              AND related.source_schema = rs.related_source_schema
+              AND related.source_table = rs.related_source_table
+              AND related.source_row_id = rs.related_source_row_id
+          )
       ),
 
       combined AS (
@@ -286,7 +337,7 @@ router.get("/search/resources", async (req, res) => {
         (SELECT totals_by_record_type FROM totals_by_type) AS totals_by_record_type
       FROM preview;
       `,
-      [q, context]
+      [q, context, workspaceCode, canViewAll, canViewWorkspace, canViewNational]
     );
 
     const row = result.rows[0] || {};

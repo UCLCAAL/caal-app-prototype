@@ -1,3 +1,4 @@
+const { getViewerAccessPolicy } = require("./viewerAccess");
 const SUPPORTED_LANGUAGES = ["en", "ru", "zh", "kk", "ky", "tg", "tk", "uz"];
 
 /**
@@ -243,7 +244,7 @@ function buildSessionFromRow(sessionRow) {
     ""
   ).trim().toLowerCase();
 
-  return {
+  const session = {
     user: {
       user_id: sessionRow.user_id,
       username: sessionRow.username,
@@ -268,6 +269,8 @@ function buildSessionFromRow(sessionRow) {
 
     permissions: permissionsFromAccessLevel(accessLevel, workspaceCode)
   };
+  session.viewer = getViewerAccessPolicy(session);
+  return session;
 }
 
 module.exports = {

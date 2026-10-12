@@ -19,6 +19,8 @@ const SUPPORTED_UI_LANGS = ["en", "ru", "zh", "kk", "ky", "tg", "tk", "uz"];
 // TINY IN HOUSE THESAURUS FOR NAV BAR
 const SHELL_TRANSLATIONS = {
   en: {
+    open_national_viewer: "Open national Viewer",
+    viewer_national_workspace_subtitle: "{country} resource viewer",
     app_title: "CAAL Workspace",
     nav_home: "Home",
     nav_monuments: "Monuments",
@@ -71,6 +73,8 @@ const SHELL_TRANSLATIONS = {
   },
 
   ru: {
+    open_national_viewer: "Открыть национальный просмотр",
+    viewer_national_workspace_subtitle: "Просмотр ресурсов: {country}",
     app_title: "Рабочее пространство CAAL",
     nav_home: "Главная",
     nav_monuments: "Памятники",
@@ -122,6 +126,8 @@ const SHELL_TRANSLATIONS = {
   },
 
   zh: {
+    open_national_viewer: "打开本国资源查看器",
+    viewer_national_workspace_subtitle: "{country}资源查看器",
     app_title: "CAAL 工作区",
     nav_home: "主页",
     nav_monuments: "遗址",
@@ -234,6 +240,11 @@ async function requireSession() {
     return null;
   }
 
+  const canCreate = session.permissions?.can_edit_workspace === true || session.permissions?.can_edit_caal === true;
+  document.querySelectorAll("#addMonumentBtn, #addArchiveBtn").forEach(button => {
+    button.disabled = !canCreate;
+    if (!canCreate) button.hidden = true;
+  });
   return session;
 }
 
@@ -258,14 +269,21 @@ function bindLogoutButtons() {
   });
 }
 
+function canAccessViewer(session = window.appSession) {
+  if (session?.viewer) return session.viewer.can_view === true;
+  // Existing sessions can predate the Viewer policy field. The API always
+  // recomputes policy; this fallback only decides whether to show navigation.
+  const code = String(session?.user?.workspace_code || session?.profile?.workspace_code || "").trim().toLowerCase();
+  const level = Number(session?.user?.access_level ?? session?.profile?.access_level);
+  return ["caal", "kz", "kg"].includes(code) && [1, 2, 3, 9].includes(level) &&
+    Boolean(session?.permissions?.can_view_workspace || session?.permissions?.can_view_all_caal);
+}
+window.canAccessViewer = canAccessViewer;
+
 function updateCaalOnlyNavigation(session = window.appSession) {
   const isCaal = sharedSessionIsCaalWorkspace(session);
-
-  document
-    .querySelectorAll("[data-caal-only-nav]")
-    .forEach((el) => {
-      el.hidden = !isCaal;
-    });
+  document.querySelectorAll("[data-caal-only-nav]").forEach(el => { el.hidden = !isCaal; });
+  document.querySelectorAll("[data-viewer-nav]").forEach(el => { el.hidden = !canAccessViewer(session); });
 }
 
 window.updateCaalOnlyNavigation = updateCaalOnlyNavigation;
@@ -392,7 +410,9 @@ function getLocalizedCountryName(countryName, lang = getCurrentLanguage()) {
       tg: "Қазоқистон",
       tk: "Gazagystan",
       uz: "Qozog'iston"
-    }
+    },
+    kyrgyzstan: { en: "Kyrgyzstan", ru: "Кыргызстан", zh: "吉尔吉斯斯坦", ky: "Кыргызстан" },
+    "кыргызстан": { en: "Kyrgyzstan", ru: "Кыргызстан", zh: "吉尔吉斯斯坦", ky: "Кыргызстан" }
   };
 
   return countries[key]?.[lang] || countryName || "";
@@ -404,6 +424,18 @@ function getWorkspaceCountryDisplayForms(session = window.appSession) {
     (typeof window.getCurrentLanguage === "function" && window.getCurrentLanguage()) ||
     session?.profile?.preferred_language ||
     "en";
+
+  if (workspaceCode === "kg") {
+    const ru = ["ru", "ky", "kk", "tg", "tk", "uz"].includes(lang);
+    return {
+      country: lang === "zh" ? "吉尔吉斯斯坦" : ru ? "Кыргызстан" : "Kyrgyzstan",
+      countryGenitive: ru ? "Кыргызстана" : "Kyrgyzstan",
+      workspaceTitle: ru ? "Рабочее пространство записей Кыргызстана" : "Kyrgyzstan records workspace",
+      homeSubtitle: ru ? "CAAL Кыргызстан" : "CAAL Kyrgyzstan",
+      monumentsSubtitle: ru ? "Рабочее пространство памятников Кыргызстана" : "Kyrgyzstan monuments workspace",
+      archiveSubtitle: ru ? "Рабочее пространство архива Кыргызстана" : "Kyrgyzstan archive workspace"
+    };
+  }
 
   if (workspaceCode === "kz") {
     return {
@@ -472,6 +504,25 @@ function getSessionWorkspaceCodeForDisplay(session = window.appSession) {
   ).trim().toLowerCase();
 }
 
+// Country/workspace defaults are independent of UI language.
+function getSessionDefaultMapView(session = window.appSession) {
+  const views = {
+    caal: { center: [66.9, 42.5], zoom: 4.0 },
+    kz: { center: [67.0, 48.2], zoom: 4.2 },
+    kg: { center: [74.8, 41.3], zoom: 6.0 },
+    tj: { center: [71.0, 38.8], zoom: 6.0 },
+    uz: { center: [64.5, 41.3], zoom: 5.4 },
+    tm: { center: [58.5, 39.0], zoom: 5.3 },
+    tk: { center: [58.5, 39.0], zoom: 5.3 }
+  };
+  const workspaceCode = getSessionWorkspaceCodeForDisplay(session);
+  // CAAL and anonymous callers always start with the whole regional view.
+  const code = workspaceCode || "caal";
+  const view = views[code] || views.caal;
+  return { center: [...view.center], zoom: view.zoom };
+}
+window.getSessionDefaultMapView = getSessionDefaultMapView;
+
 function getWorkspaceHeaderTitle(session = window.appSession) {
   const workspaceCode = getSessionWorkspaceCodeForDisplay(session);
   const countryName = getWorkspaceCountryName(session);
@@ -508,6 +559,7 @@ function getWorkspacePageSubtitle(page, session = window.appSession) {
   }
 
   if (workspaceForms) {
+    if (page === "viewer") return t("viewer_national_workspace_subtitle", "{country} resource viewer").replace("{country}", workspaceForms.country);
     if (page === "archive") return workspaceForms.archiveSubtitle;
     if (page === "monuments") return workspaceForms.monumentsSubtitle;
     return workspaceForms.homeSubtitle;

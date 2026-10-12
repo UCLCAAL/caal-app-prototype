@@ -2995,8 +2995,8 @@ function viewerUserIsGlobalCaal(session = window.appSession) {
 
 function viewerUserCanViewAllCaal(session = window.appSession) {
   return (
-    session?.permissions?.can_view_all_caal === true ||
-    viewerUserIsCaalAdmin(session)
+    session?.viewer?.visibility === "all_caal" ||
+    (!session?.viewer && viewerUserIsGlobalCaal(session) && session?.permissions?.can_view_all_caal === true)
   );
 }
 
@@ -3476,7 +3476,7 @@ function getSelectedScopes() {
     scopes.push("national_ref");
   }
 
-  if (showViewerAllCaalRecords?.checked) {
+  if (viewerUserCanViewAllCaal() && showViewerAllCaalRecords?.checked) {
     scopes.push("all_caal");
   }
 
@@ -14317,7 +14317,7 @@ function viewerCanExportData() {
       (window.appSession && window.appSession.permissions) ||
       (window.viewerSession && window.viewerSession.permissions) ||
       null;
-    return Boolean(perms && perms.can_export_data);
+    return Boolean(window.appSession?.viewer?.can_export_data ?? (perms && perms.can_export_data));
   } catch (e) {
     return false;
   }
@@ -17378,12 +17378,17 @@ async function initViewerPage() {
 
   if (!session) return;
 
-  if (
-    typeof window.sharedSessionIsCaalWorkspace === "function" &&
-    !window.sharedSessionIsCaalWorkspace(session)
-  ) {
-    window.location.href = "home.html";
-    return;
+  const policyResponse = await fetch(`${API_BASE}/api/viewer/policy`, { credentials: "include" });
+  if (!policyResponse.ok) { window.location.href = "home.html"; return; }
+  const policyPayload = await policyResponse.json();
+  session.viewer = policyPayload.policy;
+  window.appSession = session;
+  if (!session.viewer?.can_view) { window.location.href = "home.html"; return; }
+  if (!session.viewer.can_view_survey_metadata) {
+    for (const id of ["viewerMapLayerSurveyGrid", "viewerMapLayerSurveyGridRegion"]) {
+      const input = document.getElementById(id);
+      if (input) { input.checked = false; input.disabled = true; input.closest("label").hidden = true; }
+    }
   }
 
   if (typeof window.updateCaalOnlyNavigation === "function") {

@@ -570,7 +570,7 @@ function nationalWorkspaceMonumentListSql(
         storageScope,
         lang,
         "national_ref",
-        "false"
+        isNationalAdmin(currentSession) ? "true" : "false"
       )}
     FROM ${tableName} m
     LEFT JOIN public.record_registry rr
@@ -600,7 +600,7 @@ function nationalWorkspaceMonumentFullSql(storage, currentSession) {
       'national_ref'::text AS source_scope,
       ${storageScope}::text AS storage_scope,
       false AS is_promoted,
-      false AS is_editable
+      ${isNationalAdmin(currentSession) ? "true" : "false"} AS is_editable
     FROM ${viewName} v
     LEFT JOIN public.record_registry rr
       ON rr.source_schema = ${sourceSchema}
@@ -5837,7 +5837,7 @@ router.patch("/monuments/:id", async (req, res) => {
         [
           ...values,
           id,
-          isCaalAdmin(currentSession),
+          isCaalAdmin(currentSession) || isNationalAdmin(currentSession),
           userId,
           canActOnMasterLinkedMonuments(currentSession)
         ]

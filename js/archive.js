@@ -4353,6 +4353,7 @@ window.archiveCanChangeLanguage = function () {
 
 // for buttons
 function canEditArchiveRecord(record) {
+  if (!window.appSession?.permissions?.can_edit_workspace && !window.appSession?.permissions?.can_edit_caal) return false;
   return record?.source?.is_editable === true;
 }
 
@@ -4376,7 +4377,7 @@ function archiveRenderActionBar({ hasRecord = false, canEdit = false } = {}) {
     isSupportedDeleteStorage &&
     archiveSelectedRecord?.identity?.id;
 
-  if (addArchiveBtn) addArchiveBtn.hidden = isEditing;
+  if (addArchiveBtn) addArchiveBtn.hidden = isEditing || !window.appSession?.permissions?.can_edit_workspace;
   if (archiveEditBtn) archiveEditBtn.hidden = isDeleted || isEditing || !hasRecord || !canEdit;
   if (archiveSaveBtn) archiveSaveBtn.hidden = !isEditing || isDeleted;
   if (archiveCancelEditBtn) archiveCancelEditBtn.hidden = !isEditing || isDeleted;
