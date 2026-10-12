@@ -14284,7 +14284,7 @@ function downloadViewerMapImage() {
 // Flow:
 //   Download map            (unchanged, immediate PNG)
 //   ----------------------
-//   ( ) CSV   ( ) GPKG   ( ) KML     <- pick one (radio-like)
+//   CSV / GPKG / KML / GeoJSON        <- pick one in a 2 x 2 grid
 //   [ ] Include related records      <- all formats
 //   [ ] Relationship lines           <- KML + related only
 //   [ ] Centroids only               <- KML only
@@ -14295,12 +14295,13 @@ function downloadViewerMapImage() {
 const VIEWER_EXPORT_FORMATS = [
   { id: "csv",  labelKey: "export_csv",  fallback: "CSV",  enabled: true },
   { id: "gpkg", labelKey: "export_gpkg", fallback: "GPKG", enabled: true },
-  { id: "kml",  labelKey: "export_kml",  fallback: "KML",  enabled: true }
+  { id: "kml",  labelKey: "export_kml",  fallback: "KML",  enabled: true },
+  { id: "geojson", labelKey: "export_geojson", fallback: "GeoJSON", enabled: true }
 ];
 
 const viewerExportMenuState = {
   open: false,
-  format: null,          // "csv" | "gpkg" | "kml" | null
+  format: null,          // "csv" | "gpkg" | "kml" | "geojson" | null
   includeRelated: true,
   relationshipLines: false,
   centroidsOnly: false,

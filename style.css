@@ -1665,12 +1665,13 @@ body {
 
 /* format chooser (radio-like) */
 .export-format-row {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 6px;
   padding: 2px 4px 8px;
 }
 .export-format-row button {
-  flex: 1;
+  min-width: 0;
   padding: 7px 0;
   border: 1px solid var(--border);
   background: var(--panel);
