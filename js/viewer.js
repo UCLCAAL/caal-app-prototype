@@ -8031,6 +8031,7 @@ async function openViewerRecord(lightRecord, { centreOnMap = false } = {}) {
     }
 
     renderViewerRecordDetails(viewerSelectedRecord);
+    window.viewerDetailPanel?.open();
     updateSelectedViewerCard();
     drawViewerSelectedHighlight(viewerSelectedRecord);
 
@@ -8064,6 +8065,8 @@ function renderViewerBasicsGroup(raw, record) {
 
 function renderViewerRecordDetails(record) {
   if (!viewerRecordDetails) return;
+  if (record) window.viewerDetailPanel?.select(viewerRecordKey(record));
+  else window.viewerDetailPanel?.clear();
 
   if (!record) {
     viewerRecordDetails.innerHTML = `
@@ -17548,3 +17551,5 @@ document.addEventListener("DOMContentLoaded", () => {
     console.error("Viewer page init failed:", error);
   });
 });
+// The map container changes size when the record drawer slides.
+window.addEventListener("viewer:layoutchange", () => viewerMap?.resize());

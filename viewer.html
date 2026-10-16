@@ -11,6 +11,7 @@
   />
 
   <link rel="stylesheet" href="style.css" />
+  <link rel="stylesheet" href="viewer-detail-panel.css">
 </head>
 
 <body data-page="viewer">
@@ -147,7 +148,7 @@
   <!-- =========================================
        RESOURCE VIEWER WORKSPACE
        ========================================= -->
-  <main class="workspace-shell monuments-workspace viewer-workspace">
+  <main class="workspace-shell monuments-workspace viewer-workspace viewer-drawer-shell details-collapsed" data-viewer-drawer>
 
     <!-- =====================================
          LEFT PANE: BROWSE / SEARCH / RESULTS
@@ -1315,9 +1316,11 @@
     <!-- =====================================
          RIGHT PANE: ACTIVE RECORD
          ===================================== -->
-    <aside class="workspace-pane detail-pane" id="viewerDetailPane">
+    <button id="viewerDetailToggle" class="action-btn viewer-detail-toggle" type="button" aria-controls="viewerDetailPane" aria-expanded="false" hidden>Record details &#8249;</button>
+    <aside class="workspace-pane detail-pane" id="viewerDetailPane" aria-hidden="true" inert>
       <div class="pane-header">
         <h2 data-i18n="record_details">Record Details</h2>
+        <button id="viewerDetailMinimise" class="action-btn viewer-detail-minimise" type="button" aria-label="Minimise record details" title="Minimise record details" aria-controls="viewerDetailPane">Minimise &#8250;</button>
 
         <div class="detail-action-bar" id="viewerActionBar">
           <button
@@ -1349,6 +1352,7 @@
   <script src="https://unpkg.com/terra-draw-maplibre-gl-adapter@1.4.1/dist/terra-draw-maplibre-gl-adapter.umd.js"></script>
 
   <script src="js/shared.js"></script>
+  <script src="js/viewerDetailPanel.js"></script>
   <script src="js/viewer.js"></script>
 </body>
 </html>
