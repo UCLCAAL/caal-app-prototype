@@ -7,7 +7,7 @@ function getViewerAccessPolicy(session) {
   const workspaceCode = getSessionWorkspaceCode(session);
   const level = Number(session?.user?.access_level ?? session?.profile?.access_level);
   const permissions = session?.permissions || {};
-  const authenticated = Boolean(session?.user && [1, 2, 3, 9].includes(level));
+  const authenticated = Boolean(session?.user && [1, 2, 3, 4, 9].includes(level));
   const configured = WORKSPACE_STORAGE[workspaceCode]?.enabled === true;
   const canRead = permissions.can_view_workspace === true ||
     permissions.can_view_national_ref === true || permissions.can_view_all_caal === true;

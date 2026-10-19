@@ -275,7 +275,7 @@ function canAccessViewer(session = window.appSession) {
   // recomputes policy; this fallback only decides whether to show navigation.
   const code = String(session?.user?.workspace_code || session?.profile?.workspace_code || "").trim().toLowerCase();
   const level = Number(session?.user?.access_level ?? session?.profile?.access_level);
-  return ["caal", "kz", "kg"].includes(code) && [1, 2, 3, 9].includes(level) &&
+  return ["caal", "kz", "kg"].includes(code) && [1, 2, 3, 4, 9].includes(level) &&
     Boolean(session?.permissions?.can_view_workspace || session?.permissions?.can_view_all_caal);
 }
 window.canAccessViewer = canAccessViewer;

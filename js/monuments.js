@@ -8790,7 +8790,8 @@ function applyMonumentScopeUiForSession(
 ) {
     const isResearcher = [
       "caal_researcher",
-      "national_researcher"
+      "national_researcher",
+      "national_read_only_admin"
     ].includes(session?.permissions?.role_label);
 
     const isGlobalCaalUser = monumentUserIsGlobalCaal(session);

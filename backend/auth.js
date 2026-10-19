@@ -2,6 +2,8 @@ const express = require("express");
 const pool = require("./db");
 const { buildSessionFromRow } = require("./session");
 
+const { createActivityAudit } = require("./activityAudit");
+const loginAudit = createActivityAudit(pool);
 const router = express.Router();
 
 router.post("/login", async (req, res) => {
@@ -57,6 +59,7 @@ router.post("/login", async (req, res) => {
     const sessionData = buildSessionFromRow(sessionResult.rows[0]);
 
     req.session.appSession = sessionData;
+    await loginAudit.successfulLogin(req, sessionData);
 
     return res.json({
       ok: true,

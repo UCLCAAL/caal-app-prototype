@@ -19,6 +19,8 @@ const resourceSearchRoutes = require("./resourceSearch");
 
 const resourceViewerRoutes = require("./resourceViewerRoutes");
 
+const { createActivityAudit } = require("./activityAudit");
+const activityAudit = createActivityAudit(pool);
 const app = express();
 const PORT = process.env.PORT || 3000;
 const appRoot = path.join(__dirname, "..");
@@ -61,6 +63,9 @@ app.use(session({
     maxAge: 3 * 60 * 60 * 1000
   }
 }));
+
+// Database-backed request history; query strings, bodies and cookies are excluded.
+app.use(activityAudit.middleware);
 
 // logging middleware
 app.use((req, res, next) => {
@@ -116,6 +121,7 @@ app.use("/api/records", recordsRoutes);
 app.use("/api", resourceSearchRoutes);
 app.use("/api", monumentsRoutes);
 app.use("/api/viewer", resourceViewerRoutes);
+app.use("/api/public-viewer", require("./publicViewerRoutes").createPublicRouter(require("./publicViewerDb")));
 
 // --------------------------------------------------------
 // Static frontend

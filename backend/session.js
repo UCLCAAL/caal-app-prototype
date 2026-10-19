@@ -1,4 +1,5 @@
 const { getViewerAccessPolicy } = require("./viewerAccess");
+const { WORKSPACE_STORAGE } = require("./workspaceStorage");
 const SUPPORTED_LANGUAGES = ["en", "ru", "zh", "kk", "ky", "tg", "tk", "uz"];
 
 /**
@@ -188,6 +189,23 @@ function permissionsFromAccessLevel(accessLevel, workspaceCodeRaw = "") {
         can_export_data: true,
         role_label: "workspace_editor_plus_all_caal_view"
       };
+
+    // National inventory access and export without any write capability.
+    case 4: {
+      const national = workspaceCode !== "caal" && WORKSPACE_STORAGE[workspaceCode]?.enabled === true;
+      return {
+        can_view_workspace: national,
+        can_view_national_ref: national,
+        can_view_all_caal: false,
+        can_edit_workspace: false,
+        can_edit_caal: false,
+        can_edit_national_caal: false,
+        can_delete: false,
+        can_promote: false,
+        can_export_data: national,
+        role_label: "national_read_only_admin"
+      };
+    }
 
     case 9:
       return {
