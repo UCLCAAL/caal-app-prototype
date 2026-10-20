@@ -172,3 +172,37 @@
 #publicPreview {
   display: none !important;
 }
+/* Green checkbox and radio selections */
+.public-viewer #publicSearch input {
+  accent-color: var(--accent);
+}
+
+/* Selected filter options */
+.public-viewer #publicSearch select option:checked {
+  background: var(--accent) !important;
+  background-image: linear-gradient(
+    var(--accent), var(--accent)
+  ) !important;
+  color: #fff !important;
+}
+
+/* Green focus outlines */
+.public-viewer #publicSearch
+:is(input, select, button, summary):focus-visible {
+  outline: 2px solid var(--accent) !important;
+  outline-offset: 2px;
+  box-shadow: none !important;
+}
+
+/* Selected filter chips */
+.public-viewer #publicSearch .active-filter-chip {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* Highlighted text within the filters */
+.public-viewer #publicSearch ::selection {
+  background: var(--accent);
+  color: #fff;
+}
