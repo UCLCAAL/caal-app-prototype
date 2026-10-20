@@ -1,7 +1,10 @@
 (() => {
 'use strict';
+const I=window.publicViewerI18n,t=(key,fallback,vars={})=>I?.t(key,fallback,vars)||String(fallback||key).replace(/\{(\w+)\}/g,(all,k)=>vars[k]??all);
 window.createPublicViewerRelatedMap=({getMap,get,colors,status})=>{
- let version=0,features=[],visibility={records:true,lines:true};
+ let version=0,features=[],visibility={records:true,lines:true},lastMessage=null;
+ function announce(key,fallback,vars={}){lastMessage={key,fallback,vars};status(t(key,fallback,vars));}
+ I?.onChange(()=>{if(lastMessage)status(t(lastMessage.key,lastMessage.fallback,lastMessage.vars));});
  const collection=()=>({type:'FeatureCollection',features:features.filter(f=>f.properties.relationship_line?visibility.lines:visibility.records)});
  function restore(){const map=getMap();if(!map?.getSource('public-data'))return;
   if(!map.getSource('public-related'))map.addSource('public-related',{type:'geojson',data:collection()});
@@ -16,10 +19,10 @@ window.createPublicViewerRelatedMap=({getMap,get,colors,status})=>{
  }
  function coordinates(g,out=[]){if(!g)return out;if(g.coordinates){const walk=c=>{if(typeof c[0]==='number'){if(Number.isFinite(c[0])&&Number.isFinite(c[1]))out.push(c.slice(0,2));}else c.forEach(walk);};walk(g.coordinates);}else g.geometries?.forEach(v=>coordinates(v,out));return out;}
  function anchor(g){const coords=coordinates(g);if(!coords.length)return null;let west=Infinity,south=Infinity,east=-Infinity,north=-Infinity;for(const [x,y] of coords){west=Math.min(west,x);east=Math.max(east,x);south=Math.min(south,y);north=Math.max(north,y);}return [(west+east)/2,(south+north)/2];}
- function clear(){++version;features=[];getMap()?.getSource('public-related')?.setData(collection());}
+ function clear(){++version;features=[];lastMessage=null;getMap()?.getSource('public-related')?.setData(collection());}
  async function show(record,relations){
-  const map=getMap();if(!map?.getSource('public-data')){status('Map is not ready yet.');return false;}
-  clear();const current=version;visibility={records:true,lines:true};status('Loading related map locations...');
+  const map=getMap();if(!map?.getSource('public-data')){announce('public_map_not_ready','Map is not ready yet.');return false;}
+  clear();const current=version;visibility={records:true,lines:true};announce('public_loading_related_locations','Loading related map locations...');
   let origin=null;try{origin=anchor((await get('/geometry/'+record.record_type+'/'+encodeURIComponent(record.source_row_id))).geometry);}catch{}
   if(current!==version)return false;
   const seen=new Set(),items=relations.filter(r=>{const key=r.record_type+'/'+r.source_row_id;if(seen.has(key))return false;seen.add(key);return true;}),loaded=[];let index=0;
@@ -28,7 +31,7 @@ window.createPublicViewerRelatedMap=({getMap,get,colors,status})=>{
   features=loaded.flatMap(({r,geometry})=>{const out=[{type:'Feature',geometry,properties:{record_type:r.record_type,source_row_id:r.source_row_id,caal_id:r.caal_id,display_label:r.display_label,count:1}}];const dest=anchor(geometry);if(origin&&dest)out.push({type:'Feature',geometry:{type:'LineString',coordinates:[origin,dest]},properties:{relationship_line:true}});return out;});
   restore();const box=new maplibregl.LngLatBounds();if(origin)box.extend(origin);for(const f of features)for(const coord of coordinates(f.geometry))box.extend(coord);
   if(!box.isEmpty())map.fitBounds(box,{padding:70,maxZoom:map.getMaxZoom(),duration:500});
-  status(loaded.length+' related records mapped'+(loaded.length<items.length?' ('+(items.length-loaded.length)+' without available map geometry)':''));
+  announce(loaded.length<items.length?'public_related_mapped_partial':'public_related_mapped',loaded.length<items.length?'{count} related records mapped ({unmapped} without available map geometry)':'{count} related records mapped',{count:loaded.length,unmapped:items.length-loaded.length});
   return loaded.length>0;
  }
  return {show,clear,restore,setVisibility(value){visibility=value;getMap()?.getSource('public-related')?.setData(collection());}};

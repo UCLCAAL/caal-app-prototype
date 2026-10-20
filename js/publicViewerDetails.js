@@ -4,8 +4,9 @@
 // This module has no authenticated API/session access. Its input is the public SQL projection.
 window.createPublicViewerDetails=({get,onOpen,onLocate,onShowRelated,onClearRelated,onRelatedVisibility})=>{
  const escapeHtml=value=>String(value??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
- const t=(key,fallback)=>key==='nav_monuments'?'Monuments':fallback||key;
- const vLabel=(key,fallback)=>({'Date of Recording':'Date','Still under CopyrightYN':'Still under Copyright?','Resource':'DOI'}[key]||fallback||key);
+ const I=window.publicViewerI18n;
+ const t=(key,fallback)=>I?.t(key,fallback)||(key==='nav_monuments'?'Monuments':fallback||key);
+ const vLabel=(key,fallback)=>I?.field(key,fallback,activeRecord?.identity.record_type)||({'Date of Recording':'Date','Still under CopyrightYN':'Still under Copyright?','Resource':'DOI'}[key]||fallback||key);
  const fullLocationTypes=new Set(['institution','cartography','dataset']);
  const internalFields=/(password|token|secret|created_by|updated_by|deleted_by|workspace_code|^id$|digital object url|^(geom|geometry|geom_4326|centroid_4326)$)/i;
  const locationFields=/(geom|centroid|latitude|longitude|coordinate|easting|northing|altitude|location|address|bbox|wkt|wkb|geohash|projection|transformation|^(lat|lon|lng|x|y|srid|srs)$)/i;
@@ -14,9 +15,10 @@ window.createPublicViewerDetails=({get,onOpen,onLocate,onShowRelated,onClearRela
  let activeRecord=null,activeHost=null,lookupPromise=null,lookupsUnavailable=false,lookupsReady=false;
  const viewerLookupOptions=name=>[...(viewerMonumentLookups[name]||[]),...(viewerArchiveLookups[name]||[])];
  const viewerOptionLabel=item=>item?.label??item?.display_label??item?.value;
- const viewerLanguageDisplayName=value=>{if(!viewerHasDisplayValue(value))return value;const code=String(value).trim().toLowerCase();try{return new Intl.DisplayNames(['en'],{type:'language'}).of(code)||value;}catch{return value;}};
+ const viewerLanguageDisplayName=value=>{if(!viewerHasDisplayValue(value))return value;const code=String(value).trim().toLowerCase();try{return new Intl.DisplayNames([I?.locale()||'en'],{type:'language'}).of(code)||value;}catch{return value;}};
  const renderDetailItem=(...args)=>renderViewerDetailItem(...args);
-function viewerInstitutionCoordinate(record, axis) {
+
+ function viewerInstitutionCoordinate(record, axis) {
   const fieldName =
     axis === "longitude"
       ? "Longitude"
@@ -150,8 +152,8 @@ function getDirectionalRelationType(rel) {
  function renderViewerRelatedResourcesGroup(record){
   const relations=record.public_relations||[],groups=new Map();
   for(const rel of relations){const key=getDirectionalRelationType(rel);if(!groups.has(key))groups.set(key,[]);groups.get(key).push(rel);}
-  const rows=[...groups].map(([key,items])=>`<div class="detail-item full-width"><span class="detail-label">${escapeHtml(key)}</span><div class="detail-value related-id-list viewer-related-detail-id-list">${items.map(r=>relationChip(r)).join('')}</div></div>`).join('');
-  return `<div class="group-block"><div class="group-grid"><div class="detail-item full-width section-header"><span class="detail-section-title">Related Resources</span>${relations.length?'<div class="viewer-related-map-actions"><button type="button" class="action-btn subtle" data-public-show-related>Show related on map</button><button type="button" class="action-btn subtle" data-public-clear-related hidden>Clear related from map</button><div class="caal-relationship-controls viewer-relationship-controls" data-public-related-controls hidden><label><input type="checkbox" data-public-related-visibility="records" checked>Show related records</label><label><input type="checkbox" data-public-related-visibility="lines" checked>Show relationship lines</label></div></div>':''}</div>${rows||`<div class="detail-item full-width"><div class="detail-value">${record.relationships_loading?'Loading related resources...':record.relationships_failed?'Related resources could not be loaded.':'No related resources are recorded for this resource.'}</div></div>`}${record.relationships_more?'<div class="detail-item full-width">Showing the first 100 published relationships.</div>':''}</div></div>`;
+  const rows=[...groups].map(([key,items])=>`<div class="detail-item full-width"><span class="detail-label">${escapeHtml(I?.field(key,key)||key)}</span><div class="detail-value related-id-list viewer-related-detail-id-list">${items.map(r=>relationChip(r)).join('')}</div></div>`).join('');
+  return `<div class="group-block"><div class="group-grid"><div class="detail-item full-width section-header"><span class="detail-section-title">Related Resources</span>${relations.length?'<div class="viewer-related-map-actions"><button type="button" class="action-btn subtle" data-public-show-related>Show related on map</button><button type="button" class="action-btn subtle" data-public-clear-related hidden>Clear related from map</button><div class="caal-relationship-controls viewer-relationship-controls" data-public-related-controls hidden><label><input type="checkbox" data-public-related-visibility="records" checked>Show related records</label><label><input type="checkbox" data-public-related-visibility="lines" checked>Show relationship lines</label></div></div>':''}</div>${rows||`<div class="detail-item full-width"><div class="detail-value" data-public-ui-message>${record.relationships_loading?'Loading related resources...':record.relationships_failed?'Related resources could not be loaded.':'No related resources are recorded for this resource.'}</div></div>`}${record.relationships_more?'<div class="detail-item full-width" data-public-ui-message>Showing the first 100 published relationships.</div>':''}</div></div>`;
  }
 const viewerMonumentLookups = {};
 
@@ -1680,6 +1682,7 @@ function viewerLookupLabelByValue(lookupNames, value) {
 
     const match = options.find((item) => {
       const candidates = [
+        ...viewerLookupItemAliases(item),
         item?.value,
         item?.id,
         item?.concept_id,
@@ -2869,7 +2872,7 @@ function renderViewerMonumentMeasurementsGroup(raw) {
  }
  function adapt(publicRecord,relationships){
   const data=publicRecord.details_json||{},type=publicRecord.record_type;
-  const record={identity:{record_type:type,caal_id:publicRecord.caal_id,dataset_label:({monument:'Monuments',archive:'Archive',institution:'Institutions',rs3_poly:'RS3 polygons',rs3_line:'RS3 lines',rs3_group:'RS3 groups',vernacular:'Vernacular',cartography:'Cartography',dataset:'Datasets'})[type]},
+  const record={identity:{record_type:type,caal_id:publicRecord.caal_id,dataset_label:({monument:'Monuments',archive:'Archive',institution:'Institutions',rs3_poly:'RS polygons',rs3_line:'RS lines',rs3_group:'RS groups',vernacular:'Vernacular',cartography:'Cartography',dataset:'Datasets'})[type]},
    source:{table:({rs3_poly:'CAAL_RS3_Poly',rs3_line:'CAAL_RS3_Line',rs3_group:'CAAL_RS3_Group'})[type]},
    summary:{display_label:publicRecord.display_label,monument_type_path:Array.isArray(data.monument_type_path)?data.monument_type_path:[]},
    raw:safeFields(type,data.raw),display:safeFields(type,data.display),geometry:type==='institution'?data.geometry:null,public_record:publicRecord,public_relations:relationships.relationships||[],
@@ -2880,17 +2883,24 @@ function renderViewerMonumentMeasurementsGroup(raw) {
   record.raw.CAAL_ID??=publicRecord.caal_id;
   return record;
  }
+ let lookupLanguage=null,lookupVersion=0;
  async function ensureLookups(){
-  if(!lookupPromise)lookupPromise=get('/detail-lookups').then(data=>{Object.assign(viewerMonumentLookups,data.lookups?.monuments||{});Object.assign(viewerArchiveLookups,data.lookups?.archive||{});lookupsUnavailable=false;lookupsReady=true;}).catch(()=>{lookupsUnavailable=true;lookupsReady=true;lookupPromise=null;});
+  const lang=I?.language()||'en';
+  if(!lookupPromise||lookupLanguage!==lang){lookupLanguage=lang;const current=++lookupVersion;lookupsReady=false;
+   lookupPromise=get('/detail-lookups?lang='+encodeURIComponent(lang)).then(data=>{if(current!==lookupVersion)return;for(const key of Object.keys(viewerMonumentLookups))delete viewerMonumentLookups[key];for(const key of Object.keys(viewerArchiveLookups))delete viewerArchiveLookups[key];Object.assign(viewerMonumentLookups,data.lookups?.monuments||{});Object.assign(viewerArchiveLookups,data.lookups?.archive||{});lookupsUnavailable=false;lookupsReady=true;}).catch(()=>{if(current!==lookupVersion)return;lookupsUnavailable=true;lookupsReady=true;lookupPromise=null;});}
   return lookupPromise;
  }
  function draw(host,record){
   if(activeRecord!==record||activeHost!==host)return;
   const scrollTop=host.scrollTop;
+  if(I)record.identity.dataset_label=I.layer(record.identity.record_type);
+  record.summary.monument_type_path=(I?.language()||'en')==='en'?(record.public_record.details_json?.monument_type_path||[]):[];
+  record.display=(I?.language()||'en')==='en'?safeFields(record.identity.record_type,record.public_record.details_json?.display):{};
   const relatedShown=host.querySelector('[data-public-clear-related]')?.hidden===false;
   const relatedVisibility=Object.fromEntries([...host.querySelectorAll('[data-public-related-visibility]')].map(i=>[i.dataset.publicRelatedVisibility,i.checked]));
   const title=['rs3_poly','rs3_line','rs3_group'].includes(record.identity.record_type)?record.identity.caal_id:viewerRecordTitle(record);
   host.innerHTML=`<div class="record-title"><div class="record-title-actions record-title-actions-topright"><button type="button" class="icon-action-btn record-title-icon-btn" data-public-detail-target title="Centre on map" aria-label="Centre on map"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><path d="M12 2v4m0 12v4M2 12h4m12 0h4"/></svg></button></div><div class="record-title-main"><h3>${escapeHtml(title)}</h3><p class="copyable-field monument-title-caal-id"><span class="copyable-field-text">${escapeHtml(record.identity.caal_id)}</span><button type="button" class="copy-field-btn" data-public-copy title="Copy to clipboard" aria-label="Copy CAAL_ID"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V4a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h4"/></svg></button></p></div></div><div class="group-stack">${renderViewerDetailGroups(record)}${!VIEWER_DETAIL_GROUPS[record.identity.record_type]?renderViewerRelatedResourcesGroup(record):''}</div>${!lookupsReady?'<p class="section-empty">Loading vocabulary labels...</p>':lookupsUnavailable?'<p class="section-empty">Some vocabulary labels could not be loaded; stored values are shown.</p>':''}`;
+  I?.fragment(host,record.identity.record_type);
   host.querySelector('[data-public-detail-target]').onclick=()=>onLocate(record.public_record);
   host.querySelector('[data-public-copy]').onclick=async event=>{const button=event.currentTarget;try{await navigator.clipboard.writeText(record.identity.caal_id);button.title='CAAL_ID copied';}catch{button.title='Copy unavailable in this browser';}};
   host.querySelectorAll('[data-public-related]').forEach(button=>{button.onclick=()=>{const rel=record.public_relations.find(r=>String(r.source_row_id)===button.dataset.publicRelated&&r.record_type===button.dataset.publicRelatedType);if(rel)onOpen(rel,true);};});
@@ -2902,6 +2912,7 @@ function renderViewerMonumentMeasurementsGroup(raw) {
   if(clear)clear.onclick=()=>{onClearRelated?.();show.hidden=false;clear.hidden=true;controls.hidden=true;};
   controls?.querySelectorAll('input').forEach(input=>input.onchange=()=>onRelatedVisibility?.(Object.fromEntries([...controls.querySelectorAll('input')].map(i=>[i.dataset.publicRelatedVisibility,i.checked]))));
  }
+ I?.onChange(async()=>{const record=activeRecord,pending=ensureLookups();if(record)draw(activeHost,record);await pending;if(record)draw(activeHost,record);});
  return {
   preload:ensureLookups,
   render(host,publicRecord,relationships={}){const record=adapt(publicRecord,relationships);activeRecord=record;activeHost=host;draw(host,record);if(!lookupsReady)void ensureLookups().then(()=>draw(host,record));},

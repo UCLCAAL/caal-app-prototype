@@ -1,99 +1,93 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-<title>CAAL Public Viewer</title>
+<title data-public-i18n="CAAL Public Viewer">CAAL Public Viewer</title>
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css">
 <link rel="stylesheet" href="style.css"><link rel="stylesheet" href="public-viewer.css"><link rel="stylesheet" href="viewer-detail-panel.css">
 </head><body class="public-viewer">
-<header class="app-header"><div class="app-brand"><img src="assets/logo_plain.png" alt="CAAL" class="app-brand-logo"><div class="app-brand-text"><h1>CAAL Public Viewer</h1><p>Resource viewer</p></div></div><span id="publicPreview" class="scope-badge" hidden>Local preview</span></header>
-<main class="workspace-shell monuments-workspace viewer-workspace viewer-drawer-shell details-collapsed" data-viewer-drawer>
-<aside class="workspace-pane browse-pane"><div class="pane-header"><h2>Browse</h2><p>Search and consult resource records</p></div><div class="pane-body">
-<form id="publicSearch"><div class="search-box search-box-stacked"><label for="publicQuery">Search</label><div class="public-search-row"><input id="publicQuery" maxlength="150" placeholder="Search names or CAAL IDs..."><button class="action-btn" type="submit">Search</button></div></div>
+<header class="app-header"><div class="app-brand"><img src="assets/logo_plain.png" alt="CAAL" class="app-brand-logo"><div class="app-brand-text"><h1 data-public-i18n="CAAL Public Viewer">CAAL Public Viewer</h1><p data-public-i18n="Resource viewer">Resource viewer</p></div></div><div class="public-header-actions"><span data-public-i18n="Local preview" id="publicPreview" class="scope-badge" hidden>Local preview</span><label class="public-language-selector"><span data-public-i18n="Language" data-i18n="language_label">Language</span><select data-i18n-aria-label="language_label" aria-label="Language" id="publicLanguage"></select></label></div></header>
+<main class="workspace-shell monuments-workspace viewer-workspace viewer-drawer-shell details-collapsed" data-viewer-drawer="">
+<aside class="workspace-pane browse-pane"><div class="pane-header"><h2 data-public-i18n="Browse">Browse</h2><p data-public-i18n="Search and consult resource records">Search and consult resource records</p></div><div class="pane-body">
+<form id="publicSearch"><div class="search-box search-box-stacked"><label data-public-i18n="Search" for="publicQuery">Search</label><div class="public-search-row"><input data-i18n-placeholder="search_caal_database" id="publicQuery" maxlength="150" placeholder="Search CAAL database"><button data-public-i18n="Search" class="action-btn" type="submit">Search</button></div></div>
 <div class="results-panel viewer-layer-panel" id="publicTypes">
           <div class="results-panel-header">
-            <h3>Layers</h3>
+            <h3 data-public-i18n="Layers">Layers</h3>
           </div>
 
           <div class="viewer-layer-grid viewer-layer-grid-two-column">
             <div class="viewer-layer-stack">
               <div class="viewer-layer-column">
-                <div class="viewer-layer-subgroup-title">
-                  Monuments
-                </div>
+                <div data-public-i18n="Monuments" class="viewer-layer-subgroup-title">Monuments</div>
 
                 <label class="browse-checkbox viewer-layer-check">
                   <input type="checkbox" id="publicLayer_monument" checked value="monument">
                   <span class="viewer-layer-icon-slot viewer-layer-icon viewer-layer-icon-monument" data-viewer-layer-icon="monument"><svg aria-hidden="true" viewbox="0 0 24 24" width="18" height="18">
-          <path d="M4 18.5h16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path>
-          <path d="M6.2 18.2V15.8l2.4-1.7 2.4 1.7v2.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"></path>
-          <path d="M13 18.2v-4l2.6-1.8 2.2 1.6v4.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"></path>
-          <path d="M8.6 14.1v-2.4l2.5-1.8 2.5 1.8v2.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"></path>
-          <path d="M10.5 7.8 12 5.8l1.5 2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
+          <path d="M4 18.5h16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+          <path d="M6.2 18.2V15.8l2.4-1.7 2.4 1.7v2.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" />
+          <path d="M13 18.2v-4l2.6-1.8 2.2 1.6v4.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" />
+          <path d="M8.6 14.1v-2.4l2.5-1.8 2.5 1.8v2.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" />
+          <path d="M10.5 7.8 12 5.8l1.5 2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
       </span>
-                  <span>Monuments</span>
+                  <span data-public-i18n="Monuments">Monuments</span>
                 </label>
               </div>
 
               <div class="viewer-layer-column">
-                <div class="viewer-layer-subgroup-title">
-                  Remote sensing
-                </div>
+                <div data-public-i18n="Remote sensing" class="viewer-layer-subgroup-title">Remote sensing</div>
 
                 <label class="browse-checkbox viewer-layer-check">
                   <input type="checkbox" id="publicLayer_rs3_poly" checked value="rs3_poly">
                   <span class="viewer-layer-icon-slot viewer-layer-icon viewer-layer-icon-rs3_poly" data-viewer-layer-icon="rs3_poly"><svg aria-hidden="true" viewbox="0 0 24 24" width="18" height="18">
-          <path d="M8 3.8 17.2 7v10l-9.2 4.2L3.5 15.8V7.8Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"></path>
+          <path d="M8 3.8 17.2 7v10l-9.2 4.2L3.5 15.8V7.8Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" />
         </svg>
       </span>
-                  <span>Polygons</span>
+                  <span data-public-i18n="Polygons">Polygons</span>
                 </label>
 
                 <label class="browse-checkbox viewer-layer-check">
                   <input type="checkbox" id="publicLayer_rs3_line" checked value="rs3_line">
                   <span class="viewer-layer-icon-slot viewer-layer-icon viewer-layer-icon-rs3_line" data-viewer-layer-icon="rs3_line"><svg aria-hidden="true" viewbox="0 0 24 24" width="18" height="18">
-          <path d="M4 16c2.4-5.3 4.8-7.7 7-7.7 2 0 2.9 2.4 4.7 2.4 1.5 0 2.9-1.4 4.3-3.7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path>
+          <path d="M4 16c2.4-5.3 4.8-7.7 7-7.7 2 0 2.9 2.4 4.7 2.4 1.5 0 2.9-1.4 4.3-3.7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
         </svg>
       </span>
-                  <span>Lines</span>
+                  <span data-public-i18n="Lines">Lines</span>
                 </label>
 
                 <label class="browse-checkbox viewer-layer-check">
                   <input type="checkbox" id="publicLayer_rs3_group" checked value="rs3_group">
                   <span class="viewer-layer-icon-slot viewer-layer-icon viewer-layer-icon-rs3_group" data-viewer-layer-icon="rs3_group"><svg aria-hidden="true" viewbox="0 0 24 24" width="18" height="18">
-          <rect x="3.5" y="4.5" width="6.5" height="6.5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.8"></rect>
-          <rect x="14" y="4.5" width="6.5" height="6.5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.8"></rect>
-          <rect x="8.8" y="13" width="6.5" height="6.5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.8"></rect>
+          <rect x="3.5" y="4.5" width="6.5" height="6.5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.8" />
+          <rect x="14" y="4.5" width="6.5" height="6.5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.8" />
+          <rect x="8.8" y="13" width="6.5" height="6.5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.8" />
         </svg>
       </span>
-                  <span>Groups</span>
+                  <span data-public-i18n="Groups">Groups</span>
                 </label>
               </div>
             </div>
 
             <div class="viewer-layer-column">
-              <div class="viewer-layer-subgroup-title">
-                Other resources
-              </div>
+              <div data-public-i18n="Other resources" class="viewer-layer-subgroup-title">Other resources</div>
 
               <label class="browse-checkbox viewer-layer-check">
                 <input type="checkbox" id="publicLayer_institution" checked value="institution">
                 <span class="viewer-layer-icon-slot viewer-layer-icon viewer-layer-icon-institution" data-viewer-layer-icon="institution"><svg aria-hidden="true" viewbox="0 0 24 24" width="18" height="18">
-          <path d="M3.5 9 12 4l8.5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
-          <path d="M5 10.5h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path>
-          <path d="M6.5 10.5v7M10 10.5v7M14 10.5v7M17.5 10.5v7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path>
-          <path d="M4 18.5h16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path>
+          <path d="M3.5 9 12 4l8.5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+          <path d="M5 10.5h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+          <path d="M6.5 10.5v7M10 10.5v7M14 10.5v7M17.5 10.5v7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+          <path d="M4 18.5h16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
         </svg>
       </span>
-                <span>Institutions</span>
+                <span data-public-i18n="Institutions">Institutions</span>
               </label>
 
               <label class="browse-checkbox viewer-layer-check">
                 <input type="checkbox" id="publicLayer_vernacular" checked value="vernacular">
                 <span class="viewer-layer-icon-slot viewer-layer-icon viewer-layer-icon-vernacular" data-viewer-layer-icon="vernacular"><svg aria-hidden="true" viewbox="0 0 24 24" width="18" height="18">
-          <path d="M5 10.8 12 5l7 5.8v7.2a1 1 0 0 1-1 1h-4.2v-5h-3.6v5H6a1 1 0 0 1-1-1Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"></path>
+          <path d="M5 10.8 12 5l7 5.8v7.2a1 1 0 0 1-1 1h-4.2v-5h-3.6v5H6a1 1 0 0 1-1-1Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" />
         </svg>
       </span>
-                <span>Vernacular</span>
+                <span data-public-i18n="Vernacular">Vernacular</span>
               </label>
 
               <div class="viewer-layer-separator" aria-hidden="true"></div>
@@ -101,25 +95,25 @@
               <label class="browse-checkbox viewer-layer-check">
                 <input type="checkbox" id="publicLayer_dataset" checked value="dataset">
                 <span class="viewer-layer-icon-slot viewer-layer-icon viewer-layer-icon-dataset" data-viewer-layer-icon="dataset"><svg aria-hidden="true" viewbox="0 0 24 24" width="18" height="18">
-          <rect x="4" y="5" width="16" height="14" rx="1.8" fill="none" stroke="currentColor" stroke-width="2"></rect>
-          <path d="M7 15.5 10.3 12.3 12.7 14.6 15.2 11.4 18 15.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"></path>
-          <path d="M7 8.5h4.2M7 10.7h2.7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"></path>
-          <circle cx="17" cy="8.5" r="1.1" fill="currentColor"></circle>
+          <rect x="4" y="5" width="16" height="14" rx="1.8" fill="none" stroke="currentColor" stroke-width="2" />
+          <path d="M7 15.5 10.3 12.3 12.7 14.6 15.2 11.4 18 15.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+          <path d="M7 8.5h4.2M7 10.7h2.7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+          <circle cx="17" cy="8.5" r="1.1" fill="currentColor" />
         </svg>
       </span>
-                <span>Datasets</span>
+                <span data-public-i18n="Datasets">Datasets</span>
               </label>
 
               <label class="browse-checkbox viewer-layer-check">
                 <input type="checkbox" id="publicLayer_cartography" checked value="cartography">
                 <span class="viewer-layer-icon-slot viewer-layer-icon viewer-layer-icon-cartography" data-viewer-layer-icon="cartography"><svg aria-hidden="true" viewbox="0 0 24 24" width="18" height="18">
-          <rect x="4" y="5" width="16" height="14" rx="1.8" fill="none" stroke="currentColor" stroke-width="2"></rect>
-          <path d="M7 15.5 10.3 12.3 12.7 14.6 15.2 11.4 18 15.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"></path>
-          <path d="M7 8.5h4.2M7 10.7h2.7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"></path>
-          <circle cx="17" cy="8.5" r="1.1" fill="currentColor"></circle>
+          <rect x="4" y="5" width="16" height="14" rx="1.8" fill="none" stroke="currentColor" stroke-width="2" />
+          <path d="M7 15.5 10.3 12.3 12.7 14.6 15.2 11.4 18 15.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+          <path d="M7 8.5h4.2M7 10.7h2.7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+          <circle cx="17" cy="8.5" r="1.1" fill="currentColor" />
         </svg>
       </span>
-                <span>Cartography</span>
+                <span data-public-i18n="Cartography">Cartography</span>
               </label>
 
               <div class="viewer-layer-separator" aria-hidden="true"></div>
@@ -127,12 +121,12 @@
               <label class="browse-checkbox viewer-layer-check">
                 <input type="checkbox" id="publicLayer_archive" checked value="archive">
                 <span class="viewer-layer-icon-slot viewer-layer-icon viewer-layer-icon-archive" data-viewer-layer-icon="archive"><svg aria-hidden="true" viewbox="0 0 24 24" width="18" height="18">
-          <rect x="4" y="6" width="16" height="4" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.8"></rect>
-          <path d="M6 10.2h12v7.3a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 6 17.5Z" fill="none" stroke="currentColor" stroke-width="1.8"></path>
-          <path d="M10 13.2h4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path>
+          <rect x="4" y="6" width="16" height="4" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.8" />
+          <path d="M6 10.2h12v7.3a1.5 1.5 0 0 1-1.5 1.5h-9A1.5 1.5 0 0 1 6 17.5Z" fill="none" stroke="currentColor" stroke-width="1.8" />
+          <path d="M10 13.2h4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
         </svg>
       </span>
-                <span>Archive</span>
+                <span data-public-i18n="Archive">Archive</span>
               </label>
             </div>
           </div>
@@ -148,29 +142,9 @@
 
           <div class="viewer-spatial-search-actions">
             <div class="viewer-spatial-draw-choice">
-              <button
-                type="button"
-                class="action-btn viewer-spatial-search-btn"
-                id="publicDrawArea"
-                aria-pressed="false"
-                aria-expanded="false"
-                aria-haspopup="menu"
-                title="Choose an area drawing method"
-                data-i18n-title="viewer_spatial_draw_area_help"
-              >
-                <svg
-                  aria-hidden="true"
-                  viewBox="0 0 24 24"
-                  width="15"
-                  height="15"
-                >
-                  <path
-                    d="M5 5 18 4l2 10-8 6-9-5Z"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="1.8"
-                    stroke-linejoin="round"
-                  />
+              <button type="button" class="action-btn viewer-spatial-search-btn" id="publicDrawArea" aria-pressed="false" aria-expanded="false" aria-haspopup="menu" title="Choose an area drawing method" data-i18n-title="viewer_spatial_draw_area_help">
+                <svg aria-hidden="true" viewBox="0 0 24 24" width="15" height="15">
+                  <path d="M5 5 18 4l2 10-8 6-9-5Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" />
                   <circle cx="5" cy="5" r="1.7" fill="currentColor" />
                   <circle cx="18" cy="4" r="1.7" fill="currentColor" />
                   <circle cx="20" cy="14" r="1.7" fill="currentColor" />
@@ -178,49 +152,19 @@
                   <circle cx="3" cy="15" r="1.7" fill="currentColor" />
                 </svg>
 
-                <span
-                  id="publicDrawAreaLabel"
-                  data-i18n="viewer_spatial_draw_area"
-                >
+                <span id="publicDrawAreaLabel" data-i18n="viewer_spatial_draw_area">
                   Draw area
                 </span>
 
-                <span
-                  class="viewer-spatial-draw-chevron"
-                  aria-hidden="true"
-                >
+                <span class="viewer-spatial-draw-chevron" aria-hidden="true">
 
                 </span>
               </button>
 
-              <div
-                id="publicDrawMenu"
-                class="viewer-spatial-draw-menu"
-                role="menu"
-                hidden
-              >
-                <button
-                  type="button"
-                  id="publicRectangle" data-draw="rectangle"
-                  class="viewer-spatial-draw-option"
-                  role="menuitem"
-                >
-                  <svg
-                    aria-hidden="true"
-                    viewBox="0 0 24 24"
-                    width="16"
-                    height="16"
-                  >
-                    <rect
-                      x="4"
-                      y="5"
-                      width="16"
-                      height="14"
-                      rx="1"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="1.8"
-                    />
+              <div id="publicDrawMenu" class="viewer-spatial-draw-menu" role="menu" hidden>
+                <button type="button" id="publicRectangle" data-draw="rectangle" class="viewer-spatial-draw-option" role="menuitem">
+                  <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16">
+                    <rect x="4" y="5" width="16" height="14" rx="1" fill="none" stroke="currentColor" stroke-width="1.8" />
                   </svg>
 
                   <span data-i18n="viewer_spatial_rectangle">
@@ -228,25 +172,9 @@
                   </span>
                 </button>
 
-                <button
-                  type="button"
-                  id="publicPolygon" data-draw="polygon"
-                  class="viewer-spatial-draw-option"
-                  role="menuitem"
-                >
-                  <svg
-                    aria-hidden="true"
-                    viewBox="0 0 24 24"
-                    width="16"
-                    height="16"
-                  >
-                    <path
-                      d="M5 5 18 4l2 10-8 6-9-5Z"
-                      fill="none"
-                      stroke="currentColor"
-                      stroke-width="1.8"
-                      stroke-linejoin="round"
-                    />
+                <button type="button" id="publicPolygon" data-draw="polygon" class="viewer-spatial-draw-option" role="menuitem">
+                  <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16">
+                    <path d="M5 5 18 4l2 10-8 6-9-5Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" />
                   </svg>
 
                   <span data-i18n="viewer_spatial_polygon">
@@ -256,116 +184,44 @@
               </div>
             </div>
 
-            <button
-              type="button"
-              class="action-btn viewer-spatial-search-btn"
-              id="publicMapExtent"
-              aria-pressed="false"
-              title="Search using the current visible map extent"
-            >
-              <svg
-                aria-hidden="true"
-                viewBox="0 0 24 24"
-                width="17"
-                height="17"
-              >
-                <path
-                  d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                />
-                <rect
-                  x="7.5"
-                  y="7.5"
-                  width="9"
-                  height="9"
-                  rx="1"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="1.5"
-                />
+            <button data-public-ui-title="Search using the current visible map extent" type="button" class="action-btn viewer-spatial-search-btn" id="publicMapExtent" aria-pressed="false" title="Search using the current visible map extent">
+              <svg aria-hidden="true" viewBox="0 0 24 24" width="17" height="17">
+                <path d="M4 9V5a1 1 0 0 1 1-1h4M15 4h4a1 1 0 0 1 1 1v4M20 15v4a1 1 0 0 1-1 1h-4M9 20H5a1 1 0 0 1-1-1v-4" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" />
+                <rect x="7.5" y="7.5" width="9" height="9" rx="1" fill="none" stroke="currentColor" stroke-width="1.5" />
               </svg>
 
-              <span
-                id="publicMapExtentLabel"
-                data-i18n="viewer_spatial_map_extent"
-              >
+              <span id="publicMapExtentLabel" data-i18n="viewer_spatial_map_extent">
                 Map extent
               </span>
             </button>
           </div>
         </div><input id="publicMapFilter" type="checkbox" hidden>
-<div class="active-filter-strip caal-active-filter-row" id="publicActiveFilters" hidden><div class="active-filter-chips" id="publicActiveFilterChips"></div><button class="action-btn clear-filters-btn caal-clear-filters" type="button" id="publicClear">Clear filters</button></div>
-<div class="filter-action-row caal-filter-action-row"><button id="publicAdvancedToggle" class="action-btn filters-toggle caal-advanced-toggle" type="button" aria-expanded="false" aria-controls="viewerFiltersPanel">Advanced filters</button></div>
-        <div
-          class="filter-live-results-summary"
-          id="publicResultsSummary"
-        >
+<div class="active-filter-strip caal-active-filter-row" id="publicActiveFilters" hidden><div class="active-filter-chips" id="publicActiveFilterChips"></div><button data-public-i18n="Clear filters" class="action-btn clear-filters-btn caal-clear-filters" type="button" id="publicClear">Clear filters</button></div>
+<div class="filter-action-row caal-filter-action-row"><button data-public-i18n="Advanced filters" id="publicAdvancedToggle" class="action-btn filters-toggle caal-advanced-toggle" type="button" aria-expanded="false" aria-controls="viewerFiltersPanel">Advanced filters</button></div>
+        <div class="filter-live-results-summary" id="publicResultsSummary">
           <div class="filter-live-results-text">
             <span data-i18n="current_results">
               Current results:
             </span>
 
-            <strong
-              id="publicResultsStatus" role="status"
-              data-i18n="loading_records_count"
-            >
+            <strong id="publicResultsStatus" role="status">
               Loading...
             </strong>
           </div>
 
           <div class="filter-live-results-actions">
-            <button
-              type="button" disabled
-              class="icon-action-btn results-map-icon-btn"
-              id="publicResultsLocate"
-              title="Locate results is unavailable in the public Viewer"
-              aria-label="Locate results is unavailable in the public Viewer"
-              data-i18n-title="show_results_on_map"
-              data-i18n-aria-label="show_results_on_map"
-            >
-              <svg
-                aria-hidden="true"
-                viewBox="0 0 24 24"
-                width="16"
-                height="16"
-              >
-                <path
-                  d="M12 2a1 1 0 0 1 1 1v1.1a8 8 0 0 1 6.9 6.9H21a1 1 0 1 1 0 2h-1.1a8 8 0 0 1-6.9 6.9V21a1 1 0 1 1-2 0v-1.1A8 8 0 0 1 4.1 13H3a1 1 0 1 1 0-2h1.1A8 8 0 0 1 11 4.1V3a1 1 0 0 1 1-1Zm0 4a6 6 0 1 0 0 12 6 6 0 0 0 0-12Zm0 3.2a2.8 2.8 0 1 1 0 5.6 2.8 2.8 0 0 1 0-5.6Z"
-                  fill="currentColor"
-                />
+            <button type="button" disabled class="icon-action-btn results-map-icon-btn" id="publicResultsLocate" title="Show results on map" aria-label="Show results on map" data-i18n-title="show_results_on_map" data-i18n-aria-label="show_results_on_map">
+              <svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16">
+                <path d="M12 2a1 1 0 0 1 1 1v1.1a8 8 0 0 1 6.9 6.9H21a1 1 0 1 1 0 2h-1.1a8 8 0 0 1-6.9 6.9V21a1 1 0 1 1-2 0v-1.1A8 8 0 0 1 4.1 13H3a1 1 0 1 1 0-2h1.1A8 8 0 0 1 11 4.1V3a1 1 0 0 1 1-1Zm0 4a6 6 0 1 0 0 12 6 6 0 0 0 0-12Zm0 3.2a2.8 2.8 0 1 1 0 5.6 2.8 2.8 0 0 1 0-5.6Z" fill="currentColor" />
               </svg>
             </button>
 
-            <button
-              type="button" disabled
-              class="icon-action-btn results-map-icon-btn results-download-icon-btn"
-              id="publicResultsDownload"
-              title="Downloads are unavailable in this release"
-              aria-label="Downloads are unavailable in this release"
-              aria-haspopup="dialog"
-              aria-expanded="false"
-              data-i18n-title="download_results"
-              data-i18n-aria-label="download_results"
-            >
+            <button type="button" disabled class="icon-action-btn results-map-icon-btn results-download-icon-btn" id="publicResultsDownload" title="Downloads are unavailable in this release" aria-label="Downloads are unavailable in this release" aria-haspopup="dialog" aria-expanded="false" data-i18n-title="public_downloads_unavailable" data-i18n-aria-label="public_downloads_unavailable">
               <!-- Same download icon used by the map control -->
-              <svg
-                aria-hidden="true"
-                viewBox="0 0 24 24"
-                width="18"
-                height="18"
-              >
-                <path
-                  d="M12 4a1 1 0 0 1 1 1v8.1l2.8-2.8a1 1 0 0 1 1.4 1.4l-4.5 4.5a1 1 0 0 1-1.4 0l-4.5-4.5a1 1 0 1 1 1.4-1.4L11 13.1V5a1 1 0 0 1 1-1Z"
-                  fill="currentColor"
-                />
+              <svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18">
+                <path d="M12 4a1 1 0 0 1 1 1v8.1l2.8-2.8a1 1 0 0 1 1.4 1.4l-4.5 4.5a1 1 0 0 1-1.4 0l-4.5-4.5a1 1 0 1 1 1.4-1.4L11 13.1V5a1 1 0 0 1 1-1Z" fill="currentColor" />
 
-                <path
-                  d="M5 18a1 1 0 0 1 1-1h1.5a1 1 0 1 1 0 2H6v1h12v-1h-1.5a1 1 0 1 1 0-2H18a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-2Z"
-                  fill="currentColor"
-                />
+                <path d="M5 18a1 1 0 0 1 1-1h1.5a1 1 0 1 1 0 2H6v1h12v-1h-1.5a1 1 0 1 1 0-2H18a1 1 0 0 1 1 1v2a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1v-2Z" fill="currentColor" />
               </svg>
             </button>
           </div>
@@ -375,120 +231,102 @@
           <div class="filters-grid">
 
             <div class="filter-group">
-              <label for="viewerFilterCaalId">CAAL_ID</label>
+              <label data-public-i18n="CAAL_ID" for="viewerFilterCaalId">CAAL_ID</label>
               <input type="text" id="viewerFilterCaalId" class="filter-input caal-id-filter-input" placeholder="Search CAAL_ID" data-i18n-placeholder="search_caal_id">
             </div>
 
             <div class="filter-group chip-multiselect-group" data-filter-field="country">
-              <label for="viewerFilterCountry">Country</label>
+              <label data-public-i18n="Country" for="viewerFilterCountry">Country</label>
               <div class="selected-filter-chips" id="viewerFilterCountryChips"></div>
               <select id="viewerFilterCountry" class="form-control chip-multiselect" multiple></select>
-              <p class="filter-help">
-                Click values to select or deselect. Selected values appear above.
-              </p>
+              <p data-public-i18n="Click values to select or deselect. Selected values appear above." class="filter-help">Click values to select or deselect. Selected values appear above.</p>
             </div>
 
             <div class="filter-group chip-multiselect-group" data-filter-field="monument_types">
-              <label for="viewerFilterMonumentType">Monument Type</label>
+              <label data-public-i18n="Monument Type" for="viewerFilterMonumentType">Monument Type</label>
               <div class="selected-filter-chips" id="viewerFilterMonumentTypeChips"></div>
 
               <select id="viewerFilterMonumentType" class="form-control chip-multiselect advanced-filter-hidden-select" multiple></select>
 
               <div id="viewerFilterMonumentTypeTree"></div>
 
-              <p class="filter-help">
-                Click values to select or deselect. Selected values appear above.
-              </p>
+              <p data-public-i18n="Click values to select or deselect. Selected values appear above." class="filter-help">Click values to select or deselect. Selected values appear above.</p>
             </div>
 
             <div class="advanced-filter-section" data-filter-section="rs_assessments">
-              <h4>Remote sensing assessments</h4>
+              <h4 data-public-i18n="Remote sensing assessments">Remote sensing assessments</h4>
 
               <div class="filter-group chip-multiselect-group" data-filter-field="condition_levels">
-                <label for="viewerFilterCondition">
-                  Overall condition
-                </label>
+                <label data-public-i18n="Overall condition" for="viewerFilterCondition">Overall condition</label>
                 <div class="selected-filter-chips" id="viewerFilterConditionChips"></div>
                 <select id="viewerFilterCondition" class="form-control chip-multiselect" multiple>
-                  <option value="1">1 - Excellent</option>
-                  <option value="2">2 - Good</option>
-                  <option value="3">3 - Poor</option>
-                  <option value="4">4 - Very poor</option>
-                  <option value="5">5 - Destroyed</option>
+                  <option data-public-i18n="1 - Excellent" value="1">1 - Excellent</option>
+                  <option data-public-i18n="2 - Good" value="2">2 - Good</option>
+                  <option data-public-i18n="3 - Poor" value="3">3 - Poor</option>
+                  <option data-public-i18n="4 - Very poor" value="4">4 - Very poor</option>
+                  <option data-public-i18n="5 - Destroyed" value="5">5 - Destroyed</option>
                 </select>
-                <p class="filter-help">
-                  Click values to select or deselect. Selected values appear above.
-                </p>
+                <p data-public-i18n="Click values to select or deselect. Selected values appear above." class="filter-help">Click values to select or deselect. Selected values appear above.</p>
               </div>
 
               <div class="filter-group chip-multiselect-group" data-filter-field="deterioration_causes">
-                <label for="viewerFilterDeteriorationCause">
-                  Causes of deterioration
-                </label>
+                <label data-public-i18n="Causes of deterioration" for="viewerFilterDeteriorationCause">Causes of deterioration</label>
                 <div class="selected-filter-chips" id="viewerFilterDeteriorationCauseChips"></div>
                 <select id="viewerFilterDeteriorationCause" class="form-control chip-multiselect" multiple>
-                  <option value="Urban Encroachment">Urban Encroachment</option>
-                  <option value="Quarrying">Quarrying</option>
-                  <option value="Construction">Construction</option>
-                  <option value="Agriculture">Agriculture</option>
-                  <option value="Looting">Looting</option>
-                  <option value="Fire">Fire</option>
-                  <option value="Dumping">Dumping</option>
-                  <option value="Riverine Erosion">Riverine Erosion</option>
-                  <option value="Soil Erosion">Soil Erosion</option>
-                  <option value="Transport Infrastructure">Transport Infrastructure</option>
-                  <option value="Cemetery">Cemetery</option>
+                  <option data-public-i18n="Urban Encroachment" value="Urban Encroachment">Urban Encroachment</option>
+                  <option data-public-i18n="Quarrying" value="Quarrying">Quarrying</option>
+                  <option data-public-i18n="Construction" value="Construction">Construction</option>
+                  <option data-public-i18n="Agriculture" value="Agriculture">Agriculture</option>
+                  <option data-public-i18n="Looting" value="Looting">Looting</option>
+                  <option data-public-i18n="Fire" value="Fire">Fire</option>
+                  <option data-public-i18n="Dumping" value="Dumping">Dumping</option>
+                  <option data-public-i18n="Riverine Erosion" value="Riverine Erosion">Riverine Erosion</option>
+                  <option data-public-i18n="Soil Erosion" value="Soil Erosion">Soil Erosion</option>
+                  <option data-public-i18n="Transport Infrastructure" value="Transport Infrastructure">Transport Infrastructure</option>
+                  <option data-public-i18n="Cemetery" value="Cemetery">Cemetery</option>
                 </select>
-                <p class="filter-help">
-                  Click values to select or deselect. Selected values appear above.
-                </p>
+                <p data-public-i18n="Click values to select or deselect. Selected values appear above." class="filter-help">Click values to select or deselect. Selected values appear above.</p>
               </div>
 
               <div class="filter-group chip-multiselect-group" data-filter-field="risk_levels">
-                <label for="viewerFilterRiskType">
-                  Type of risk
-                </label>
+                <label data-public-i18n="Type of risk" for="viewerFilterRiskType">Type of risk</label>
                 <div class="selected-filter-chips" id="viewerFilterRiskTypeChips"></div>
                 <select id="viewerFilterRiskType" class="form-control chip-multiselect" multiple>
-                  <option value="Risk of urban encroachment">Urban encroachment</option>
-                  <option value="Risk of quarrying">Quarrying</option>
-                  <option value="Risk of construction">Construction</option>
-                  <option value="Risk of agriculture">Agriculture</option>
-                  <option value="Risk of looting">Looting</option>
-                  <option value="Risk of fire">Fire</option>
-                  <option value="Risk of dumping">Dumping</option>
-                  <option value="Risk of riverine erosion">Riverine erosion</option>
-                  <option value="Risk of soil erosion">Soil erosion</option>
-                  <option value="Risk of transport infrastructure">Transport infrastructure</option>
-                  <option value="Risk of cemetery">Cemetery</option>
+                  <option data-public-i18n="Urban encroachment" value="Risk of urban encroachment">Urban encroachment</option>
+                  <option data-public-i18n="Quarrying" value="Risk of quarrying">Quarrying</option>
+                  <option data-public-i18n="Construction" value="Risk of construction">Construction</option>
+                  <option data-public-i18n="Agriculture" value="Risk of agriculture">Agriculture</option>
+                  <option data-public-i18n="Looting" value="Risk of looting">Looting</option>
+                  <option data-public-i18n="Fire" value="Risk of fire">Fire</option>
+                  <option data-public-i18n="Dumping" value="Risk of dumping">Dumping</option>
+                  <option data-public-i18n="Riverine erosion" value="Risk of riverine erosion">Riverine erosion</option>
+                  <option data-public-i18n="Soil erosion" value="Risk of soil erosion">Soil erosion</option>
+                  <option data-public-i18n="Transport infrastructure" value="Risk of transport infrastructure">Transport infrastructure</option>
+                  <option data-public-i18n="Cemetery" value="Risk of cemetery">Cemetery</option>
                 </select>
-                <p class="filter-help">
-                  Click values to select or deselect. Selected values appear above.
-                </p>
+                <p data-public-i18n="Click values to select or deselect. Selected values appear above." class="filter-help">Click values to select or deselect. Selected values appear above.</p>
               </div>
 
               <div class="filter-group" data-filter-field="risk_levels">
-                <label for="viewerFilterRiskMin">Minimum risk level</label>
+                <label data-public-i18n="Minimum risk level" for="viewerFilterRiskMin">Minimum risk level</label>
                 <select id="viewerFilterRiskMin" class="form-control">
-                  <option value="">Any level</option>
-                  <option value="2">2 - Low or higher</option>
-                  <option value="3">3 - Moderate or higher</option>
-                  <option value="4">4 - High or higher</option>
-                  <option value="5">5 - Very high only</option>
+                  <option data-public-i18n="Any level" value="">Any level</option>
+                  <option data-public-i18n="2 - Low or higher" value="2">2 - Low or higher</option>
+                  <option data-public-i18n="3 - Moderate or higher" value="3">3 - Moderate or higher</option>
+                  <option data-public-i18n="4 - High or higher" value="4">4 - High or higher</option>
+                  <option data-public-i18n="5 - Very high only" value="5">5 - Very high only</option>
                 </select>
               </div>
             </div>
 
           </div>
         </div></form>
-<div class="results-panel-header"><h3 class="caal-results-heading">Results <button type="button" id="publicRefreshGroups" class="icon-action-btn caal-results-refresh" title="Refresh results" aria-label="Refresh results"><svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15.36-6.36L21 8"/><path d="M21 3v5h-5"/><path d="M21 12a9 9 0 0 1-15.36 6.36L3 16"/><path d="M3 21v-5h5"/></svg></button></h3></div><button type="button" class="action-btn" id="publicRetryResults" hidden>Retry results</button><div id="viewerResultsList" class="results-list"><div id="publicResults"></div></div>
-<div class="public-paging" hidden><button class="action-btn" id="publicPrevious" type="button" disabled>Previous</button><button class="action-btn" id="publicNext" type="button" disabled>Next</button></div></div></aside>
-<section class="workspace-pane map-pane" aria-label="Resource map"><div class="pane-header pane-header-inline"><div><h2>Map</h2><p>Click a resource on the map</p></div><button id="viewerDetailToggle" class="action-btn" type="button" aria-controls="viewerDetailPane" aria-expanded="false" hidden>Record details &#8249;</button></div>
-<div class="map-pane-body"><div id="publicMap"></div><div id="publicDrawInstruction" class="viewer-spatial-draw-message" role="status" hidden><span id="publicDrawInstructionText"></span><button id="publicFinishDrawing" class="action-btn" type="button">Finish</button><button id="publicCancelDrawing" class="action-btn" type="button">Cancel</button></div><div class="map-options-panel viewer-map-layers-panel" id="viewerMapLayersPanel" hidden>
+<div class="results-panel-header"><h3 class="caal-results-heading"><span data-public-i18n="Results">Results</span><button data-public-ui-aria-label="Refresh results" data-public-ui-title="Refresh results" type="button" id="publicRefreshGroups" class="icon-action-btn caal-results-refresh" title="Refresh results" aria-label="Refresh results"><svg aria-hidden="true" viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 0 1 15.36-6.36L21 8" /><path d="M21 3v5h-5" /><path d="M21 12a9 9 0 0 1-15.36 6.36L3 16" /><path d="M3 21v-5h5" /></svg></button></h3></div><button data-public-i18n="Retry results" type="button" class="action-btn" id="publicRetryResults" hidden>Retry results</button><div id="viewerResultsList" class="results-list"><div id="publicResults"></div></div>
+<div class="public-paging" hidden><button data-public-i18n="Previous" class="action-btn" id="publicPrevious" type="button" disabled>Previous</button><button data-public-i18n="Next" class="action-btn" id="publicNext" type="button" disabled>Next</button></div></div></aside>
+<section data-public-ui-aria-label="Resource map" class="workspace-pane map-pane" aria-label="Resource map"><div class="pane-header pane-header-inline"><div><h2 data-public-i18n="Map">Map</h2><p data-public-i18n="Click a resource on the map">Click a resource on the map</p></div><button id="viewerDetailToggle" class="action-btn" type="button" aria-controls="viewerDetailPane" aria-expanded="false" hidden><span data-public-i18n="Record details">Record details</span>‹</button></div>
+<div class="map-pane-body"><div id="publicMap"></div><div id="publicDrawInstruction" class="viewer-spatial-draw-message" role="status" hidden><span id="publicDrawInstructionText"></span><button data-public-i18n="Finish" id="publicFinishDrawing" class="action-btn" type="button">Finish</button><button data-public-i18n="Cancel" id="publicCancelDrawing" class="action-btn" type="button">Cancel</button></div><div class="map-options-panel viewer-map-layers-panel" id="viewerMapLayersPanel" hidden>
           <div class="map-options-header">
-            <strong>
-              Map layers
-            </strong>
+            <strong data-public-i18n="Map layers">Map layers</strong>
 
             <button type="button" class="icon-btn" id="closeViewerMapLayersBtn" aria-label="Close map layers" data-i18n-aria-label="close_map_layers">
               ×
@@ -496,23 +334,13 @@
           </div>
 
           <div class="map-options-section">
-            <label for="basemapSelect">Basemap</label>
+            <label data-public-i18n="Basemap" for="basemapSelect">Basemap</label>
             <select id="basemapSelect" class="form-control">
-              <option value="maptiler-hybrid">
-                Satellite with roads
-              </option>
-              <option value="maptiler-streets">
-                Street map
-              </option>
-              <option value="maptiler-satellite">
-                Satellite only
-              </option>
-              <option value="maptiler-topo">
-                Topographic map
-              </option>
-              <option value="osm">
-                OpenStreetMap
-              </option>
+              <option data-public-i18n="Satellite with roads" value="maptiler-hybrid">Satellite with roads</option>
+              <option data-public-i18n="Street map" value="maptiler-streets">Street map</option>
+              <option data-public-i18n="Satellite only" value="maptiler-satellite">Satellite only</option>
+              <option data-public-i18n="Topographic map" value="maptiler-topo">Topographic map</option>
+              <option data-public-i18n="OpenStreetMap" value="osm">OpenStreetMap</option>
             </select>
           </div>
 
@@ -520,111 +348,93 @@
               DATA LAYERS
               ============================== -->
           <div class="map-options-section">
-            <div class="map-options-section-title">
-              Data layers
-            </div>
+            <div data-public-i18n="Data layers" class="map-options-section-title">Data layers</div>
 
             <label class="map-options-check viewer-map-layer-check">
               <input type="checkbox" id="viewerMapLayerMonument" value="monument" checked>
               <span class="viewer-layer-icon-slot viewer-layer-icon viewer-layer-icon-monument" data-viewer-layer-icon="monument" aria-hidden="true"><svg aria-hidden="true" viewbox="0 0 24 24" width="18" height="18">
-          <path d="M4 18.5h16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path>
-          <path d="M6.2 18.2V15.8l2.4-1.7 2.4 1.7v2.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"></path>
-          <path d="M13 18.2v-4l2.6-1.8 2.2 1.6v4.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"></path>
-          <path d="M8.6 14.1v-2.4l2.5-1.8 2.5 1.8v2.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"></path>
-          <path d="M10.5 7.8 12 5.8l1.5 2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
+          <path d="M4 18.5h16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+          <path d="M6.2 18.2V15.8l2.4-1.7 2.4 1.7v2.4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" />
+          <path d="M13 18.2v-4l2.6-1.8 2.2 1.6v4.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" />
+          <path d="M8.6 14.1v-2.4l2.5-1.8 2.5 1.8v2.2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" />
+          <path d="M10.5 7.8 12 5.8l1.5 2" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
         </svg>
       </span>
-              <span>
-                Monuments
-              </span>
+              <span data-public-i18n="Monuments">Monuments</span>
             </label>
 
             <label class="map-options-check viewer-map-layer-check">
               <input type="checkbox" id="viewerMapLayerRs3Poly" value="rs3_poly" checked>
               <span class="viewer-layer-icon-slot viewer-layer-icon viewer-layer-icon-rs3_poly" data-viewer-layer-icon="rs3_poly" aria-hidden="true"><svg aria-hidden="true" viewbox="0 0 24 24" width="18" height="18">
-          <path d="M8 3.8 17.2 7v10l-9.2 4.2L3.5 15.8V7.8Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"></path>
+          <path d="M8 3.8 17.2 7v10l-9.2 4.2L3.5 15.8V7.8Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" />
         </svg>
       </span>
-              <span>
-                Polygons
-              </span>
+              <span data-public-i18n="Polygons">Polygons</span>
             </label>
 
             <label class="map-options-check viewer-map-layer-check">
               <input type="checkbox" id="viewerMapLayerRs3Line" value="rs3_line" checked>
               <span class="viewer-layer-icon-slot viewer-layer-icon viewer-layer-icon-rs3_line" data-viewer-layer-icon="rs3_line" aria-hidden="true"><svg aria-hidden="true" viewbox="0 0 24 24" width="18" height="18">
-          <path d="M4 16c2.4-5.3 4.8-7.7 7-7.7 2 0 2.9 2.4 4.7 2.4 1.5 0 2.9-1.4 4.3-3.7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path>
+          <path d="M4 16c2.4-5.3 4.8-7.7 7-7.7 2 0 2.9 2.4 4.7 2.4 1.5 0 2.9-1.4 4.3-3.7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
         </svg>
       </span>
-              <span>
-                Lines
-              </span>
+              <span data-public-i18n="Lines">Lines</span>
             </label>
 
             <label class="map-options-check viewer-map-layer-check">
               <input type="checkbox" id="viewerMapLayerRs3Group" value="rs3_group" checked>
               <span class="viewer-layer-icon-slot viewer-layer-icon viewer-layer-icon-rs3_group" data-viewer-layer-icon="rs3_group" aria-hidden="true"><svg aria-hidden="true" viewbox="0 0 24 24" width="18" height="18">
-          <rect x="3.5" y="4.5" width="6.5" height="6.5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.8"></rect>
-          <rect x="14" y="4.5" width="6.5" height="6.5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.8"></rect>
-          <rect x="8.8" y="13" width="6.5" height="6.5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.8"></rect>
+          <rect x="3.5" y="4.5" width="6.5" height="6.5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.8" />
+          <rect x="14" y="4.5" width="6.5" height="6.5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.8" />
+          <rect x="8.8" y="13" width="6.5" height="6.5" rx="1.2" fill="none" stroke="currentColor" stroke-width="1.8" />
         </svg>
       </span>
-              <span>
-                Groups
-              </span>
+              <span data-public-i18n="Groups">Groups</span>
             </label>
 
             <label class="map-options-check viewer-map-layer-check">
               <input type="checkbox" id="viewerMapLayerInstitution" value="institution" checked>
               <span class="viewer-layer-icon-slot viewer-layer-icon viewer-layer-icon-institution" data-viewer-layer-icon="institution" aria-hidden="true"><svg aria-hidden="true" viewbox="0 0 24 24" width="18" height="18">
-          <path d="M3.5 9 12 4l8.5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"></path>
-          <path d="M5 10.5h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path>
-          <path d="M6.5 10.5v7M10 10.5v7M14 10.5v7M17.5 10.5v7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path>
-          <path d="M4 18.5h16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"></path>
+          <path d="M3.5 9 12 4l8.5 5" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+          <path d="M5 10.5h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+          <path d="M6.5 10.5v7M10 10.5v7M14 10.5v7M17.5 10.5v7" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+          <path d="M4 18.5h16" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
         </svg>
       </span>
-              <span>
-                Institutions
-              </span>
+              <span data-public-i18n="Institutions">Institutions</span>
             </label>
 
             <label class="map-options-check viewer-map-layer-check">
               <input type="checkbox" id="viewerMapLayerVernacular" value="vernacular" checked>
               <span class="viewer-layer-icon-slot viewer-layer-icon viewer-layer-icon-vernacular" data-viewer-layer-icon="vernacular" aria-hidden="true"><svg aria-hidden="true" viewbox="0 0 24 24" width="18" height="18">
-          <path d="M5 10.8 12 5l7 5.8v7.2a1 1 0 0 1-1 1h-4.2v-5h-3.6v5H6a1 1 0 0 1-1-1Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round"></path>
+          <path d="M5 10.8 12 5l7 5.8v7.2a1 1 0 0 1-1 1h-4.2v-5h-3.6v5H6a1 1 0 0 1-1-1Z" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linejoin="round" />
         </svg>
       </span>
-              <span>
-                Vernacular
-              </span>
+              <span data-public-i18n="Vernacular">Vernacular</span>
             </label>
 
             <label class="map-options-check viewer-map-layer-check">
               <input type="checkbox" id="viewerMapLayerDataset" value="dataset">
               <span class="viewer-layer-icon-slot viewer-layer-icon viewer-layer-icon-dataset" data-viewer-layer-icon="dataset" aria-hidden="true"><svg aria-hidden="true" viewbox="0 0 24 24" width="18" height="18">
-          <rect x="4" y="5" width="16" height="14" rx="1.8" fill="none" stroke="currentColor" stroke-width="2"></rect>
-          <path d="M7 15.5 10.3 12.3 12.7 14.6 15.2 11.4 18 15.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"></path>
-          <path d="M7 8.5h4.2M7 10.7h2.7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"></path>
-          <circle cx="17" cy="8.5" r="1.1" fill="currentColor"></circle>
+          <rect x="4" y="5" width="16" height="14" rx="1.8" fill="none" stroke="currentColor" stroke-width="2" />
+          <path d="M7 15.5 10.3 12.3 12.7 14.6 15.2 11.4 18 15.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+          <path d="M7 8.5h4.2M7 10.7h2.7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+          <circle cx="17" cy="8.5" r="1.1" fill="currentColor" />
         </svg>
       </span>
-              <span>
-                Datasets
-              </span>
+              <span data-public-i18n="Datasets">Datasets</span>
             </label>
 
             <label class="map-options-check viewer-map-layer-check">
               <input type="checkbox" id="viewerMapLayerCartography" value="cartography">
               <span class="viewer-layer-icon-slot viewer-layer-icon viewer-layer-icon-cartography" data-viewer-layer-icon="cartography" aria-hidden="true"><svg aria-hidden="true" viewbox="0 0 24 24" width="18" height="18">
-          <rect x="4" y="5" width="16" height="14" rx="1.8" fill="none" stroke="currentColor" stroke-width="2"></rect>
-          <path d="M7 15.5 10.3 12.3 12.7 14.6 15.2 11.4 18 15.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"></path>
-          <path d="M7 8.5h4.2M7 10.7h2.7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"></path>
-          <circle cx="17" cy="8.5" r="1.1" fill="currentColor"></circle>
+          <rect x="4" y="5" width="16" height="14" rx="1.8" fill="none" stroke="currentColor" stroke-width="2" />
+          <path d="M7 15.5 10.3 12.3 12.7 14.6 15.2 11.4 18 15.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" />
+          <path d="M7 8.5h4.2M7 10.7h2.7" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" />
+          <circle cx="17" cy="8.5" r="1.1" fill="currentColor" />
         </svg>
       </span>
-              <span>
-                Cartography
-              </span>
+              <span data-public-i18n="Cartography">Cartography</span>
             </label>
           </div>
 
@@ -632,155 +442,109 @@
               CONTEXT LAYERS
               ============================== -->
           <div class="map-options-section">
-            <div class="map-options-section-title">
-              Context layers
-            </div>
+            <div data-public-i18n="Context layers" class="map-options-section-title">Context layers</div>
 
             <label class="map-options-check public-disabled-context">
-              <input type="checkbox" id="viewerMapLayerSurveyGrid" value="survey_grid" disabled title="Context overlays are not included in this public release">
-              <span>
-                Survey grid
-              </span>
+              <input data-public-ui-title="Context overlays are not included in this public release" type="checkbox" id="viewerMapLayerSurveyGrid" value="survey_grid" disabled title="Context overlays are not included in this public release">
+              <span data-public-i18n="Survey grid">Survey grid</span>
             </label>
 
             <div id="surveyGridOptions" class="map-option-nested" hidden>
-              <label class="field-label public-disabled-context" for="surveyGridStyleMode">
-                Survey grid style
-              </label>
+              <label data-public-i18n="Survey grid style" class="field-label public-disabled-context" for="surveyGridStyleMode">Survey grid style</label>
 
-              <select id="surveyGridStyleMode" class="form-control" disabled title="Context overlays are not included in this public release">
-                <option value="neutral">
-                  Neutral overlay
-                </option>
+              <select data-public-ui-title="Context overlays are not included in this public release" id="surveyGridStyleMode" class="form-control" disabled title="Context overlays are not included in this public release">
+                <option data-public-i18n="Neutral overlay" value="neutral">Neutral overlay</option>
 
-                <option value="status">
-                  Colour by survey status
-                </option>
+                <option data-public-i18n="Colour by survey status" value="status">Colour by survey status</option>
 
-                <option value="checked">
-                  Colour by checked status
-                </option>
+                <option data-public-i18n="Colour by checked status" value="checked">Colour by checked status</option>
               </select>
             </div>
 
             <label class="map-options-check public-disabled-context">
-              <input type="checkbox" id="showCentralAsiaBordersCheckbox" disabled title="Context overlays are not included in this public release">
-              <span>
-                Administrative boundaries
-              </span>
+              <input data-public-ui-title="Context overlays are not included in this public release" type="checkbox" id="showCentralAsiaBordersCheckbox" disabled title="Context overlays are not included in this public release">
+              <span data-public-i18n="Administrative boundaries">Administrative boundaries</span>
             </label>
 
             <div class="map-options-subsection" id="borderStyleOptions" hidden>
-              <p class="map-options-help" id="adminBoundariesHelp">
-                Click a region to filter results or view a regional summary.
-              </p>
+              <p data-public-i18n="Click a region to filter results or view a regional summary." class="map-options-help" id="adminBoundariesHelp">Click a region to filter results or view a regional summary.</p>
 
-              <label for="borderStyleSelect" class="public-disabled-context">
-                Border style
-              </label>
+              <label data-public-i18n="Border style" for="borderStyleSelect" class="public-disabled-context">Border style</label>
 
-              <select id="borderStyleSelect" class="form-control" disabled title="Context overlays are not included in this public release">
-                <option value="subtle">
-                  Subtle
-                </option>
+              <select data-public-ui-title="Context overlays are not included in this public release" id="borderStyleSelect" class="form-control" disabled title="Context overlays are not included in this public release">
+                <option data-public-i18n="Subtle" value="subtle">Subtle</option>
 
-                <option value="dark">
-                  Dark
-                </option>
+                <option data-public-i18n="Dark" value="dark">Dark</option>
 
-                <option value="filled" selected>
-                  Filled
-                </option>
+                <option data-public-i18n="Filled" value="filled" selected>Filled</option>
               </select>
             </div>
           </div></div><div class="map-options-panel" id="mapOptionsPanel" hidden>
           <div class="map-options-header">
-            <strong>Map options</strong>
+            <strong data-public-i18n="Map options">Map options</strong>
             <button type="button" class="icon-btn" id="closeMapOptionsBtn" aria-label="Close map options" data-i18n-aria-label="close_map_options">
               ×
             </button>
           </div>
 
           <div class="map-options-section">
-            <div class="map-options-section-title">Labels</div>
+            <div data-public-i18n="Labels" class="map-options-section-title">Labels</div>
 
             <label class="map-options-check">
               <input type="checkbox" id="showMapLabelsCheckbox">
-              <span>Show labels</span>
+              <span data-public-i18n="Show labels">Show labels</span>
             </label>
 
             <div class="map-options-subsection" id="mapLabelsOptions" hidden>
               <label class="map-options-check">
                 <input type="checkbox" id="forceMapLabelsCheckbox">
-                <span>Force all labels</span>
+                <span data-public-i18n="Force all labels">Force all labels</span>
               </label>
-              <p class="map-options-help">
-                Keep labels visible even when crowded. Labels may overlap.
-              </p>
+              <p data-public-i18n="Keep labels visible even when crowded. Labels may overlap." class="map-options-help">Keep labels visible even when crowded. Labels may overlap.</p>
 
-              <label for="mapLabelScopeSelect">
-                Label records
-              </label>
+              <label data-public-i18n="Label records" for="mapLabelScopeSelect">Label records</label>
 
               <select id="mapLabelScopeSelect" class="form-control">
-                <option value="results">
-                  Records shown on map
-                </option>
-                <option value="selected">
-                  Selected record
-                </option>
+                <option data-public-i18n="Records shown on map" value="results">Records shown on map</option>
+                <option data-public-i18n="Selected record" value="selected">Selected record</option>
               </select>
 
-              <p class="map-options-help" id="mapLabelScopeHelp">
-                Labels apply to records currently drawn on the map.
-              </p>
+              <p data-public-i18n="Labels apply to records currently drawn on the map." class="map-options-help" id="mapLabelScopeHelp">Labels apply to records currently drawn on the map.</p>
 
-              <p class="map-label-warning" id="mapLabelWarning" hidden>
-                Too many records to label clearly. Zoom in for labels.
-              </p>
+              <p data-public-i18n="Too many records to label clearly. Zoom in for labels." class="map-label-warning" id="mapLabelWarning" hidden>Too many records to label clearly. Zoom in for labels.</p>
 
-              <label for="mapLabelModeSelect">
-                Label content
-              </label>
+              <label data-public-i18n="Label content" for="mapLabelModeSelect">Label content</label>
 
               <select id="mapLabelModeSelect" class="form-control">
-                <option value="name" selected>Name</option>
-                <option value="caal_id">CAAL_ID</option>
-                <option value="name_caal_id">
-                  Name + CAAL_ID
-                </option>
+                <option data-public-i18n="Name" value="name" selected>Name</option>
+                <option data-public-i18n="CAAL_ID" value="caal_id">CAAL_ID</option>
+                <option data-public-i18n="Name + CAAL_ID" value="name_caal_id">Name + CAAL_ID</option>
               </select>
             </div>
           </div>
         </div><div id="viewerMeasurementPanel" class="viewer-measurement-panel" hidden>
           <div class="viewer-measurement-panel-header">
-            <strong>Tools</strong>
+            <strong data-public-i18n="Tools">Tools</strong>
 
-            <button type="button" id="closeViewerMeasurementPanelBtn" class="icon-btn" aria-label="Close measurement tools" title="Close measurement tools">
+            <button data-public-ui-aria-label="Close measurement tools" data-public-ui-title="Close measurement tools" type="button" id="closeViewerMeasurementPanelBtn" class="icon-btn" aria-label="Close measurement tools" title="Close measurement tools">
               ×
             </button>
           </div>
 
           <div class="viewer-measurement-actions">
-            <button type="button" id="viewerMeasureDistanceBtn" class="action-btn viewer-measurement-action" aria-pressed="false">
-              Measure distance
-            </button>
+            <button data-public-i18n="Measure distance" type="button" id="viewerMeasureDistanceBtn" class="action-btn viewer-measurement-action" aria-pressed="false">Measure distance</button>
 
-            <button type="button" id="viewerMeasureAreaBtn" class="action-btn viewer-measurement-action" aria-pressed="false">
-              Measure area
-            </button>
+            <button data-public-i18n="Measure area" type="button" id="viewerMeasureAreaBtn" class="action-btn viewer-measurement-action" aria-pressed="false">Measure area</button>
 
-            <button type="button" id="viewerMeasurePointBtn" class="action-btn viewer-measurement-action" aria-pressed="false" disabled title="Point coordinates are disabled in the public Viewer">
-              Point coordinates
-            </button>
+            <button data-public-i18n="Point coordinates" data-public-ui-title="Point coordinates are disabled in the public Viewer" type="button" id="viewerMeasurePointBtn" class="action-btn viewer-measurement-action" aria-pressed="false" disabled title="Point coordinates are disabled in the public Viewer">Point coordinates</button>
           </div>
 
           <div id="viewerMeasurementInstruction" class="viewer-measurement-instruction" hidden></div>
 
           <div id="viewerMeasurementResult" class="viewer-measurement-result" aria-live="polite"></div>
         </div><p id="publicMapError" role="alert" hidden></p></div>
-<div class="map-underbar"><div class="map-status-line" id="publicMapStatus" role="status">Map loading...</div></div></section>
-<aside class="workspace-pane detail-pane" id="viewerDetailPane" aria-label="Record details" aria-hidden="true" inert><div class="pane-header pane-header-inline"><div><h2>Record Details</h2><div class="detail-action-bar"><button class="action-btn" id="publicClose" type="button" hidden>Close record</button></div></div><button id="viewerDetailMinimise" class="action-btn viewer-detail-minimise" type="button" aria-label="Minimise record details" title="Minimise record details" aria-controls="viewerDetailPane">Minimise &#8250;</button></div><div class="pane-body" id="publicDetails" aria-live="polite"><div class="empty-state"><p>No record selected yet.</p></div></div></aside>
+<div class="map-underbar"><div data-public-i18n="Map loading..." class="map-status-line" id="publicMapStatus" role="status">Map loading...</div></div></section>
+<aside data-public-ui-aria-label="Record details" class="workspace-pane detail-pane" id="viewerDetailPane" aria-label="Record details" aria-hidden="true" inert=""><div class="pane-header pane-header-inline"><div><h2 data-public-i18n="Record Details">Record Details</h2><div class="detail-action-bar"><button data-public-i18n="Close record" class="action-btn" id="publicClose" type="button" hidden>Close record</button></div></div><button data-public-ui-aria-label="Minimise record details" data-public-ui-title="Minimise record details" id="viewerDetailMinimise" class="action-btn viewer-detail-minimise" type="button" aria-label="Minimise record details" title="Minimise record details" aria-controls="viewerDetailPane"><span data-public-i18n="Minimise">Minimise</span>›</button></div><div class="pane-body" id="publicDetails" aria-live="polite"><div class="empty-state"><p data-public-i18n="No record selected yet.">No record selected yet.</p></div></div></aside>
 </main>
-<script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script><script src="js/viewerDetailPanel.js"></script><script src="js/publicViewerFiltersUI.js"></script><script src="js/publicViewerTools.js"></script><script src="js/publicViewerGroups.js"></script><script src="js/publicViewerRelatedMap.js"></script><script src="js/publicViewerDetails.js"></script><script src="js/publicViewer.js"></script>
+<script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script><script src="js/publicViewerI18n.js"></script><script src="js/viewerDetailPanel.js"></script><script src="js/publicViewerFiltersUI.js"></script><script src="js/publicViewerTools.js"></script><script src="js/publicViewerGroups.js"></script><script src="js/publicViewerRelatedMap.js"></script><script src="js/publicViewerDetails.js"></script><script src="js/publicViewer.js"></script>
 </body></html>

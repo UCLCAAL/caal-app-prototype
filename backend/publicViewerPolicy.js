@@ -25,7 +25,7 @@ function publicationAllowed(req, row, env=process.env) {
 
 // Fixed public zoom limit in MapLibre's 512 CSS-pixel world convention.
 // 10=54m/px, 11=27m/px, 12=13.5m/px, 13=6.8m/px, 14=3.4m/px, 15=1.7m/px
-function maxZoom() { return 13; }
+function maxZoom() { return 11.5; }
 
 function parseFilters(query) {
   const types = query.types === undefined ? [...TYPES] : String(query.types).split(',').filter(Boolean);

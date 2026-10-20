@@ -1,7 +1,10 @@
 const {publicViewerTiming}=require('./publicViewerTiming');
 const {buildPublicDetailLookups}=require('./publicDetailLookups');
+const publicTranslations=require('./publicViewerTranslations');
 const {spatialSql,CONDITIONAL_FIELDS}=require('./publicViewerFilters');
 const express = require('express');
+// Minimum longest bounding-box dimension, measured in CSS pixels at the requested zoom.
+const MIN_GEOMETRY_PIXELS = 8;
 const {TYPES,RS,localPreview,publicationAllowed,maxZoom,parseFilters,parseBbox,recordKey} = require('./publicViewerPolicy');
 function publicRecord(r) {
   return {record_type:r.record_type,source_row_id:r.source_row_id,caal_id:r.caal_id,
@@ -22,6 +25,14 @@ function catalogueFilter(query,type,after=null) {
 }
 function createPublicRouter(db, env=process.env) {
   const router=express.Router();const clients=new Map();let policyCache=null;let policyTime=0;let policyPromise=null;let detailLookupCache=null;let detailLookupTime=0;let detailLookupPromise=null;
+  const smallCaches=new Map();
+  async function cachedSmall(key,sql,stage){
+    let entry=smallCaches.get(key);
+    if(!entry||Date.now()-entry.time>300000){
+      entry={time:Date.now()};entry.promise=db.query(sql,[],{signal:null,stage}).then(r=>r.rows).catch(error=>{if(smallCaches.get(key)===entry)smallCaches.delete(key);throw error;});smallCaches.set(key,entry);
+    }
+    return entry.promise;
+  }
   router.use(publicViewerTiming);
   const wrap=fn=>async(req,res)=>{
     try {await fn(req,res);} catch(error) {
@@ -65,12 +76,20 @@ function createPublicRouter(db, env=process.env) {
     next();
   });
   router.get('/countries',wrap(async(req,res)=>{
-    const rows=(await db.query("SELECT filter_country FROM viewer_public.v_countries ORDER BY filter_country LIMIT 100")).rows;
-    res.json({ok:true,countries:rows.map(r=>r.filter_country)});
+    const [rows,labels]=await Promise.all([
+      cachedSmall('countries','SELECT filter_country FROM viewer_public.v_countries ORDER BY filter_country LIMIT 100','countries'),
+      cachedSmall('country_labels',"SELECT item FROM viewer_public.v_detail_lookups WHERE family='monuments' AND lookup_name='country'",'country_labels')]);
+    const lang=publicTranslations.language(req.query.lang);
+    res.json({ok:true,countries:rows.map(r=>r.filter_country),options:rows.map(r=>{const value=r.filter_country,needle=String(value).trim().toLowerCase();const raw=labels.map(row=>row.item||{}).find(row=>[row.canonical_value,row.label_en,row.display_en,row.en_label,row.value].some(v=>String(v??'').trim().toLowerCase()===needle));return {value,label:publicTranslations.resolve(raw,lang,value)};})});
   }));
   router.get('/lookups',wrap(async(req,res)=>{
-    const rows=(await db.query('SELECT concept_id,parent_id,label_en,display_en,sort_order FROM viewer_public.v_site_type_context ORDER BY sort_order NULLS LAST,concept_id')).rows;
-    res.json({ok:true,site_types:rows,field_applicability:CONDITIONAL_FIELDS});
+    const rows=await cachedSmall('site_types','SELECT concept_id,parent_id,label_en,display_en,sort_order,translations FROM viewer_public.v_site_type_translations ORDER BY sort_order NULLS LAST,concept_id','site_type_translations');
+    const lang=publicTranslations.language(req.query.lang);
+    res.json({ok:true,language:lang,site_types:rows.map(row=>({...row,label:publicTranslations.resolve({...row,...row.translations},lang,row.concept_id),display_label:publicTranslations.resolve({...row,...row.translations},lang,row.concept_id)})),field_applicability:CONDITIONAL_FIELDS});
+  }));
+  router.get('/translations',wrap(async(req,res)=>{
+    const rows=await cachedSmall('translations','SELECT scope,label_key,display_en,display_ru,display_zh,display_kk,display_ky,display_tg,display_tk,display_uz FROM viewer_public.v_translations','ui_translations');
+    res.json({ok:true,languages:publicTranslations.LANGUAGES,rows});
   }));
   router.get('/detail-lookups',wrap(async(req,res)=>{
     if(!detailLookupCache||Date.now()-detailLookupTime>300000){
@@ -85,6 +104,30 @@ function createPublicRouter(db, env=process.env) {
     const type=types[0];const {values,where}=catalogueFilter(req.query,type);
     const row=(await db.query(`SELECT count(*)::integer AS count FROM viewer_public.v_resource_count_catalogue c WHERE ${where}`,values,{stage:'catalogue_count'})).rows[0];
     res.json({ok:true,record_type:type,count:Number(row?.count||0)});
+  }));
+  router.get('/bounds',wrap(async(req,res)=>{
+    const f=parseFilters(req.query),values=[...f.values];
+    let where=f.where+' AND footprint_4326 IS NOT NULL AND NOT ST_IsEmpty(footprint_4326) AND anchor_4326 IS NOT NULL';
+    // Same spatial predicates as the filtered catalogue/list. Bounds include every
+    // matching mapped record, with no pagination and no full geometry serialization.
+    if(f.spatialPolygon)where+=' AND '+spatialSql(f.spatialPolygon,values,'footprint_4326');
+    else if(req.query.bbox!==undefined){
+      const box=parseBbox(req.query.bbox),n=values.length;values.push(...box);
+      const envelope=`ST_MakeEnvelope($${n+1},$${n+2},$${n+3},$${n+4},4326)`;
+      where+=` AND footprint_4326 && ${envelope} AND ST_Intersects(footprint_4326,${envelope})`;
+    }
+    const row=(await db.query(`WITH extent AS (
+      SELECT count(*)::integer AS mapped_records,ST_Extent(footprint_4326) AS box
+      FROM viewer_public.v_resource_map_anchors WHERE ${where}
+    ) SELECT mapped_records,ST_XMin(box) AS west,ST_YMin(box) AS south,
+      ST_XMax(box) AS east,ST_YMax(box) AS north FROM extent`,values,{stage:'results_bounds'})).rows[0];
+    const count=Number(row?.mapped_records||0);
+    if(!count)return res.json({ok:true,mapped_records:0,bbox:null});
+    const bbox=[row.west,row.south,row.east,row.north].map(Number);
+    if([row.west,row.south,row.east,row.north].some(v=>v===null||v===undefined)||
+      !bbox.every(Number.isFinite)||bbox[0]>bbox[2]||bbox[1]>bbox[3])throw Error('invalid_results_bounds');
+    const clamp=(v,min,max)=>Math.min(max,Math.max(min,v));
+    res.json({ok:true,mapped_records:count,bbox:[clamp(bbox[0],-180,180),clamp(bbox[1],-85.0511,85.0511),clamp(bbox[2],-180,180),clamp(bbox[3],-85.0511,85.0511)]});
   }));
   router.get('/records',wrap(async(req,res)=>{
     // Read ordered, bounded pages from one type at a time. No cross-type global sort or OFFSET scan.
@@ -177,22 +220,35 @@ function createPublicRouter(db, env=process.env) {
     const geometries=new Map();
     const wanted=rows.filter(r=>Number(r.count)===1&&(RS.has(r.record_type)||(r.source_geometry_type&&r.source_geometry_type!=='POINT')))
       .map(r=>({record_type:r.record_type,source_row_id:r.source_row_id}));
-    if(wanted.length){
-      const types=[...new Set(wanted.map(r=>r.record_type))];
-      const ids=[...new Set(wanted.map(r=>r.source_row_id))];
-      const shapes=(await mapQuery('individual_shapes',`SELECT g.record_type,g.source_row_id,
-        CASE WHEN greatest(
-          ST_XMax(box2d(ST_Transform(ST_Envelope(g.geom_4326),3857)))-ST_XMin(box2d(ST_Transform(ST_Envelope(g.geom_4326),3857))),
-          ST_YMax(box2d(ST_Transform(ST_Envelope(g.geom_4326),3857)))-ST_YMin(box2d(ST_Transform(ST_Envelope(g.geom_4326),3857)))
-        ) >= $4::double precision THEN ST_AsGeoJSON(g.geom_4326,8)::json ELSE NULL END AS geometry
-        FROM viewer_public.v_resource_map_geometry g
-        JOIN jsonb_to_recordset($1::jsonb) wanted(record_type text,source_row_id text)
-          ON wanted.record_type=g.record_type AND wanted.source_row_id=g.source_row_id
-        WHERE g.record_type=ANY($2::text[]) AND g.source_row_id=ANY($3::text[])`,
-        [JSON.stringify(wanted),types,ids,metresPerPixel*3])).rows;
-      for(const shape of shapes)if(shape.geometry)geometries.set(shape.record_type+'/'+shape.source_row_id,shape.geometry);
+    // Group by type so PostgreSQL can prune the other public source branches.
+    // Bound each query without dropping any records from the final response.
+    const shapeBatchSize=500;
+    const byType=new Map();
+    for(const item of wanted){
+      if(!byType.has(item.record_type))byType.set(item.record_type,new Set());
+      byType.get(item.record_type).add(item.source_row_id);
     }
-    res.json({ok:true,clustered:rows.some(r=>Number(r.count)>1),geometry_min_pixels:3,
+    for(const [type,idSet] of byType){
+      const ids=[...idSet];
+      for(let offset=0;offset<ids.length;offset+=shapeBatchSize){
+        const batch=ids.slice(offset,offset+shapeBatchSize);
+        const shapes=(await mapQuery('individual_shapes:'+type+':'+(1+offset/shapeBatchSize),
+          `WITH sized AS MATERIALIZED (
+            SELECT g.record_type,g.source_row_id,g.geom_4326,
+              box2d(ST_Transform(ST_Envelope(g.geom_4326),3857)) AS bounds_3857
+            FROM viewer_public.v_resource_map_geometry_fast g
+            WHERE g.record_type=$1::text AND g.source_row_id=ANY($2::text[])
+          )
+          SELECT record_type,source_row_id,
+            CASE WHEN greatest(
+              ST_XMax(bounds_3857)-ST_XMin(bounds_3857),
+              ST_YMax(bounds_3857)-ST_YMin(bounds_3857)
+            ) >= $3::double precision THEN ST_AsGeoJSON(geom_4326,8)::json ELSE NULL END AS geometry
+          FROM sized`,[type,batch,metresPerPixel*MIN_GEOMETRY_PIXELS])).rows;
+        for(const shape of shapes)if(shape.geometry)geometries.set(shape.record_type+'/'+shape.source_row_id,shape.geometry);
+      }
+    }
+    res.json({ok:true,clustered:rows.some(r=>Number(r.count)>1),geometry_min_pixels:MIN_GEOMETRY_PIXELS,
       features:rows.map(r=>({type:'Feature',geometry:geometries.get(r.record_type+'/'+r.source_row_id)||r.geometry,properties:{
         record_type:r.record_type,count:r.count,cluster_id:r.cluster_id,source_row_id:r.source_row_id,caal_id:r.caal_id,
         display_label:RS.has(r.record_type)?r.caal_id:r.display_label}}))});
