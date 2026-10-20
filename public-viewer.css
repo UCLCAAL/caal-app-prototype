@@ -169,3 +169,6 @@
 .public-header-actions{display:flex;align-items:center;justify-content:flex-end;gap:.75rem;}
 .public-language-selector select{font:inherit;padding:.3rem .45rem;border:1px solid #aebbb5;border-radius:4px;background:#fff;color:#183d30;max-width:10rem;}
 @media(max-width:600px){.public-language-selector>span{display:none;}.public-language-selector select{max-width:7rem;}}
+#publicPreview {
+  display: none !important;
+}
