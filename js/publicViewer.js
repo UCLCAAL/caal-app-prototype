@@ -288,6 +288,19 @@
   }
   function resetPaging(){state.offset=0;state.cursor=null;state.nextCursor=null;state.cursorHistory=[];}
 
+  let searchAuditTimer,lastAuditedSearch=null;
+  function recordSearch(trigger){
+    clearTimeout(searchAuditTimer);
+    const params=filters();const text=(params.get('q')||'').trim();
+    if(!text||text.length>150)return;
+    if(el('publicMapFilter').checked&&state.map&&!state.areaPolygon)params.set('bbox',bounds().join(','));
+    const signature=params.toString();
+    if(signature===lastAuditedSearch)return;
+    lastAuditedSearch=signature;
+    void fetch(api+'/search-events',{method:'POST',credentials:'omit',headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({query:Object.fromEntries(params),trigger,language:I?.language()||'en'})
+    }).catch(()=>{});
+  }
   function reload(){cancelResultsLocate();clearHover();resetPaging();state.filtersUI?.render();void loadMap();void loadList();}
 
   async function init(){
@@ -299,11 +312,11 @@
     for(const input of el('publicTypes').querySelectorAll('input')){
       input.disabled=!allowed.has(input.value);input.checked=!input.disabled;input.onchange=reload;
     }
-    el('publicSearch').onsubmit=e=>{e.preventDefault();reload();};el('publicQuery').oninput=()=>{clearTimeout(searchTimer);searchTimer=setTimeout(reload,400);};el('publicMapFilter').onchange=reload;
+    el('publicSearch').onsubmit=e=>{e.preventDefault();clearTimeout(searchTimer);recordSearch('submit');reload();};el('publicQuery').oninput=()=>{clearTimeout(searchTimer);clearTimeout(searchAuditTimer);if(!el('publicQuery').value.trim())lastAuditedSearch=null;searchTimer=setTimeout(reload,400);searchAuditTimer=setTimeout(()=>recordSearch('settled_input'),1500);};el('publicMapFilter').onchange=reload;
     el('publicRefreshGroups').onclick=reload;
     el('publicResultsLocate').onclick=zoomToResults;
     el('publicRetryResults').onclick=()=>loadList();
-    el('publicClear').onclick=()=>{el('publicQuery').value='';state.filtersUI?.clear();state.areaPolygon=null;state.tools?.clearArea();el('publicMapFilter').checked=false;el('publicTypes').querySelectorAll('input').forEach(n=>n.checked=!n.disabled);reload();};
+    el('publicClear').onclick=()=>{clearTimeout(searchAuditTimer);lastAuditedSearch=null;el('publicQuery').value='';state.filtersUI?.clear();state.areaPolygon=null;state.tools?.clearArea();el('publicMapFilter').checked=false;el('publicTypes').querySelectorAll('input').forEach(n=>n.checked=!n.disabled);reload();};
     el('publicClose').onclick=()=>{++state.detailSequence;state.detailController?.abort();state.selected=null;clearHover();detailsUI?.clear();if(mapPausedForDetails){mapPausedForDetails=false;void loadMap();}state.tools?.setSelected(null,{});window.viewerDetailPanel?.clear();document.querySelectorAll('.public-record').forEach(b=>b.classList.remove('is-selected'));el('publicDetails').replaceChildren(uiNode('p',"public_select_a_record_to_explore_its_details",'Select a record to explore its details.'));el('publicClose').hidden=true;};
     state.filtersUI=window.createPublicViewerFiltersUI({onChange:reload,getTypes:()=>[...el('publicTypes').querySelectorAll('input:checked')].map(i=>i.value),getText:()=>el('publicQuery').value.trim(),getArea:()=>state.areaPolygon,clearArea:()=>{state.areaPolygon=null;state.tools?.clearArea();},get});
     state.groupsUI=window.createPublicViewerGroups({

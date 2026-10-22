@@ -7,18 +7,18 @@ window.createPublicViewerDetails=({get,onOpen,onLocate,onShowRelated,onClearRela
  const I=window.publicViewerI18n;
  const t=(key,fallback)=>I?.t(key,fallback)||(key==='nav_monuments'?'Monuments':fallback||key);
  const vLabel=(key,fallback)=>I?.field(key,fallback,activeRecord?.identity.record_type)||({'Date of Recording':'Date','Still under CopyrightYN':'Still under Copyright?','Resource':'DOI'}[key]||fallback||key);
+ if(!document.getElementById('public-readonly-layout-style-v2')){const style=document.createElement('style');style.id='public-readonly-layout-style-v2';style.textContent='#publicDetails .public-structured-value,#publicDetails .public-structured-value *{white-space:normal;}#publicDetails .detail-value.public-structured-value{height:auto;min-height:0;}#publicDetails .detail-value.public-readonly-list{white-space:normal;min-height:0;height:auto;font-size:inherit;}#publicDetails .public-readonly-list ul{margin:0;padding-block:0;padding-inline-start:1.1rem;min-height:0;height:auto;}#publicDetails .public-readonly-list li{margin:.15rem 0;min-height:0;line-height:1.45;}';document.head.append(style);}
  const fullLocationTypes=new Set(['institution','cartography','dataset']);
  const internalFields=/(password|token|secret|created_by|updated_by|deleted_by|workspace_code|^id$|digital object url|^(geom|geometry|geom_4326|centroid_4326)$)/i;
  const locationFields=/(geom|centroid|latitude|longitude|coordinate|easting|northing|altitude|location|address|bbox|wkt|wkb|geohash|projection|transformation|^(lat|lon|lng|x|y|srid|srs)$)/i;
- const fieldBlocked=(type,key)=>internalFields.test(key)||(!fullLocationTypes.has(type)&&locationFields.test(key));
+ const fieldBlocked=(type,key)=>internalFields.test(key)||(!(type==='monument'&&key==='Location Confidence')&&!fullLocationTypes.has(type)&&locationFields.test(key));
  const safeFields=(type,raw)=>Object.fromEntries(Object.entries(raw||{}).filter(([key])=>!fieldBlocked(type,key)));
  let activeRecord=null,activeHost=null,lookupPromise=null,lookupsUnavailable=false,lookupsReady=false;
  const viewerLookupOptions=name=>[...(viewerMonumentLookups[name]||[]),...(viewerArchiveLookups[name]||[])];
  const viewerOptionLabel=item=>item?.label??item?.display_label??item?.value;
  const viewerLanguageDisplayName=value=>{if(!viewerHasDisplayValue(value))return value;const code=String(value).trim().toLowerCase();try{return new Intl.DisplayNames([I?.locale()||'en'],{type:'language'}).of(code)||value;}catch{return value;}};
  const renderDetailItem=(...args)=>renderViewerDetailItem(...args);
-
- function viewerInstitutionCoordinate(record, axis) {
+function viewerInstitutionCoordinate(record, axis) {
   const fieldName =
     axis === "longitude"
       ? "Longitude"
@@ -385,6 +385,7 @@ const VIEWER_MONUMENT_DETAIL_GROUPS = [
       "Country",
       "Region",
       "Classification",
+      "Location Confidence",
       "CAAL_ID",
       "Internal Reference",
       "External Reference",
@@ -611,6 +612,9 @@ const VIEWER_RISK_RATING = {
 
 function renderViewerField(raw, fieldName, record = null) {
   const value = raw?.[fieldName];
+  if(fieldName==='Location Confidence'&&record?.identity?.record_type==='monument'){
+    return renderViewerDetailItem(vLabel(fieldName,fieldName),viewerTranslatedFieldValue(record,fieldName,value));
+  }
 
   if (!hasViewerFieldValue(raw, fieldName)) {
     return "";
@@ -2726,20 +2730,10 @@ function renderViewerValueList(label, values) {
     ? values.map((value) => String(value || "").trim()).filter(Boolean)
     : [];
 
-  const html = cleanValues.length
-    ? `
-      <ul class="detail-value-list">
-        ${cleanValues.map((value) => `<li>${viewerSafeDisplayValue(value)}</li>`).join("")}
-      </ul>
-    `
+  const html=cleanValues.length
+    ? `<ul class="detail-value-list">${cleanValues.map(value=>`<li>${viewerSafeDisplayValue(value)}</li>`).join('')}</ul>`
     : viewerSafeDisplayValue(null);
-
-  return `
-    <div class="detail-item full-width">
-      <span class="detail-label">${escapeHtml(label)}</span>
-      <div class="detail-value">${html}</div>
-    </div>
-  `;
+  return `<div class="detail-item full-width"><span class="detail-label">${escapeHtml(label)}</span><div class="detail-value public-readonly-list">${html}</div></div>`;
 }
 
 function renderViewerMonumentMainGroup(raw, record) {
@@ -2900,6 +2894,13 @@ function renderViewerMonumentMeasurementsGroup(raw) {
   const relatedVisibility=Object.fromEntries([...host.querySelectorAll('[data-public-related-visibility]')].map(i=>[i.dataset.publicRelatedVisibility,i.checked]));
   const title=['rs3_poly','rs3_line','rs3_group'].includes(record.identity.record_type)?record.identity.caal_id:viewerRecordTitle(record);
   host.innerHTML=`<div class="record-title"><div class="record-title-actions record-title-actions-topright"><button type="button" class="icon-action-btn record-title-icon-btn" data-public-detail-target title="Centre on map" aria-label="Centre on map"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true"><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="2"/><path d="M12 2v4m0 12v4M2 12h4m12 0h4"/></svg></button></div><div class="record-title-main"><h3>${escapeHtml(title)}</h3><p class="copyable-field monument-title-caal-id"><span class="copyable-field-text">${escapeHtml(record.identity.caal_id)}</span><button type="button" class="copy-field-btn" data-public-copy title="Copy to clipboard" aria-label="Copy CAAL_ID"><svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><rect x="8" y="8" width="12" height="13" rx="2"/><path d="M16 8V4a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h4"/></svg></button></p></div></div><div class="group-stack">${renderViewerDetailGroups(record)}${!VIEWER_DETAIL_GROUPS[record.identity.record_type]?renderViewerRelatedResourcesGroup(record):''}</div>${!lookupsReady?'<p class="section-empty">Loading vocabulary labels...</p>':lookupsUnavailable?'<p class="section-empty">Some vocabulary labels could not be loaded; stored values are shown.</p>':''}`;
+  // Rich display widgets inherit pre-wrap from text values unless reset explicitly.
+  // Keep descriptive text's own line breaks, compact only structured values.
+  for(const value of host.querySelectorAll('.detail-value')){
+    if(value.querySelector('ul,ol,.viewer-rating-slider,.boolean-display,.viewer-indicator-grid')){
+      value.classList.add('public-structured-value');
+    }
+  }
   I?.fragment(host,record.identity.record_type);
   host.querySelector('[data-public-detail-target]').onclick=()=>onLocate(record.public_record);
   host.querySelector('[data-public-copy]').onclick=async event=>{const button=event.currentTarget;try{await navigator.clipboard.writeText(record.identity.caal_id);button.title='CAAL_ID copied';}catch{button.title='Copy unavailable in this browser';}};

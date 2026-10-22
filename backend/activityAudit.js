@@ -17,13 +17,14 @@ function requestIdentity(req) {
 function createActivityAudit(pool, {flushMs = 1000, maxQueue = 1000, batchSize = 100,
   logger = console,ipLocation=getDefaultIpLocation()} = {}) {
   let queue = [];
+  let searchQueue = [];
   let flushing = false;
   let dropped = 0;
   let failed = 0;
   const locationQueue=new Set(),located=new Set();let locationFailed=0;
   function queueLocation(ip){if(ipLocation&&ip&&!located.has(ip)&&locationQueue.size<maxQueue)locationQueue.add(ip);}
   async function flush() {
-    if (flushing || (!queue.length&&!locationQueue.size)) return;
+    if (flushing || (!queue.length&&!locationQueue.size&&!searchQueue.length)) return;
     flushing = true;
     const batch = queue.splice(0, batchSize);
     try {
@@ -32,6 +33,10 @@ function createActivityAudit(pool, {flushMs = 1000, maxQueue = 1000, batchSize =
       failed += batch.length;
       logger.error("Activity audit batch failed", {events: batch.length, code: error.code});
     }
+    try {
+      const searches=searchQueue.splice(0,batchSize);
+      if(searches.length)await pool.query('SELECT app_audit.record_public_searches($1::jsonb)',[JSON.stringify(searches)]);
+    }catch(error){logger.error('Public search audit batch failed',{code:error.code});}
     try {
       const ips=[...locationQueue].slice(0,100);for(const ip of ips)locationQueue.delete(ip);
       const locations=[];for(const ip of ips){const row=await ipLocation.lookup(ip);if(row)locations.push(row);}
@@ -46,6 +51,11 @@ function createActivityAudit(pool, {flushMs = 1000, maxQueue = 1000, batchSize =
   timer.unref?.();
 
   function middleware(req, res, next) {
+    req.recordPublicSearch = event => {
+      if(searchQueue.length>=maxQueue){logger.warn('Public search audit queue full');return false;}
+      const identity=requestIdentity(req);queueLocation(identity.ip_address);
+      searchQueue.push({...event,...identity,occurred_at:new Date().toISOString()});return true;
+    };
     const path = String(req.originalUrl || req.url || "").split("?")[0];
     const page = ["/", "/index.html", "/home.html", "/monuments.html", "/archive.html",
       "/viewer.html", "/public-viewer.html"].includes(path);
@@ -85,7 +95,7 @@ function createActivityAudit(pool, {flushMs = 1000, maxQueue = 1000, batchSize =
     }
   }
   return {middleware, successfulLogin, flush,
-    stats: () => ({queued: queue.length, dropped, failed,locationQueued:locationQueue.size,locationFailed}),
+    stats: () => ({searchQueued:searchQueue.length,queued: queue.length, dropped, failed,locationQueued:locationQueue.size,locationFailed}),
     close: async () => { clearInterval(timer); await flush(); }};
 }
 

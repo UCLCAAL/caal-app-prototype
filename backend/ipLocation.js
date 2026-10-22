@@ -30,18 +30,19 @@ function locationRecord(ip,data,{source='local MMDB',version='unspecified'}={}) 
 }
 function createIpLocation({file=process.env.GEOIP_DB_PATH,source=process.env.GEOIP_SOURCE||'local MMDB',
   version=process.env.GEOIP_DB_VERSION,openReader,logger=console}={}) {
-  if(!file)return null;
-  let readerPromise,unavailable=false;
+  if(!file){logger.warn?.('IP location enrichment disabled: GEOIP_DB_PATH is not set');return null;}
+  file=path.isAbsolute(file)?file:path.resolve(__dirname,file);
+  let readerPromise,unavailableUntil=0;
   const identity={source,version:version||path.basename(file)};
   async function lookup(ip) {
     const value=normaliseIp(ip);if(!value)return null;
     if(!isPublicIp(value))return locationRecord(value,null,identity);
-    if(unavailable)return null;
+    if(Date.now()<unavailableUntil)return null;
     try {
       readerPromise??=openReader?Promise.resolve(openReader(file)):require('maxmind').open(file,{cache:{max:2000}});
       const reader=await readerPromise;
       return locationRecord(value,reader.get(value),identity);
-    }catch(error){unavailable=true;logger.error('Local IP location database unavailable',{code:error.code||'GEOIP_LOOKUP_ERROR'});return null;}
+    }catch(error){unavailableUntil=Date.now()+60000;readerPromise=null;logger.error('Local IP location database unavailable',{code:error.code||'GEOIP_LOOKUP_ERROR',file});return null;}
   }
   return {lookup,source:identity.source,version:identity.version};
 }

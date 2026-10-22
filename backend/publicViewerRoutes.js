@@ -70,6 +70,7 @@ function createPublicRouter(db, env=process.env) {
     max_zoom:maxZoom(),record_types:TYPES,
     exact_map_positions:true
   }})));
+  require('./publicSearchAudit').mountPublicSearchAudit(router);
   // Explicitly reject exports and writes even if a future handler is added beneath this middleware.
   router.use((req,res,next)=>{
     if(req.method!=='GET' || /^\/(export|download)(\/|$)/.test(req.path))return res.status(403).json({ok:false,error:'public_view_only'});
@@ -86,6 +87,15 @@ function createPublicRouter(db, env=process.env) {
     const rows=await cachedSmall('site_types','SELECT concept_id,parent_id,label_en,display_en,sort_order,translations FROM viewer_public.v_site_type_translations ORDER BY sort_order NULLS LAST,concept_id','site_type_translations');
     const lang=publicTranslations.language(req.query.lang);
     res.json({ok:true,language:lang,site_types:rows.map(row=>({...row,label:publicTranslations.resolve({...row,...row.translations},lang,row.concept_id),display_label:publicTranslations.resolve({...row,...row.translations},lang,row.concept_id)})),field_applicability:CONDITIONAL_FIELDS});
+  }));
+  router.get('/location-confidence',wrap(async(req,res)=>{
+    const [values,lookupRows]=await Promise.all([
+      cachedSmall('location_confidence_values','SELECT DISTINCT location_confidence AS value FROM viewer_public.v_monument_location_confidence ORDER BY location_confidence NULLS LAST','location_confidence_values'),
+      cachedSmall('location_confidence_labels',"SELECT family,lookup_name,item FROM viewer_public.v_detail_lookups WHERE family='monuments' AND lookup_name='location_confidence'",'location_confidence_labels')
+    ]);
+    const options=buildPublicDetailLookups(lookupRows,req.query.lang).monuments.location_confidence||[];
+    const optionsFor=value=>options.find(o=>[o.value,...Object.values(o.raw||{})].some(v=>v!==null&&typeof v!=='object'&&String(v).trim()===value));
+    res.json({ok:true,options:values.map(row=>({value:row.value??'__missing__',label:row.value===null?null:(optionsFor(row.value)?.label||row.value),missing:row.value===null}))});
   }));
   router.get('/translations',wrap(async(req,res)=>{
     const rows=await cachedSmall('translations','SELECT scope,label_key,display_en,display_ru,display_zh,display_kk,display_ky,display_tg,display_tk,display_uz FROM viewer_public.v_translations','ui_translations');
