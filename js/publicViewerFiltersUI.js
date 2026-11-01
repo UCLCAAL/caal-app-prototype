@@ -11,8 +11,21 @@
       const select=document.createElement('select');select.id='viewerFilterLocationConfidence';select.multiple=true;select.className='form-control chip-multiselect';
       group.append(label,chips,select);const anchor=el('viewerFilterCondition').closest('[data-filter-section="rs_assessments"]')||el('viewerFilterCondition').closest('.filter-group');anchor.parentNode.insertBefore(group,anchor);
     }
-    const confidenceGroup=el('viewerFilterLocationConfidence').closest('.filter-group'),rsSection=el('viewerFilterCondition').closest('[data-filter-section="rs_assessments"]');
-    if(rsSection&&confidenceGroup)rsSection.parentNode.insertBefore(confidenceGroup,rsSection);
+    const confidenceGroup = el('viewerFilterLocationConfidence').closest('.filter-group');
+    const rsSection = el('viewerFilterCondition').closest('[data-filter-section="rs_assessments"]');
+
+    if (rsSection && confidenceGroup) {
+      const section = document.createElement('div');
+      section.className = 'advanced-filter-section';
+      section.dataset.filterSection = 'monument_assessments';
+
+      const heading = document.createElement('h4');
+      heading.textContent = 'Monument assessments';
+      I?.bind(heading, 'viewer_monument_assessments', 'Monument assessments');
+
+      section.append(heading, confidenceGroup);
+      rsSection.parentNode.insertBefore(section, rsSection);
+    }
     const controls=[['viewerFilterCountry','countries','Country','country'],['viewerFilterLocationConfidence','locationConfidence','Location Confidence','location_confidence'],['viewerFilterMonumentType','monumentTypes','Monument type','monument_types'],['viewerFilterCondition','condition','Condition','condition_levels'],['viewerFilterDeteriorationCause','deteriorationCause','Deterioration','deterioration_causes'],['viewerFilterRiskType','riskType','Risk','risk_levels']];
     let applicability={location_confidence:['monument'],country:['rs3_poly','rs3_line','rs3_group','institution','vernacular','monument','archive'],monument_types:['rs3_poly','rs3_line','rs3_group','monument'],condition_levels:['rs3_poly','rs3_line'],deterioration_causes:['rs3_poly','rs3_line'],risk_levels:['rs3_poly','rs3_line']};
     const make=(tag,text,cls)=>{const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n;};
@@ -85,7 +98,24 @@
       el('publicLocationConfidenceLabel').textContent=I?.field('Location Confidence','Location Confidence','monument')||t('location_confidence','Location Confidence');
       try{const data=await get('/location-confidence');if(version!==confidenceVersion)return;
         const select=el('viewerFilterLocationConfidence'),chosen=new Set(selected(select.id).map(o=>o.value));
-        select.replaceChildren();for(const row of data.options||[]){const option=make('option',row.missing?t('none_recorded','None recorded'):row.label);option.value=row.value;option.selected=chosen.has(row.value);select.append(option);}render();
+        const confidenceRank = row => {
+          if (row.missing) return 6;
+          const value = String(row.value ?? row.label ?? '').trim().toLowerCase();
+
+          return ({
+            high: 0,
+            medium: 1,
+            m: 1,
+            low: 2,
+            'no coords': 3,
+            unknown: 4
+          })[value] ?? 5;
+        };
+
+        const orderedOptions = [...(data.options || [])].sort(
+          (a, b) => confidenceRank(a) - confidenceRank(b)
+        );
+        select.replaceChildren();for (const row of orderedOptions) {const option=make('option',row.missing?t('none_recorded','None recorded'):row.label);option.value=row.value;option.selected=chosen.has(row.value);select.append(option);}render();
       }catch(error){console.error('Public Viewer location confidence lookup failed',error);}
     }
     I?.onChange(()=>{void loadConfidence();return loadTree();});void loadConfidence();void loadTree();render();return {appendParams,render,clear};

@@ -5,8 +5,12 @@
 <link rel="stylesheet" href="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.css">
 <link rel="stylesheet" href="style.css"><link rel="stylesheet" href="public-viewer.css"><link rel="stylesheet" href="viewer-detail-panel.css">
 </head><body class="public-viewer">
-<header class="app-header"><div class="app-brand"><img src="assets/logo_plain.png" alt="CAAL" class="app-brand-logo"><div class="app-brand-text"><h1 data-public-i18n="CAAL Public Viewer">CAAL Public Viewer</h1><p data-public-i18n="Resource viewer">Resource viewer</p></div></div><div class="public-header-actions"><span data-public-i18n="Local preview" id="publicPreview" class="scope-badge" hidden>Local preview</span><label class="public-language-selector"><span data-public-i18n="Language" data-i18n="language_label">Language</span><select data-i18n-aria-label="language_label" aria-label="Language" id="publicLanguage"></select></label></div></header>
-<main class="workspace-shell monuments-workspace viewer-workspace viewer-drawer-shell details-collapsed" data-viewer-drawer="">
+<header class="app-header"><div class="app-brand"><img src="assets/logo_plain.png" alt="CAAL" class="app-brand-logo"><div class="app-brand-text"><h1 data-public-i18n="CAAL Public Viewer">CAAL Public Viewer</h1><p data-public-i18n="Resource viewer">Resource viewer</p></div></div><nav class="public-page-tabs" role="tablist" aria-label="Public Viewer pages">
+<button type="button" id="publicTabViewer" role="tab" aria-controls="publicViewerPage" aria-selected="true" data-public-page="viewer">Viewer</button>
+<button type="button" id="publicTabAbout" role="tab" aria-controls="publicAboutPage" aria-selected="false" tabindex="-1" data-public-page="about">About</button>
+<button type="button" id="publicTabFeedback" role="tab" aria-controls="publicFeedbackPage" aria-selected="false" tabindex="-1" data-public-page="feedback">Feedback</button>
+</nav><div class="public-header-actions"><span data-public-i18n="Local preview" id="publicPreview" class="scope-badge" hidden>Local preview</span><label class="public-language-selector"><span data-public-i18n="Language" data-i18n="language_label">Language</span><select data-i18n-aria-label="language_label" aria-label="Language" id="publicLanguage"></select></label></div></header>
+<main id="publicViewerPage" role="tabpanel" aria-labelledby="publicTabViewer" class="workspace-shell monuments-workspace viewer-workspace viewer-drawer-shell details-collapsed" data-viewer-drawer="">
 <aside class="workspace-pane browse-pane"><div class="pane-header"><h2 data-public-i18n="Browse">Browse</h2><p data-public-i18n="Search and consult resource records">Search and consult resource records</p></div><div class="pane-body">
 <form id="publicSearch"><div class="search-box search-box-stacked"><label data-public-i18n="Search" for="publicQuery">Search</label><div class="public-search-row"><input data-i18n-placeholder="search_caal_database" id="publicQuery" maxlength="150" placeholder="Search CAAL database"><button data-public-i18n="Search" class="action-btn" type="submit">Search</button></div></div>
 <div class="results-panel viewer-layer-panel" id="publicTypes">
@@ -547,5 +551,29 @@
 <div class="map-underbar"><div data-public-i18n="Map loading..." class="map-status-line" id="publicMapStatus" role="status">Map loading...</div></div></section>
 <aside data-public-ui-aria-label="Record details" class="workspace-pane detail-pane" id="viewerDetailPane" aria-label="Record details" aria-hidden="true" inert=""><div class="pane-header pane-header-inline"><div><h2 data-public-i18n="Record Details">Record Details</h2><div class="detail-action-bar"><button data-public-i18n="Close record" class="action-btn" id="publicClose" type="button" hidden>Close record</button></div></div><button data-public-ui-aria-label="Minimise record details" data-public-ui-title="Minimise record details" id="viewerDetailMinimise" class="action-btn viewer-detail-minimise" type="button" aria-label="Minimise record details" title="Minimise record details" aria-controls="viewerDetailPane"><span data-public-i18n="Minimise">Minimise</span>›</button></div><div class="pane-body" id="publicDetails" aria-live="polite"><div class="empty-state"><p data-public-i18n="No record selected yet.">No record selected yet.</p></div></div></aside>
 </main>
+<section id="publicAboutPage" class="public-information-page" role="tabpanel" aria-labelledby="publicTabAbout" hidden>
+<div class="public-information-layout"><article class="public-information-main">
+<h2>A live database</h2>
+<p>The <a href="https://uclcaal.org/" target="_blank" rel="noopener">Central Asian Archaeological Landscapes (CAAL) project</a> works with local partners to document archaeological sites across Central Asia through remote sensing and archival research.</p>
+<p>The inventory is continually reviewed and improved as new research, documentation and corrections become available. Individual records vary in completeness and precision.</p>
+<p>Coverage reflects the information currently recorded. A place without a mapped record should not be taken as evidence that heritage is absent.</p>
+<p>The inventory uses multilingual controlled vocabularies and thesauri to support consistent descriptions of archaeological sites and related resources. Explore the terminology and relationships between concepts in the <a href="https://vocab.uclcaal.org/" target="_blank" rel="noopener">CAAL Vocabulary Explorer</a>.</p>
+</article><aside class="public-information-sidebar"><h3>Have something to add?</h3><p>Corrections and supporting information help improve the inventory.</p><button type="button" class="action-btn" data-public-page-link="feedback">Contact the project</button><h3>Public access</h3><p>This release supports browsing and viewing. Data downloads are not available in this phase.</p></aside></div></section>
+<section id="publicFeedbackPage" class="public-information-page" role="tabpanel" aria-labelledby="publicTabFeedback" hidden>
+<div class="public-information-layout"><article class="public-information-main"><h2>Help improve the record</h2>
+<p>Send a correction, supporting information, data request or question to the CAAL project team.</p>
+<form id="publicFeedbackForm"><div class="public-feedback-row">
+<label for="feedbackName">Name<input id="feedbackName" name="name" autocomplete="name" maxlength="150" required></label>
+<label for="feedbackEmail">Email address<input id="feedbackEmail" name="email" type="email" autocomplete="email" maxlength="254" required></label></div>
+<div class="public-feedback-row"><label for="feedbackType">Feedback type<select id="feedbackType" name="feedback_type" required><option value="">Choose a feedback type</option><option value="general">General</option><option value="data_correction">Data correction</option><option value="supporting_information">Supporting information</option><option value="data_request">Data request</option><option value="technical_issue">Technical issue</option><option value="other">Other</option></select></label>
+<label for="feedbackCaalId">CAAL_ID (optional)<input id="feedbackCaalId" name="caal_id" maxlength="150" placeholder="e.g. Mon_KZ_IA-000172"></label></div>
+<p class="public-feedback-subject">Subject: <span id="feedbackSubject">[CAAL Web Viewer Feedback]</span></p>
+<label for="feedbackMessage">Message<textarea id="feedbackMessage" name="message" minlength="10" maxlength="10000" rows="7" required></textarea></label>
+<div class="public-feedback-honeypot" aria-hidden="true"><label>Leave this field empty<input name="website" tabindex="-1" autocomplete="off"></label></div>
+<p class="public-feedback-privacy">Your contact details and message will be stored by the CAAL project and used to review and respond to your feedback.</p>
+<button type="submit" class="action-btn" id="feedbackSubmit">Send feedback</button><p id="feedbackStatus" role="status" aria-live="polite"></p>
+</form></article><aside class="public-information-sidebar"><h3>What to include</h3><ul><li>The CAAL_ID for an existing record.</li><li>The correction or information you would like to share.</li><li>A reference or supporting source, where available.</li></ul><p>Please include any restrictions on sharing supporting information.</p></aside></div></section>
+
 <script src="https://unpkg.com/maplibre-gl@5.24.0/dist/maplibre-gl.js"></script><script src="js/publicViewerI18n.js"></script><script src="js/viewerDetailPanel.js"></script><script src="js/publicViewerFiltersUI.js"></script><script src="js/publicViewerTools.js"></script><script src="js/publicViewerGroups.js"></script><script src="js/publicViewerRelatedMap.js"></script><script src="js/publicViewerDetails.js"></script><script src="js/publicViewer.js"></script>
+<script src="js/publicViewerPages.js"></script>
 </body></html>

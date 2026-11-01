@@ -1,102 +1,55 @@
-const net = require("node:net");
 const {getDefaultIpLocation}=require('./ipLocation');
-
-function requestIdentity(req) {
-  const session = req.session?.appSession;
-  let ip = String(req.ip || req.socket?.remoteAddress || "");
-  if (ip.startsWith("::ffff:") && net.isIP(ip.slice(7)) === 4) ip = ip.slice(7);
-  return {
-    ip_address: net.isIP(ip) ? ip : null,
-    user_agent: String(req.get?.("user-agent") || "").slice(0, 1024),
-    user_id: session?.user?.user_id || null,
-    username: session?.user?.username || null,
-    workspace_code: session?.user?.workspace_code || null
-  };
+const {createAuditIdentity,canonicalIp,proxyIp}=require('./auditIdentity');
+const {isPublicIp}=require('./ipLocation');
+function classify(value){const ip=canonicalIp(value);return !ip?'invalid':proxyIp(ip)?'cloudflare':isPublicIp(ip)?'public':'private';}
+function createActivityAudit(pool,{flushMs=1000,maxQueue=1000,batchSize=100,logger=console,
+ ipLocation=getDefaultIpLocation(),secret=process.env.AUDIT_ID_SECRET,identityFactory=createAuditIdentity}={}){
+ const identify=identityFactory({secret,ipLocation});
+ let queue=[],flushing=false,pending=0,dropped=0,failed=0,diagnostics=0;
+ const jobs=new Set();
+ function enqueue(req,event){
+  if(queue.length+pending>=maxQueue){dropped++;return false;}
+  pending++;
+  // Capture request identity before session teardown; raw IP exists only during the in-memory lookup.
+  const captured={ip:req.ip,socket:{remoteAddress:req.socket?.remoteAddress},
+   session:{appSession:{user:{...req.session?.appSession?.user}}},get:()=>req.get?.('user-agent')};
+  const job=Promise.resolve().then(()=>identify(captured)).then(identity=>queue.push({...event,...identity}))
+   .catch(error=>{failed++;logger.error('Audit identity failed',{code:error.code||'IDENTITY_ERROR'});})
+   .finally(()=>{pending--;jobs.delete(job);});jobs.add(job);return true;
+ }
+ async function flush(){
+  if(flushing)return;flushing=true;
+  try{const batch=queue.splice(0,Math.min(100,batchSize));if(batch.length)
+   await pool.query('SELECT app_audit.record_private_events($1::jsonb)',[JSON.stringify(batch)]);
+  }catch(error){failed++;logger.error('Private activity audit batch failed',{code:error.code});}
+  finally{flushing=false;}
+ }
+ const timer=setInterval(()=>void flush(),flushMs);timer.unref?.();
+ function middleware(req,res,next){
+  if(process.env.AUDIT_PROXY_DIAGNOSTIC==='true'&&diagnostics<5){
+   diagnostics++;logger.info('Audit proxy diagnostic',{express_ip_kind:classify(req.ip),
+    socket_kind:classify(req.socket?.remoteAddress),
+    forwarded_chain_left_to_right:String(req.get?.('x-forwarded-for')||'').split(',').filter(Boolean).slice(0,10).map(x=>classify(x.trim())),
+    cf_connecting_ip_present:Boolean(req.get?.('cf-connecting-ip'))});
+  }
+  req.recordPublicSearch=event=>enqueue(req,{search_text:event.search_text,filters:event.filters,
+   trigger:event.trigger,language:event.language,event_kind:'public_search',occurred_at:new Date().toISOString()});
+  const path=String(req.originalUrl||req.url||'').split('?')[0];
+  const page=['/','/index.html','/home.html','/monuments.html','/archive.html','/viewer.html',
+   '/public-viewer.html','/about.html','/feedback.html'].includes(path);
+  const api=path.startsWith('/api/')&&!['/api/health','/api/test'].includes(path);
+  if(page||api){const start=process.hrtime.bigint();res.once('finish',()=>enqueue(req,{
+   occurred_at:new Date().toISOString(),event_kind:page?'page_request':'api_request',
+   http_method:String(req.method||'GET').slice(0,10),path:path.slice(0,512),status_code:res.statusCode,
+   duration_ms:Math.max(0,Math.round(Number(process.hrtime.bigint()-start)/1e6))}));}
+  next();
+ }
+ async function successfulLogin(req,session){
+  const copy={ip:req.ip,socket:req.socket,get: name=>req.get?.(name),session:{appSession:session}};
+  enqueue(copy,{event_kind:'login',occurred_at:new Date().toISOString()});
+ }
+ return {middleware,successfulLogin,flush,stats:()=>({queued:queue.length,pending,dropped,failed}),
+  close:async()=>{clearInterval(timer);await Promise.all([...jobs]);while(flushing)await new Promise(r=>setTimeout(r,10));
+   while(queue.length)await flush();}};
 }
-
-function createActivityAudit(pool, {flushMs = 1000, maxQueue = 1000, batchSize = 100,
-  logger = console,ipLocation=getDefaultIpLocation()} = {}) {
-  let queue = [];
-  let searchQueue = [];
-  let flushing = false;
-  let dropped = 0;
-  let failed = 0;
-  const locationQueue=new Set(),located=new Set();let locationFailed=0;
-  function queueLocation(ip){if(ipLocation&&ip&&!located.has(ip)&&locationQueue.size<maxQueue)locationQueue.add(ip);}
-  async function flush() {
-    if (flushing || (!queue.length&&!locationQueue.size&&!searchQueue.length)) return;
-    flushing = true;
-    const batch = queue.splice(0, batchSize);
-    try {
-      if(batch.length)await pool.query("SELECT app_audit.record_requests($1::jsonb)", [JSON.stringify(batch)]);
-    } catch (error) {
-      failed += batch.length;
-      logger.error("Activity audit batch failed", {events: batch.length, code: error.code});
-    }
-    try {
-      const searches=searchQueue.splice(0,batchSize);
-      if(searches.length)await pool.query('SELECT app_audit.record_public_searches($1::jsonb)',[JSON.stringify(searches)]);
-    }catch(error){logger.error('Public search audit batch failed',{code:error.code});}
-    try {
-      const ips=[...locationQueue].slice(0,100);for(const ip of ips)locationQueue.delete(ip);
-      const locations=[];for(const ip of ips){const row=await ipLocation.lookup(ip);if(row)locations.push(row);}
-      if(locations.length){await pool.query('SELECT app_audit.record_ip_locations($1::jsonb)',[JSON.stringify(locations)]);
-        for(const row of locations){located.add(row.ip_address);if(located.size>10000)located.delete(located.values().next().value);}}
-    }catch(error){locationFailed++;logger.error('IP location audit batch failed',{code:error.code});
-    }finally {
-      flushing = false;
-    }
-  }
-  const timer = setInterval(() => { void flush(); }, flushMs);
-  timer.unref?.();
-
-  function middleware(req, res, next) {
-    req.recordPublicSearch = event => {
-      if(searchQueue.length>=maxQueue){logger.warn('Public search audit queue full');return false;}
-      const identity=requestIdentity(req);queueLocation(identity.ip_address);
-      searchQueue.push({...event,...identity,occurred_at:new Date().toISOString()});return true;
-    };
-    const path = String(req.originalUrl || req.url || "").split("?")[0];
-    const page = ["/", "/index.html", "/home.html", "/monuments.html", "/archive.html",
-      "/viewer.html", "/public-viewer.html"].includes(path);
-    const api = path.startsWith("/api/") && !["/api/health", "/api/test"].includes(path);
-    if (!page && !api) return next();
-    const start = process.hrtime.bigint();
-    res.once("finish", () => {
-      if (queue.length >= maxQueue) {
-        dropped += 1;
-        if (dropped === 1 || dropped % 100 === 0) logger.warn("Activity audit queue full", {dropped});
-        return;
-      }
-      const identity=requestIdentity(req);queueLocation(identity.ip_address);
-      queue.push({
-        ...identity,
-        occurred_at: new Date().toISOString(),
-        event_kind: page ? "page_request" : "api_request",
-        http_method: String(req.method || "GET").slice(0, 10),
-        path: path.slice(0, 512),
-        status_code: res.statusCode,
-        duration_ms: Math.max(0, Math.round(Number(process.hrtime.bigint() - start) / 1e6))
-      });
-    });
-    next();
-  }
-
-  async function successfulLogin(req, session) {
-    const identity = requestIdentity(req);
-    queueLocation(identity.ip_address);
-    try {
-      await pool.query("SELECT app_audit.record_login($1, $2, $3, $4::inet, $5)", [
-        session.user.user_id, session.user.username, session.user.workspace_code,
-        identity.ip_address, identity.user_agent
-      ]);
-    } catch (error) {
-      logger.error("Login history insert failed", {code: error.code});
-    }
-  }
-  return {middleware, successfulLogin, flush,
-    stats: () => ({searchQueued:searchQueue.length,queued: queue.length, dropped, failed,locationQueued:locationQueue.size,locationFailed}),
-    close: async () => { clearInterval(timer); await flush(); }};
-}
-
-module.exports = {createActivityAudit, requestIdentity};
+module.exports={createActivityAudit};

@@ -113,6 +113,8 @@ app.get("/api/test", (req, res) => {
   res.json({ ok: true, message: "server route works" });
 });
 
+app.use("/api/public-feedback", require("./publicFeedback").createPublicFeedbackRouter(pool));
+
 app.use("/api/auth", authRoutes);
 app.use("/api/ui", uiRoutes);
 app.use("/api/lookups", lookupRoutes);

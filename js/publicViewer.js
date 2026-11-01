@@ -248,7 +248,11 @@
       state.map.on('click',event=>{
         if(event.publicViewerDrawing||state.tools?.isDrawing())return;
         const p=event.point;
-        const hits=state.map.queryRenderedFeatures([[p.x-mapPickTolerance,p.y-mapPickTolerance],[p.x+mapPickTolerance,p.y+mapPickTolerance]],{layers:['public-point-hit','public-line-hit','public-fill','public-related-points','public-related-outline','public-related-fill']});
+        let hits=state.map.queryRenderedFeatures([[p.x-mapPickTolerance,p.y-mapPickTolerance],[p.x+mapPickTolerance,p.y+mapPickTolerance]],{layers:['public-point-hit','public-line-hit','public-fill','public-related-points','public-related-outline','public-related-fill']});
+        // CAAL_CLUSTER_TOTALS_V1: bubble and popup share the anchor's complete nearby selection.
+        const clusterHit=hits.find(f=>Number(f.properties.count)>1&&f.geometry?.type==='Point');
+        const bubbleMembers=clusterHit&&state.tools?.clusterMembers(clusterHit);
+        if(bubbleMembers)hits=bubbleMembers;
         const records=new Map(),clusters=new Map();
         for(const f of hits){const props=f.properties;if(Number(props.count)>1){clusters.set(props.cluster_id||props.record_type+':'+JSON.stringify(f.geometry.coordinates),f);continue;}
           if(props.source_row_id!=null)records.set(props.record_type+'/'+props.source_row_id,f);}
@@ -274,7 +278,7 @@
         state.map.getCanvas().style.cursor='pointer';const props=f.properties;
         const key=Number(props.count)>1?(props.cluster_id||props.record_type+JSON.stringify(f.geometry.coordinates)):recordKey(props);
         if(key===hoverKey&&popup?.isOpen?.())return;hoverKey=key;popup?.remove();
-        const box=node('div',undefined,'public-popup');box.append(node('strong',Number(props.count)>1?`${props.count} ${names[props.record_type]}`:label(props)));
+        const box=node('div',undefined,'public-popup');box.append(node('strong',Number(props.count)>1?t('public_records_here','{count} records here',{count:Number(state.tools?.clusterCount(f)||props.count).toLocaleString(I?.locale())}):label(props)));
         if(Number(props.count)>1)box.append(uiNode('span',"public_click_to_browse_nearby_records_or_zoom_in",'Click to browse nearby records or zoom in.'));
         else {box.append(node('small',names[props.record_type]||props.record_type));if(props.caal_id&&label(props)!==props.caal_id)box.append(node('div',props.caal_id));}
         if(Number(props.count||1)===1&&rs(props.record_type)){const img=node('img');img.alt=t('public_shape_preview','Geometry shape preview');img.hidden=true;box.append(img);void shapeImage(props.record_type,props.source_row_id,img);}
