@@ -1,5 +1,4 @@
 'use strict';
-const {scopeFilterSql}=require('./viewerFieldMap');
 const CONDITIONAL_FIELDS=Object.freeze({...require('./viewerFieldMap').CONDITIONAL_FIELDS,location_confidence:Object.freeze(['monument'])});
 function csv(value){
  if(value===undefined||value==='')return [];
@@ -9,11 +8,16 @@ function csv(value){
 }
 function advanced(query,values,clauses){
  const add=v=>{values.push(v);return '$'+values.length;};
- const scoped=(field,sql)=>clauses.push(scopeFilterSql(field,sql,'','scoped'));
+ // Public searches include only record types that support every active filter.
+ const scoped=(field,sql)=>{
+  const supported=CONDITIONAL_FIELDS[field];
+  if(!supported)throw Error('invalid_filters');
+  const guard=add(supported);clauses.push(`(record_type=ANY(${guard}::text[]) AND (${sql}))`);
+ };
  const caalId=String(query.caalId||'').trim();if(caalId.length>150)throw Error('invalid_filters');
  if(caalId)clauses.push(`caal_id ILIKE ${add('%'+caalId.replace(/[\\%_]/g,'\\$&')+'%')}`);
  const confidence=csv(query.locationConfidence);
- if(confidence.length)clauses.push(`(record_type<>'monument' OR source_row_id IN (SELECT lc.source_row_id FROM viewer_public.v_monument_location_confidence lc WHERE coalesce(lc.location_confidence,'__missing__')=ANY(${add(confidence)}::text[])))`);
+ if(confidence.length)scoped('location_confidence',`source_row_id IN (SELECT lc.source_row_id FROM viewer_public.v_monument_location_confidence lc WHERE coalesce(lc.location_confidence,'__missing__')=ANY(${add(confidence)}::text[]))`);
  const countries=csv(query.countries);
  if(countries.length)scoped('country',`filter_country=ANY(${add(countries)}::text[])`);
  const types=csv(query.monumentTypes);

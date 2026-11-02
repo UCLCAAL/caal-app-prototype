@@ -41,7 +41,9 @@ form.addEventListener("submit", async (e) => {
       localStorage.setItem("caal_ui_language_bootstrap", preferredLang);
     }
 
-    window.location.href = "home.html";
+    // Only this fixed internal destination is accepted. Other logins retain the home page.
+    window.location.href = new URLSearchParams(window.location.search).get("next") === "viewer"
+      ? "viewer.html" : "home.html";
   } catch (err) {
     errorBox.textContent = t("server_error", "Server error");
     console.error(err);

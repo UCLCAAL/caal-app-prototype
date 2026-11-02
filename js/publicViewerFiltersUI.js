@@ -35,7 +35,31 @@
     function remove(id,value){for(const o of el(id).options)if(o.value===value)o.selected=false;
       if(id==='viewerFilterMonumentType')for(const i of treeInputs())if(i.value===value)i.checked=false;changed();}
     function chip(label,action){const host=make('span',undefined,'active-filter-chip');const text=make('span',label,'active-filter-chip-text');const b=make('button','×','active-filter-chip-remove');b.type='button';b.setAttribute('aria-label',t('public_remove_filter','Remove {label}',{label}));b.onclick=action;host.append(text,b);return host;}
+    function applicableTypes(types=getTypes()){
+      const fields=controls.filter(([id])=>selected(id).length).map(([, , ,field])=>field);
+      if(el('viewerFilterRiskMin').value)fields.push('risk_levels');
+      return types.filter(type=>fields.every(field=>(applicability[field]||[]).includes(type)));
+    }
+    function renderLayerAvailability(){
+      const inputs=[...el('publicTypes').querySelectorAll('input')];
+      const applicable=new Set(applicableTypes(inputs.map(input=>input.value)));
+      const explanation=t('public_layer_filter_not_applicable','This layer does not support the active filters.');
+      for(const input of inputs){
+        const blocked=!applicable.has(input.value),label=input.closest('label');
+        input.disabled=input.dataset.publicPolicyDisabled==='true'||blocked;
+        label?.classList.toggle('public-layer-filter-disabled',blocked);
+        if(label){if(blocked){label.title=explanation;label.setAttribute('aria-disabled','true');}
+          else{label.removeAttribute('title');label.removeAttribute('aria-disabled');}}
+      }
+      const note=el('publicFilterApplicabilityNote');
+      if(note){const hasBlocked=inputs.some(input=>input.checked&&!applicable.has(input.value));
+        note.hidden=!hasBlocked;
+        const empty=!applicableTypes().length;
+        note.textContent=empty?t('public_filters_no_applicable_layers','No selected layer supports this combination of filters. Clear a filter or select a compatible layer.'):
+          t('public_filters_matching_layers_only','Only layers that support all active filters are shown. Your layer selections are kept.');}
+    }
     function render(){
+      renderLayerAvailability();
       const active=el('publicActiveFilterChips');active.replaceChildren();
       for(const [id,param,label,field] of controls){
         const host=el(id+'Chips');host?.replaceChildren();
@@ -118,6 +142,6 @@
         select.replaceChildren();for (const row of orderedOptions) {const option=make('option',row.missing?t('none_recorded','None recorded'):row.label);option.value=row.value;option.selected=chosen.has(row.value);select.append(option);}render();
       }catch(error){console.error('Public Viewer location confidence lookup failed',error);}
     }
-    I?.onChange(()=>{void loadConfidence();return loadTree();});void loadConfidence();void loadTree();render();return {appendParams,render,clear};
+    I?.onChange(()=>{void loadConfidence();return loadTree();});void loadConfidence();void loadTree();render();return {appendParams,render,clear,applicableTypes};
   };
 })();

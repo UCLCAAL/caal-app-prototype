@@ -266,3 +266,12 @@
 .public-viewer #viewerMeasurementResult .viewer-measurement-result-label { display:block; line-height:1.5; }
 .public-viewer #viewerMeasurementResult .viewer-measurement-clear-inline { position:absolute; top:.5rem; right:.5rem; width:24px; height:24px; color:var(--accent); }
 @media(max-width:480px){.public-viewer #publicDrawInstruction { max-width:calc(100% - 2rem); flex-wrap:wrap; }.public-viewer #publicDrawInstructionText { flex:1 1 180px; }}
+
+/* Filter availability preserves checked choices while suppressing unsupported layers. */
+.public-viewer .viewer-layer-check.public-layer-filter-disabled {
+  background: #f1f2f1; border-color: #d5d9d6; color: #737b76;
+  opacity: .6; cursor: not-allowed; box-shadow: none;
+}
+.public-viewer .viewer-layer-check.public-layer-filter-disabled * { cursor: not-allowed; }
+.public-filter-applicability-note { font-size: .85rem; color: #52655b; margin: .6rem 0; }
+.public-sign-in { text-decoration: none; white-space: nowrap; }

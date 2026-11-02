@@ -74,7 +74,7 @@
    groups=new Map();host.replaceChildren();retry.hidden=true;
    const selected=new Set((filters().get('types')||'').split(','));
    for(const type of order)if(selected.has(type))groups.set(type,addGroup(type,previous.get(type)?.collapsed??true));
-   if(!groups.size){(I?I.bind(status,"public_select_at_least_one_layer",'Select at least one layer.',{},"textContent"):status.textContent=t("public_select_at_least_one_layer",'Select at least one layer.'));document.getElementById('publicRefreshGroups').disabled=false;return;}
+   if(!groups.size){const note=document.getElementById('publicFilterApplicabilityNote');if(note&&!note.hidden){status.textContent=note.textContent;document.getElementById('publicRefreshGroups').disabled=false;return;}(I?I.bind(status,"public_select_at_least_one_layer",'Select at least one layer.',{},"textContent"):status.textContent=t("public_select_at_least_one_layer",'Select at least one layer.'));document.getElementById('publicRefreshGroups').disabled=false;return;}
    updateSummary();
    for(const g of groups.values())if(!g.collapsed)void loadGroup(g);
    // Let the initial map request start before background counts. This does not
