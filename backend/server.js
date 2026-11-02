@@ -128,6 +128,14 @@ app.use("/api/public-viewer", require("./publicViewerRoutes").createPublicRouter
 // --------------------------------------------------------
 // Static frontend
 // --------------------------------------------------------
+app.get("/", (req, res, next) => {
+  if (String(req.hostname).toLowerCase() !== "data.uclcaal.org") {
+    return next();
+  }
+
+  res.sendFile(path.join(appRoot, "public-viewer.html"));
+});
+
 app.use(express.static(appRoot));
 
 app.get("/", (req, res) => {
