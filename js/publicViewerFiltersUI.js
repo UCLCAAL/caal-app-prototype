@@ -6,7 +6,7 @@
     // Insert into the existing advanced panel without replacing the HTML file.
     if(!el('viewerFilterLocationConfidence')){
       const group=document.createElement('div');group.className='filter-group';
-      const label=document.createElement('label');label.htmlFor='viewerFilterLocationConfidence';label.id='publicLocationConfidenceLabel';label.textContent='Location Confidence';
+      const label=document.createElement('label');label.setAttribute('for','viewerFilterLocationConfidence');label.id='publicLocationConfidenceLabel';label.textContent='Location Confidence';
       const chips=document.createElement('div');chips.id='viewerFilterLocationConfidenceChips';chips.className='selected-filter-chips';
       const select=document.createElement('select');select.id='viewerFilterLocationConfidence';select.multiple=true;select.className='form-control chip-multiselect';
       group.append(label,chips,select);const anchor=el('viewerFilterCondition').closest('[data-filter-section="rs_assessments"]')||el('viewerFilterCondition').closest('.filter-group');anchor.parentNode.insertBefore(group,anchor);
@@ -60,6 +60,7 @@
     }
     function render(){
       renderLayerAvailability();
+      window.publicViewerVocabulary?.guides();
       const active=el('publicActiveFilterChips');active.replaceChildren();
       for(const [id,param,label,field] of controls){
         const host=el(id+'Chips');host?.replaceChildren();

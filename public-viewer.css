@@ -275,3 +275,13 @@
 .public-viewer .viewer-layer-check.public-layer-filter-disabled * { cursor: not-allowed; }
 .public-filter-applicability-note { font-size: .85rem; color: #52655b; margin: .6rem 0; }
 .public-sign-in { text-decoration: none; white-space: nowrap; }
+
+/* Vocabulary links use the same accent as the public Viewer. */
+.public-viewer .public-vocabulary-link { color:var(--accent,#487061); text-decoration:underline; text-decoration-thickness:1px; text-underline-offset:.15em; }
+.public-viewer .public-vocabulary-link:hover { text-decoration-thickness:2px; }
+.public-viewer .public-vocabulary-label-row { display:flex; align-items:center; justify-content:space-between; gap:.5rem; margin-bottom:.35rem; }
+.public-viewer .public-vocabulary-label-row > label { margin:0; }
+.public-viewer .public-vocabulary-guide { flex:0 0 28px; display:inline-flex; align-items:center; justify-content:center; width:28px; height:28px; border:1px solid var(--border,#d5ddd8); border-radius:4px; color:var(--accent,#487061); background:transparent; text-decoration:none; }
+.public-viewer .public-vocabulary-guide:hover { background:var(--accent-soft,#e7f1ed); }
+.public-viewer .public-vocabulary-guide:focus-visible,.public-viewer .public-vocabulary-link:focus-visible { outline:2px solid var(--accent,#487061); outline-offset:3px; }
+@media (pointer:coarse) { .public-viewer .public-vocabulary-guide { width:44px; height:44px; flex-basis:44px; } }

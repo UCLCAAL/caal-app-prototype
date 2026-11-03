@@ -859,7 +859,8 @@ function renderViewerRatingSlider(value, {
   min = 1,
   max = 5,
   labels = {},
-  ariaLabel = ""
+  ariaLabel = "",
+  vocabulary = null
 } = {}) {
   const number = Number(value);
 
@@ -898,7 +899,7 @@ function renderViewerRatingSlider(value, {
 
       <div class="viewer-rating-slider-value">
         <strong>${escapeHtml(String(value))}</strong>
-        ${label ? `<span>${escapeHtml(label)}</span>` : ""}
+        ${label ? `<span${vocabulary ? ` data-vocab-scheme="${escapeHtml(vocabulary)}" data-vocab-term="${escapeHtml(label)}"` : ""}>${escapeHtml(label)}</span>` : ""}
       </div>
     </div>
   `;
@@ -929,14 +930,14 @@ function renderViewerTypeOfAnomalyGroup(raw) {
           <div class="viewer-subsection-header">
             <span>${escapeHtml(vLabel("Type", "Type"))}</span>
           </div>
-          ${renderViewerBooleanIndicatorGrid(raw, VIEWER_ANOMALY_TYPE_FIELDS)}
+          ${renderViewerBooleanIndicatorGrid(raw, VIEWER_ANOMALY_TYPE_FIELDS, "caalAnomalyTypes")}
         </div>
 
         <div class="detail-item full-width viewer-assessment-block">
           <div class="viewer-subsection-header">
             <span>${escapeHtml(vLabel("origin", "Origin"))}</span>
           </div>
-          ${renderViewerBooleanIndicatorGrid(raw, VIEWER_ANOMALY_ORIGIN_FIELDS)}
+          ${renderViewerBooleanIndicatorGrid(raw, VIEWER_ANOMALY_ORIGIN_FIELDS, "caalOrigins")}
         </div>
 
         <div class="detail-item full-width viewer-assessment-block">
@@ -950,7 +951,7 @@ function renderViewerTypeOfAnomalyGroup(raw) {
   `;
 }
 
-function renderViewerBooleanIndicatorGrid(raw, fields) {
+function renderViewerBooleanIndicatorGrid(raw, fields, vocabulary = null) {
   return `
     <div class="viewer-indicator-grid">
       ${fields.map((fieldName) => {
@@ -961,7 +962,7 @@ function renderViewerBooleanIndicatorGrid(raw, fields) {
         return `
           <div class="viewer-indicator-row ${checked ? "is-checked" : "is-unchecked"}">
             <span class="viewer-indicator-mark">${checked ? "✓" : "—"}</span>
-            <span>${escapeHtml(vLabel(fieldName, fieldName))}</span>
+            <span${vocabulary && checked ? ` data-vocab-scheme="${escapeHtml(vocabulary)}" data-vocab-term="${escapeHtml(fieldName)}"` : ""}>${escapeHtml(vLabel(fieldName, fieldName))}</span>
           </div>
         `;
       }).join("")}
@@ -1008,6 +1009,7 @@ function renderViewerConditionAssessmentGroup(raw) {
                   <span class="detail-label">${escapeHtml(vLabel("overall_condition", "Overall condition"))}</span>
                   <div class="detail-value">${renderViewerRatingSlider(overallCondition, {
                                               ...VIEWER_CONDITION_RATING,
+                                              vocabulary: "caalConditionLevels",
                                               ariaLabel: vLabel("overall_condition", "Overall condition")
                                             })}</div>
                 </div>
@@ -1033,7 +1035,7 @@ function renderViewerConditionAssessmentGroup(raw) {
             ${viewerSectionHelp(vLabel("deterioration_guide", "Guide"), deteriorationHelp)}
           </div>
 
-          ${renderViewerBooleanIndicatorGrid(raw, VIEWER_DETERIORATION_FIELDS)}
+          ${renderViewerBooleanIndicatorGrid(raw, VIEWER_DETERIORATION_FIELDS, "caalDeteriorationCauses")}
         </div>
       </div>
     </div>
@@ -1054,10 +1056,11 @@ function renderViewerRiskAssessmentGroup(raw) {
 
       return `
         <div class="detail-item full-width viewer-nested-detail-item">
-          <span class="detail-label">${escapeHtml(vLabel(fieldName, fieldName))}</span>
+          <span class="detail-label" data-vocab-scheme="caalThreatTypes" data-vocab-term="${escapeHtml(fieldName.replace(/^Risk of /i, ""))}">${escapeHtml(vLabel(fieldName, fieldName))}</span>
           <div class="detail-value">
             ${renderViewerRatingSlider(value, {
               ...VIEWER_RISK_RATING,
+              vocabulary: "caalRiskLevels",
               ariaLabel: fieldName
             })}
           </div>
@@ -2725,7 +2728,7 @@ function viewerLookupLegacyMultiValues(
     );
 }
 
-function renderViewerValueList(label, values) {
+function renderViewerValueList(label, values, vocabField = label) {
   const cleanValues = Array.isArray(values)
     ? values.map((value) => String(value || "").trim()).filter(Boolean)
     : [];
@@ -2733,7 +2736,7 @@ function renderViewerValueList(label, values) {
   const html=cleanValues.length
     ? `<ul class="detail-value-list">${cleanValues.map(value=>`<li>${viewerSafeDisplayValue(value)}</li>`).join('')}</ul>`
     : viewerSafeDisplayValue(null);
-  return `<div class="detail-item full-width"><span class="detail-label">${escapeHtml(label)}</span><div class="detail-value public-readonly-list">${html}</div></div>`;
+  return `<div class="detail-item full-width" data-vocab-field="${escapeHtml(vocabField)}"><span class="detail-label">${escapeHtml(label)}</span><div class="detail-value public-readonly-list">${html}</div></div>`;
 }
 
 function renderViewerMonumentMainGroup(raw, record) {
@@ -2767,10 +2770,10 @@ function renderViewerMonumentMainGroup(raw, record) {
         </div>
 
         ${renderViewerDetailItem(vLabel("Monument Passport", "Monument Passport"), raw["Monument Passport"], { fullWidth: true })}
-        ${renderViewerValueList(vLabel("Monument Type", "Monument Type"), monumentTypes)}
-        ${renderViewerValueList(vLabel("Religion", "Religion"), religions)}
+        ${renderViewerValueList(vLabel("Monument Type", "Monument Type"), monumentTypes, "Monument Type")}
+        ${renderViewerValueList(vLabel("Religion", "Religion"), religions, "Religion")}
         ${renderViewerDetailItem(vLabel("Descriptive Date", "Descriptive Date"), raw["Descriptive Date"], { fullWidth: true })}
-        ${renderViewerValueList(vLabel("Cultural Period", "Cultural Period"), culturalPeriods)}
+        ${renderViewerValueList(vLabel("Cultural Period", "Cultural Period"), culturalPeriods, "Cultural Period")}
         ${renderViewerDetailItem(vLabel("Start Date", "Start Date"), raw["Start Date"])}
         ${renderViewerDetailItem(vLabel("End Date", "End Date"), raw["End Date"])}
         ${renderViewerDetailItem(vLabel("Primary Description", "Primary Description"), raw["Primary Description"], { fullWidth: true })}
@@ -2902,6 +2905,7 @@ function renderViewerMonumentMeasurementsGroup(raw) {
     }
   }
   I?.fragment(host,record.identity.record_type);
+  window.publicViewerVocabulary?.enrich(host,record,{monuments:viewerMonumentLookups,archive:viewerArchiveLookups});
   host.querySelector('[data-public-detail-target]').onclick=()=>onLocate(record.public_record);
   host.querySelector('[data-public-copy]').onclick=async event=>{const button=event.currentTarget;try{await navigator.clipboard.writeText(record.identity.caal_id);button.title='CAAL_ID copied';}catch{button.title='Copy unavailable in this browser';}};
   host.querySelectorAll('[data-public-related]').forEach(button=>{button.onclick=()=>{const rel=record.public_relations.find(r=>String(r.source_row_id)===button.dataset.publicRelated&&r.record_type===button.dataset.publicRelatedType);if(rel)onOpen(rel,true);};});
