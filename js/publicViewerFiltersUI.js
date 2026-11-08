@@ -27,6 +27,17 @@
       rsSection.parentNode.insertBefore(section, rsSection);
     }
     const controls=[['viewerFilterCountry','countries','Country','country'],['viewerFilterLocationConfidence','locationConfidence','Location Confidence','location_confidence'],['viewerFilterMonumentType','monumentTypes','Monument type','monument_types'],['viewerFilterCondition','condition','Condition','condition_levels'],['viewerFilterDeteriorationCause','deteriorationCause','Deterioration','deterioration_causes'],['viewerFilterRiskType','riskType','Risk','risk_levels']];
+    const linkedSiteType = new URLSearchParams(location.search).get('siteType');
+    const linkedTypeId = /^MT-[1-3]-[0-9]{4,8}$/.test(linkedSiteType || '') ? linkedSiteType : null;
+    // Seed the exact ID before any counts, map or list requests start. The lookup
+    // will replace its display text and check the corresponding tree item.
+    if (linkedTypeId) {
+      const option = document.createElement('option');
+      option.value = linkedTypeId;
+      option.textContent = linkedTypeId;
+      option.selected = true;
+      el('viewerFilterMonumentType').append(option);
+    }
     let applicability={location_confidence:['monument'],country:['rs3_poly','rs3_line','rs3_group','institution','vernacular','monument','archive'],monument_types:['rs3_poly','rs3_line','rs3_group','monument'],condition_levels:['rs3_poly','rs3_line'],deterioration_causes:['rs3_poly','rs3_line'],risk_levels:['rs3_poly','rs3_line']};
     const make=(tag,text,cls)=>{const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n;};
     const selected=id=>[...el(id).selectedOptions].filter(o=>o.value);
@@ -61,6 +72,13 @@
     function render(){
       renderLayerAvailability();
       window.publicViewerVocabulary?.guides();
+      if (linkedTypeId && !selected('viewerFilterMonumentType').some(option=>option.value===linkedTypeId)) {
+        const url = new URL(location.href);
+        if (url.searchParams.has('siteType')) {
+          url.searchParams.delete('siteType');
+          history.replaceState(null, '', url);
+        }
+      }
       const active=el('publicActiveFilterChips');active.replaceChildren();
       for(const [id,param,label,field] of controls){
         const host=el(id+'Chips');host?.replaceChildren();
@@ -92,10 +110,11 @@
     el('publicAdvancedToggle').onclick=()=>{const panel=el('viewerFiltersPanel');panel.hidden=!panel.hidden;(I?I.bind(el('publicAdvancedToggle'),"advanced_filters",'Advanced filters',{},"textContent"):el('publicAdvancedToggle').textContent=t("advanced_filters",'Advanced filters'));el('publicAdvancedToggle').setAttribute('aria-expanded',String(!panel.hidden));};
     let treeVersion=0;
     async function loadTree(){
-      const sequence=++treeVersion,chosen=new Set(selected('viewerFilterMonumentType').map(o=>o.value)),expanded=new Map([...el('viewerFilterMonumentTypeTree').querySelectorAll('[data-concept]')].map(n=>[n.dataset.concept,n.open]));
+      const sequence=++treeVersion,expanded=new Map([...el('viewerFilterMonumentTypeTree').querySelectorAll('[data-concept]')].map(n=>[n.dataset.concept,n.open]));
       const oldSearch=el('viewerFilterMonumentTypeTree').querySelector('input[type=search]')?.value||'';
       const host=el('viewerFilterMonumentTypeTree');(I?I.bind(host,"public_loading_monument_types",'Loading monument types...',{},"textContent"):host.textContent=t("public_loading_monument_types",'Loading monument types...'));
       try{const data=await get('/lookups');if(sequence!==treeVersion)return;if(data.field_applicability)applicability={...data.field_applicability,location_confidence:['monument']};
+        const chosen=new Set(selected('viewerFilterMonumentType').map(o=>o.value));
         const all=data.site_types||[];const byId=new Map(all.map(r=>[r.concept_id,r]));const children=new Map();
         for(const row of all){const parent=byId.has(row.parent_id)?row.parent_id:null;if(!children.has(parent))children.set(parent,[]);children.get(parent).push(row);}
         host.replaceChildren();const search=make('input');search.type='search';search.placeholder=t('search_site_types','Find a monument type');search.className='form-control';search.setAttribute('aria-label',t('search_site_types','Find a monument type'));host.append(search);
@@ -112,6 +131,12 @@
         for(const row of children.get(null)||[]){const n=branch(row,0);if(n)tree.append(n);}
         // Preserve orphaned/cyclic vocabulary entries without infinite recursion.
         for(const row of all)if(!seen.has(row.concept_id)){const n=branch(row,0);if(n)tree.append(n);}
+        // Keep the exact filter if the term no longer appears in the lookup.
+        // An unavailable term must never silently turn into an unfiltered search.
+        if (linkedTypeId && chosen.has(linkedTypeId) && !byId.has(linkedTypeId)) {
+          const option=make('option',linkedTypeId);option.value=linkedTypeId;option.selected=true;
+          el('viewerFilterMonumentType').append(option);
+        }
         search.oninput=()=>{const term=search.value.trim().toLowerCase();for(const n of tree.querySelectorAll('.public-tree-node')){n.hidden=!!term&&!n.textContent.toLowerCase().includes(term);if(term&&n.tagName==='DETAILS')n.open=true;}};
         search.value=oldSearch;if(oldSearch)search.dispatchEvent(new Event('input'));render();
       }catch(error){if(sequence!==treeVersion)return;host.textContent=t('public_types_load_failed','Monument types could not be loaded.');console.error('Public Viewer filter lookups failed:',error);}

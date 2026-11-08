@@ -22,6 +22,19 @@ window.addEventListener('hashchange',()=>show(location.hash.slice(1),false));sho
 const form=document.getElementById('publicFeedbackForm'),type=document.getElementById('feedbackType'),status=document.getElementById('feedbackStatus'),button=document.getElementById('feedbackSubmit');
 let submissionId=null,lastPayload=null;
 type.addEventListener('change',()=>{document.getElementById('feedbackSubject').textContent='[CAAL Web Viewer Feedback]'+(type.value?' '+type.selectedOptions[0].textContent.toLowerCase():'');});
+// Prefill public vocabulary context only; the visitor writes and sends the message.
+if (location.hash === '#feedback') {
+  const params = new URLSearchParams(location.search);
+  const concept = params.get('concept') || '';
+  const language = params.get('conceptLang') || '';
+  const message = document.getElementById('feedbackMessage');
+  const allowedLanguages = new Set(['en','zh','ru','kk','ky','tg','tk','uz']);
+  if (message && !message.value && /^https:\/\/vocab\.uclcaal\.org\/concept\/[a-zA-Z0-9%/_~.-]{1,220}$/.test(concept)) {
+    message.value = 'Concept: ' + concept + (allowedLanguages.has(language) ? '\nVocabulary language: ' + language : '') + '\n\n';
+    type.value = 'general';
+    type.dispatchEvent(new Event('change'));
+  }
+}
 form.addEventListener('submit',async event=>{
  event.preventDefault();if(!form.reportValidity()||button.disabled)return;
  const data=Object.fromEntries(new FormData(form));const payload=JSON.stringify(data);
