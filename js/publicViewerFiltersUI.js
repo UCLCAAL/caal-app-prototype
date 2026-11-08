@@ -234,6 +234,6 @@
         render();
       }catch(error){console.error('Public Viewer location confidence lookup failed',error);}
     }
-    I?.onChange(()=>Promise.all([loadConfidence(),loadPeriods(),loadTree()]));void loadConfidence();void loadPeriods();void loadTree();render();return {appendParams,render,clear,applicableTypes};
+    I?.onChange(()=>Promise.all([loadConfidence(),loadPeriods(),loadTree()]));void loadConfidence();void loadPeriods();void loadTree();render();return {appendParams,render,clear,applicableTypes,hasLinkedFilters:linkedSelections.length>0};
   };
 })();

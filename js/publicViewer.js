@@ -37,18 +37,34 @@
   function maximumZoom(){return state.policy.max_zoom;}
   function anyTypes(){return !!filters().get('types');}
   let resultsLocateController=null,resultsLocateSequence=0;
+  let initialFitPending=false,initialFitController=null;
+  function tryInitialFit(){
+    if(!initialFitPending||!state.map?.getSource('public-data')||!anyTypes())return;
+    // On mobile the map can start hidden behind the Results tab.
+    const map=el('publicMap');
+    if(!map.clientWidth||!map.clientHeight)return;
+    initialFitPending=false;
+    void zoomToResults(true);
+  }
+  function cancelInitialFit(){
+    initialFitPending=false;
+    if(initialFitController)cancelResultsLocate();
+  }
   function syncResultsLocate(){
     const button=el('publicResultsLocate');
     if(button)button.disabled=!state.map?.getSource('public-data')||!anyTypes()||!!resultsLocateController;
   }
   function cancelResultsLocate(){
+    initialFitPending=false;initialFitController=null;
     ++resultsLocateSequence;resultsLocateController?.abort();resultsLocateController=null;
     el('publicResultsLocate')?.removeAttribute('aria-busy');syncResultsLocate();
   }
-  async function zoomToResults(){
+  async function zoomToResults(initial=false){
     if(!state.map?.getSource('public-data')||!anyTypes())return;
     cancelResultsLocate();const sequence=resultsLocateSequence,controller=new AbortController();
-    resultsLocateController=controller;const button=el('publicResultsLocate');
+    resultsLocateController=controller;
+    if(initial)initialFitController=controller;
+    const button=el('publicResultsLocate');
     button.setAttribute('aria-busy','true');syncResultsLocate();
     message('publicMapStatus','calculating_results_extent','Calculating results extent...');
     const params=filters();
@@ -68,6 +84,7 @@
         message('publicMapStatus','results_extent_failed','Could not calculate the results extent.');
       }
     }finally{
+      if(initialFitController===controller)initialFitController=null;
       if(sequence===resultsLocateSequence){resultsLocateController=null;button.removeAttribute('aria-busy');syncResultsLocate();}
     }
   }
@@ -128,6 +145,7 @@
   // Locate a result without opening details or changing the selected record.
   let locateSequence=0;
   async function locateRecord(r){
+    cancelInitialFit();
     const sequence=++locateSequence;
     if(!state.map?.getSource('public-data')){(I?I.bind(el('publicMapStatus'),"public_map_is_not_ready_yet",'Map is not ready yet.',{},"textContent"):el('publicMapStatus').textContent=t("public_map_is_not_ready_yet",'Map is not ready yet.'));return false;}
     clearHover();
@@ -177,6 +195,7 @@
   }
 
   async function openRecord(r,center=false){
+    cancelInitialFit();
     const seq=++state.detailSequence;
     if(state.mapLoading){mapPausedForDetails=true;state.mapController?.abort();++state.mapSequence;state.mapLoading=false;(I?I.bind(el('publicMapStatus'),"public_map_update_paused_while_the_record_loads",'Map update paused while the record loads.',{},"textContent"):el('publicMapStatus').textContent=t("public_map_update_paused_while_the_record_loads",'Map update paused while the record loads.'));}
     state.detailController?.abort();state.detailController=new AbortController();const signal=state.detailController.signal;
@@ -287,8 +306,9 @@
       });
       state.map.getCanvas().addEventListener('mouseleave',()=>{hoverKey=null;popup?.remove();state.map.getCanvas().style.cursor='';});
       }
-      void loadMap();releaseInitialMapStart();});
-    state.map.on('movestart',clearListPreview);
+      void loadMap();releaseInitialMapStart();tryInitialFit();});
+    state.map.on('resize',tryInitialFit);
+    state.map.on('movestart',event=>{if(event.originalEvent)cancelInitialFit();clearListPreview();});
     state.map.on('moveend',()=>{clearTimeout(mapTimer);mapTimer=setTimeout(()=>{void loadMap();if(el('publicMapFilter').checked){resetPaging();void loadList();}},350);});
   }
   function resetPaging(){state.offset=0;state.cursor=null;state.nextCursor=null;state.cursorHistory=[];}
@@ -322,11 +342,12 @@
     }
     el('publicSearch').onsubmit=e=>{e.preventDefault();clearTimeout(searchTimer);recordSearch('submit');reload();};el('publicQuery').oninput=()=>{clearTimeout(searchTimer);clearTimeout(searchAuditTimer);if(!el('publicQuery').value.trim())lastAuditedSearch=null;searchTimer=setTimeout(reload,400);searchAuditTimer=setTimeout(()=>recordSearch('settled_input'),1500);};el('publicMapFilter').onchange=reload;
     el('publicRefreshGroups').onclick=reload;
-    el('publicResultsLocate').onclick=zoomToResults;
+    el('publicResultsLocate').onclick=()=>zoomToResults();
     el('publicRetryResults').onclick=()=>loadList();
     el('publicClear').onclick=()=>{clearTimeout(searchAuditTimer);lastAuditedSearch=null;el('publicQuery').value='';state.filtersUI?.clear();state.areaPolygon=null;state.tools?.clearArea();el('publicMapFilter').checked=false;reload();};
     el('publicClose').onclick=()=>{++state.detailSequence;state.detailController?.abort();state.selected=null;clearHover();detailsUI?.clear();if(mapPausedForDetails){mapPausedForDetails=false;void loadMap();}state.tools?.setSelected(null,{});window.viewerDetailPanel?.clear();document.querySelectorAll('.public-record').forEach(b=>b.classList.remove('is-selected'));el('publicDetails').replaceChildren(uiNode('p',"public_select_a_record_to_explore_its_details",'Select a record to explore its details.'));el('publicClose').hidden=true;};
     state.filtersUI=window.createPublicViewerFiltersUI({onChange:reload,getTypes:()=>[...el('publicTypes').querySelectorAll('input:checked')].map(i=>i.value),getText:()=>el('publicQuery').value.trim(),getArea:()=>state.areaPolygon,clearArea:()=>{state.areaPolygon=null;state.tools?.clearArea();},get});
+    initialFitPending=state.filtersUI.hasLinkedFilters;
     state.groupsUI=window.createPublicViewerGroups({
       get,filters,names,label,onOpen:openRecord,onLocate:locateRecord,getSelected:()=>state.selected,onHover:(r,b)=>{hoverRecord(r);showListPreview(r,b);},onHoverEnd:clearHover,beforeCounts:()=>initialMapStarted});
     // The list remains usable if the browser cannot initialise the map.
@@ -338,6 +359,6 @@
     I?.onChange(()=>{state.groupsUI?.relabel();state.tools?.relabel();clearHover();selectionPopup?.remove();popup?.remove();return localiseCountries();});
     I?.apply();
   }catch(error){console.error('Public Viewer initialisation failed:',error);el('publicResultsStatus').textContent=error.message==='public_viewer_not_enabled'?t('public_not_enabled','The public Viewer is not enabled yet.'):t('public_temporarily_unavailable','The Viewer is temporarily unavailable.');(I?I.bind(el('publicMapStatus'),"public_viewer_unavailable",'Viewer unavailable.',{},"textContent"):el('publicMapStatus').textContent=t("public_viewer_unavailable",'Viewer unavailable.'));}}
-  window.addEventListener('viewer:layoutchange',()=>state.map?.resize());
+  window.addEventListener('viewer:layoutchange',()=>{state.map?.resize();tryInitialFit();});
   void init();
 })();
