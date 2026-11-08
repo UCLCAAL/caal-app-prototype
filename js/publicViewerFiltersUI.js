@@ -26,19 +26,54 @@
       section.append(heading, confidenceGroup);
       rsSection.parentNode.insertBefore(section, rsSection);
     }
-    const controls=[['viewerFilterCountry','countries','Country','country'],['viewerFilterLocationConfidence','locationConfidence','Location Confidence','location_confidence'],['viewerFilterMonumentType','monumentTypes','Monument type','monument_types'],['viewerFilterCondition','condition','Condition','condition_levels'],['viewerFilterDeteriorationCause','deteriorationCause','Deterioration','deterioration_causes'],['viewerFilterRiskType','riskType','Risk','risk_levels']];
-    const linkedSiteType = new URLSearchParams(location.search).get('siteType');
-    const linkedTypeId = /^MT-[1-3]-[0-9]{4,8}$/.test(linkedSiteType || '') ? linkedSiteType : null;
-    // Seed the exact ID before any counts, map or list requests start. The lookup
-    // will replace its display text and check the corresponding tree item.
-    if (linkedTypeId) {
-      const option = document.createElement('option');
-      option.value = linkedTypeId;
-      option.textContent = linkedTypeId;
-      option.selected = true;
-      el('viewerFilterMonumentType').append(option);
+    const periodsGroup=document.createElement('div');
+    periodsGroup.className='filter-group chip-multiselect-group';
+    periodsGroup.dataset.filterField='cultural_periods';
+    const periodLabel=document.createElement('label');
+    periodLabel.htmlFor='viewerFilterCulturalPeriod';
+    periodLabel.textContent='Cultural Period';
+    I?.bind(periodLabel,'Cultural Period','Cultural Period');
+    const periodChips=document.createElement('div');
+    periodChips.id='viewerFilterCulturalPeriodChips';
+    periodChips.className='selected-filter-chips';
+    const periodsSelect=document.createElement('select');
+    periodsSelect.id='viewerFilterCulturalPeriod';
+    periodsSelect.className='form-control chip-multiselect';
+    periodsSelect.multiple=true;
+    const periodStatus=document.createElement('p');
+    periodStatus.hidden=true;
+    periodStatus.className='filter-help';
+    periodStatus.setAttribute('role','status');
+    periodsGroup.append(periodLabel,periodChips,periodsSelect,periodStatus);
+    el('viewerFilterMonumentType').closest('.filter-group').after(periodsGroup);
+
+    const controls=[['viewerFilterCountry','countries','Country','country'],['viewerFilterLocationConfidence','locationConfidence','Location Confidence','location_confidence'],['viewerFilterMonumentType','monumentTypes','Monument type','monument_types'],['viewerFilterCulturalPeriod','culturalPeriods','Cultural Period','cultural_periods'],['viewerFilterCondition','condition','Condition','condition_levels'],['viewerFilterDeteriorationCause','deteriorationCause','Deterioration','deterioration_causes'],['viewerFilterRiskType','riskType','Risk','risk_levels']];
+    const incoming=new URLSearchParams(location.search);
+    const linkedSelections=[];
+    function seed(key,id,pattern){
+      const value=incoming.get(key);
+      if(!value || incoming.getAll(key).length!==1 || (pattern&&!pattern.test(value)))return;
+      const select=el(id);
+      let option=[...select.options].find(o=>o.value===value);
+      if(!option && pattern){
+        option=new Option(value,value);
+        select.append(option);
+      }
+      if(!option)return;
+      option.selected=true;
+      linkedSelections.push({key,id,value});
     }
-    let applicability={location_confidence:['monument'],country:['rs3_poly','rs3_line','rs3_group','institution','vernacular','monument','archive'],monument_types:['rs3_poly','rs3_line','rs3_group','monument'],condition_levels:['rs3_poly','rs3_line'],deterioration_causes:['rs3_poly','rs3_line'],risk_levels:['rs3_poly','rs3_line']};
+    // Seed the filters before the Viewer makes its first counts, list or map request.
+    seed('siteType','viewerFilterMonumentType',/^MT-[1-3]-[0-9]{4,8}$/);
+    seed('culturalPeriod','viewerFilterCulturalPeriod',/^CP-[1-3]-[0-9]{4,8}$/);
+    seed('country','viewerFilterCountry',/^(China|Karakalpakstan|Kazakhstan|Kyrgyzstan|Tajikistan|Turkmenistan|Uzbekistan)$/);
+    seed('locationConfidence','viewerFilterLocationConfidence',/^(High|Medium|Low|No coords|Unknown)$/);
+    seed('condition','viewerFilterCondition');
+    seed('deteriorationCause','viewerFilterDeteriorationCause');
+    seed('riskType','viewerFilterRiskType');
+    seed('riskMin','viewerFilterRiskMin');
+    const linkedTypeId=linkedSelections.find(row=>row.key==='siteType')?.value;
+    let applicability={location_confidence:['monument'],cultural_periods:['monument'],country:['rs3_poly','rs3_line','rs3_group','institution','vernacular','monument','archive'],monument_types:['rs3_poly','rs3_line','rs3_group','monument'],condition_levels:['rs3_poly','rs3_line'],deterioration_causes:['rs3_poly','rs3_line'],risk_levels:['rs3_poly','rs3_line']};
     const make=(tag,text,cls)=>{const n=document.createElement(tag);if(text!==undefined)n.textContent=text;if(cls)n.className=cls;return n;};
     const selected=id=>[...el(id).selectedOptions].filter(o=>o.value);
     const treeInputs=()=>[...el('viewerFilterMonumentTypeTree').querySelectorAll('input[type=checkbox]')];
@@ -72,12 +107,16 @@
     function render(){
       renderLayerAvailability();
       window.publicViewerVocabulary?.guides();
-      if (linkedTypeId && !selected('viewerFilterMonumentType').some(option=>option.value===linkedTypeId)) {
-        const url = new URL(location.href);
-        if (url.searchParams.has('siteType')) {
-          url.searchParams.delete('siteType');
-          history.replaceState(null, '', url);
+      if(linkedSelections.length){
+        const url=new URL(location.href);
+        let changedUrl=false;
+        for(const {key,id,value} of linkedSelections){
+          if(url.searchParams.get(key)===value && !selected(id).some(option=>option.value===value)){
+            url.searchParams.delete(key);
+            changedUrl=true;
+          }
         }
+        if(changedUrl)history.replaceState(history.state,'',url);
       }
       const active=el('publicActiveFilterChips');active.replaceChildren();
       for(const [id,param,label,field] of controls){
@@ -113,7 +152,7 @@
       const sequence=++treeVersion,expanded=new Map([...el('viewerFilterMonumentTypeTree').querySelectorAll('[data-concept]')].map(n=>[n.dataset.concept,n.open]));
       const oldSearch=el('viewerFilterMonumentTypeTree').querySelector('input[type=search]')?.value||'';
       const host=el('viewerFilterMonumentTypeTree');(I?I.bind(host,"public_loading_monument_types",'Loading monument types...',{},"textContent"):host.textContent=t("public_loading_monument_types",'Loading monument types...'));
-      try{const data=await get('/lookups');if(sequence!==treeVersion)return;if(data.field_applicability)applicability={...data.field_applicability,location_confidence:['monument']};
+      try{const data=await get('/lookups');if(sequence!==treeVersion)return;if(data.field_applicability)applicability={cultural_periods:['monument'],...data.field_applicability,location_confidence:['monument']};
         const chosen=new Set(selected('viewerFilterMonumentType').map(o=>o.value));
         const all=data.site_types||[];const byId=new Map(all.map(r=>[r.concept_id,r]));const children=new Map();
         for(const row of all){const parent=byId.has(row.parent_id)?row.parent_id:null;if(!children.has(parent))children.set(parent,[]);children.get(parent).push(row);}
@@ -142,6 +181,31 @@
       }catch(error){if(sequence!==treeVersion)return;host.textContent=t('public_types_load_failed','Monument types could not be loaded.');console.error('Public Viewer filter lookups failed:',error);}
     }
     function clear(){for(const [id] of controls)for(const o of el(id).options)o.selected=false;for(const i of treeInputs())i.checked=false;el('viewerFilterCaalId').value='';el('viewerFilterRiskMin').value='';const search=el('viewerFilterMonumentTypeTree').querySelector('input[type=search]');if(search){search.value='';search.dispatchEvent(new Event('input'));}render();}
+    let periodsVersion=0;
+    async function loadPeriods(){
+      const version=++periodsVersion;
+      try{
+        const data=await get('/cultural-periods');
+        if(version!==periodsVersion)return;
+        const rows=[...(data.options||[])].sort((a,b)=>String(a.label).localeCompare(String(b.label),I?.locale()));
+        const chosen=new Map(selected(periodsSelect.id).map(option=>[option.value,option.textContent]));
+        periodsSelect.replaceChildren();
+        for(const {value,label} of rows){
+          periodsSelect.append(new Option(label,value,false,chosen.has(value)));
+          chosen.delete(value);
+        }
+        // A stale concept link stays a filter even if its label has been removed.
+        for(const [value,label] of chosen)periodsSelect.append(new Option(label,value,false,true));
+        periodStatus.hidden=true;
+        render();
+      }catch(error){
+        if(version!==periodsVersion)return;
+        const fallback='Could not load cultural periods.';
+        periodStatus.hidden=false;
+        if(I)I.bind(periodStatus,'public_cultural_periods_unavailable',fallback);else periodStatus.textContent=fallback;
+        console.error('Public Viewer cultural periods lookup failed',error);
+      }
+    }
     let confidenceVersion=0;
     async function loadConfidence(){
       const version=++confidenceVersion;
@@ -165,9 +229,11 @@
         const orderedOptions = [...(data.options || [])].sort(
           (a, b) => confidenceRank(a) - confidenceRank(b)
         );
-        select.replaceChildren();for (const row of orderedOptions) {const option=make('option',row.missing?t('none_recorded','None recorded'):row.label);option.value=row.value;option.selected=chosen.has(row.value);select.append(option);}render();
+        select.replaceChildren();for (const row of orderedOptions) {const option=make('option',row.missing?t('none_recorded','None recorded'):row.label);option.value=row.value;option.selected=chosen.has(row.value);select.append(option);chosen.delete(row.value);}
+        for(const value of chosen)select.append(new Option(value,value,false,true));
+        render();
       }catch(error){console.error('Public Viewer location confidence lookup failed',error);}
     }
-    I?.onChange(()=>{void loadConfidence();return loadTree();});void loadConfidence();void loadTree();render();return {appendParams,render,clear,applicableTypes};
+    I?.onChange(()=>Promise.all([loadConfidence(),loadPeriods(),loadTree()]));void loadConfidence();void loadPeriods();void loadTree();render();return {appendParams,render,clear,applicableTypes};
   };
 })();

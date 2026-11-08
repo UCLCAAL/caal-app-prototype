@@ -88,6 +88,15 @@ function createPublicRouter(db, env=process.env) {
     const lang=publicTranslations.language(req.query.lang);
     res.json({ok:true,language:lang,site_types:rows.map(row=>({...row,label:publicTranslations.resolve({...row,...row.translations},lang,row.concept_id),display_label:publicTranslations.resolve({...row,...row.translations},lang,row.concept_id)})),field_applicability:CONDITIONAL_FIELDS});
   }));
+  router.get('/cultural-periods',wrap(async(req,res)=>{
+    const rows=await cachedSmall('cultural_periods',
+      "SELECT family,lookup_name,item FROM viewer_public.v_detail_lookups WHERE family='monuments' AND lookup_name='cultural_period'",
+      'cultural_period_labels');
+    const options=(buildPublicDetailLookups(rows,req.query.lang).monuments.cultural_period||[])
+      .filter(row=>/^CP-[1-3]-[0-9]{4,8}$/.test(row.value))
+      .map(({value,label})=>({value,label:String(label||value)}));
+    res.json({ok:true,options:[...new Map(options.map(row=>[row.value,row])).values()]});
+  }));
   router.get('/location-confidence',wrap(async(req,res)=>{
     const [values,lookupRows]=await Promise.all([
       cachedSmall('location_confidence_values','SELECT DISTINCT location_confidence AS value FROM viewer_public.v_monument_location_confidence ORDER BY location_confidence NULLS LAST','location_confidence_values'),

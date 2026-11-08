@@ -134,7 +134,7 @@
       linkText(node,node.dataset.vocabScheme,lookups,node.dataset.vocabTerm||node.textContent);
     }
   }
-  const filterSchemes={viewerFilterMonumentType:'caalMonumentTypes',viewerFilterCountry:'caalCountries',viewerFilterLocationConfidence:'caalLocationAccuracyAssessment',viewerFilterCondition:'caalConditionLevels',viewerFilterDeteriorationCause:'caalDeteriorationCauses',viewerFilterRiskType:'caalThreatTypes',viewerFilterRiskMin:'caalRiskLevels'};
+  const filterSchemes={viewerFilterMonumentType:'caalMonumentTypes',viewerFilterCulturalPeriod:'caalCulturalPeriods',viewerFilterCountry:'caalCountries',viewerFilterLocationConfidence:'caalLocationAccuracyAssessment',viewerFilterCondition:'caalConditionLevels',viewerFilterDeteriorationCause:'caalDeteriorationCauses',viewerFilterRiskType:'caalThreatTypes',viewerFilterRiskMin:'caalRiskLevels'};
   function guides(){for(const [id,scheme] of Object.entries(filterSchemes)){
     const label=document.querySelector(`label[for="${id}"]`);if(!label)continue;
     let row=label.parentElement;

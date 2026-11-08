@@ -1,5 +1,5 @@
 'use strict';
-const CONDITIONAL_FIELDS=Object.freeze({...require('./viewerFieldMap').CONDITIONAL_FIELDS,location_confidence:Object.freeze(['monument'])});
+const CONDITIONAL_FIELDS=Object.freeze({...require('./viewerFieldMap').CONDITIONAL_FIELDS,location_confidence:Object.freeze(['monument']),cultural_periods:Object.freeze(['monument'])});
 function csv(value){
  if(value===undefined||value==='')return [];
  if(typeof value!=='string'||value.length>6000)throw Error('invalid_filters');
@@ -26,6 +26,11 @@ function advanced(query,values,clauses){
   SELECT concept_id FROM viewer_public.v_site_type_context WHERE concept_id=ANY(${p}::text[])
   UNION SELECT c.concept_id FROM viewer_public.v_site_type_context c JOIN selected_tree p ON c.parent_id=p.concept_id
  ) SELECT coalesce(array_agg(concept_id::text),ARRAY[]::text[]) FROM selected_tree)`);}
+ const periods=csv(query.culturalPeriods);
+ if(periods.some(id=>!/^CP-[1-3]-[0-9]{4,8}$/.test(id)))throw Error('invalid_filters');
+ if(periods.length)scoped('cultural_periods',`(source_row_id::text,caal_id) IN (
+  SELECT cp.source_row_id::text,cp.caal_id FROM viewer_public.v_monument_cultural_periods cp
+  WHERE cp.concept_ids && ${add(periods)}::text[])`);
  const levels=csv(query.condition).map(Number);
  if(levels.some(n=>!Number.isInteger(n)||n<1||n>5))throw Error('invalid_filters');
  if(levels.length)scoped('condition_levels',`filter_condition_levels && ${add(levels)}::int[]`);
