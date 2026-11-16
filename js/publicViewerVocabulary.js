@@ -98,6 +98,71 @@
     return null;
   }
   function linkElement(text,href){const a=document.createElement('a');a.className='public-vocabulary-link';a.href=href;a.target='_blank';a.rel='noopener noreferrer';a.textContent=text;a.title=t('public_vocabulary_concept','View this concept in the Vocabulary Explorer (opens in a new tab)');return a;}
+  // Published Vernacular Building Materials concept IDs and audited labels.
+  // Keep this snapshot in sync with the scheme when adding or renaming terms.
+  const materialConcepts=[
+    ["001", "Adobe brick", "Саман кірпіш", "Пахса, чийки кыш", "Саманный кирпич", "Хишти хом", "Çig kerpiç", "Xom g‘isht", "土坯砖"],
+    ["002", "Brick", "Кірпіш", "Кыш", "Кирпич", "Хишт", "Kerpiç", "G‘isht", "砖"],
+    ["003", "Burnt brick", "Күйдірілген кірпіш", "Бышкан кыш", "Обожжённый кирпич", "Хишти пухта", "Bişen kerpiç", "Pishiq g‘isht", "烧结砖"],
+    ["004", "Burnt brick (with Nikalai building shape)", "Күйдірілген кірпіш («Николаевский»)", "Бышкан кыш (Николай формасындагы)", "Обожжённый кирпич (\"Николаевский\")", "Хишти пухта (?)", "Bişen kerpiç (Nikalaý binasynyň şekili bilen)", "Pishiq g‘isht (Nikolay g‘isht)", "烧结砖(Nikolai 型建筑)"],
+    ["005", "Burnt brick and mud block", "Күйдірілген кірпіш және шикі блок", "Бышкан кыш жана топурак жасалган блок", "Обожжённый кирпич и глиноблок", "Хишти хом бо похса", "Bişen  kerpiç we pagsa blok", "Pishiq g‘isht va paxsa (loy blok?)", "烧结砖与土坯块"],
+    ["006", "Cinder block", "Шлакоблок", "Шлактан жасалган блок", "Блоки синдер", "Şlak blok", "Shlakli g‘isht", "煤渣砌块"],
+    ["007", "Concrete", "Бетон", "Семент", "Beton", "混凝土"],
+    ["008", "Mud block", "Шикі блок", "Топурактан жасалган блок (ылайдан жасалган блок)", "Глиноблок (сырцовый блок)", "Блоки хом", "Pagsa blok", "Paxsa (loy blok?)", "土坯块"],
+    ["009", "Mud brick", "Шикі кірпіш", "Чийки кыш (ылайдан жасалган кыш)", "Кирпич-сырец", "Хишти хом", "Palçyk kerpiç", "Xom g‘isht", "土坯砖"],
+    ["010", "Other", "Басқа", "Башка", "Прочее", "Дигар", "Başga", "Boshqa", "其他"],
+    ["011", "Pakhsa", "Пахса"],
+    ["012", "Rammed earth", "Тапталған саз", "Глинобит"],
+    ["013", "Wood", "Ағаш", "Жыгач", "Дерево", "Чӯб", "Agaç", "Yog‘och", "木材"],
+    ["014", "Wooden frame", "Ағаш қаңқа", "Жыгач каркас", "Деревянный каркас", "Қолаби чӯбӣ", "Agaç rama", "Yog‘och sinchli", "木结构框架"]
+  ];
+  const materialBase=origin+'/concept/vernacular-building-materials/';
+  // Match case and spacing only, as in the audit. Prefer whole-value matches.
+  const materialKey=value=>String(value??'').trim().replace(/\s+/g,' ').toLowerCase();
+  const materialByLabel=new Map(),materialByEnglish=new Map();
+  for(const [id,english,...translations] of materialConcepts){
+    const concept={id,label:english};
+    materialByEnglish.set(materialKey(english),concept);
+    for(const label of [english,...translations]){
+      const key=materialKey(label);
+      if(!materialByLabel.has(key))materialByLabel.set(key,new Map());
+      materialByLabel.get(key).set(id,concept);
+    }
+  }
+  const materialAliases=new Map([
+    ['woodframe','wooden frame'],['mud blocks','mud block'],
+    ['burnt bricks','burnt brick'],['birnt brick','burnt brick'],
+    ['timber','wood']
+  ]);
+  const materialCorrections=new Map([
+    ['mud block/woodconcrete/brick','mud block/wood/concrete/brick'],
+    ['mud block/woodconcrete/brick,other','mud block/wood/concrete/brick,other']
+  ]);
+  function buildingMaterialLinks(raw){
+    const key=materialKey(raw);
+    const whole=materialByLabel.get(key);
+    if(whole)return whole.size===1?[...whole.values()]:[];
+    const seen=new Map();
+    for(const part of (materialCorrections.get(key)??key).split(/[/,;]/)){
+      const token=materialKey(part);
+      const concept=materialByEnglish.get(materialAliases.get(token)??token);
+      if(concept)seen.set(concept.id,concept);
+    }
+    return [...seen.values()];
+  }
+  function addBuildingMaterialLinks(value){
+    if(value.querySelector('a,input,button,.empty-value'))return;
+    const concepts=buildingMaterialLinks(value.textContent);
+    if(!concepts.length)return;
+    const links=document.createElement('div');
+    links.className='public-building-material-links';
+    concepts.forEach(({id,label},index)=>{
+      if(index)links.append(document.createTextNode(' · '));
+      links.append(linkElement(label,materialBase+id));
+    });
+    // Preserve the renderer's original text, qualifiers and unrecognised terms.
+    value.append(links);
+  }
   function linkText(node,scheme,lookups,term=node.textContent,splitList=false){
     if(!node||node.querySelector('a,input,button,.empty-value')||!node.textContent.trim())return;
     const original=node.textContent;
@@ -121,6 +186,12 @@
       const label=[...item.children].find(n=>n.classList.contains('detail-label'));
       const value=[...item.children].find(n=>n.classList.contains('detail-value'));
       const field=item.dataset.vocabField||label?.textContent;
+      if(type==='vernacular'&&value&&normal(field)&&['Building Material','building_material'].some(name=>
+        normal(field)===normal(name)||normal(field)===normal(window.publicViewerI18n?.field(name,name,type))
+      )){
+        addBuildingMaterialLinks(value);
+        continue;
+      }
       let scheme=fieldScheme(field,type);
       if(!scheme&&normal(field)===normal(window.publicViewerI18n?.field('Type','Type',type)||'Type')&&item.closest('.viewer-measurement-row'))scheme='caalMeasurementTypes';
       if(!scheme||!value||value.querySelector('input,.viewer-rating-slider,.boolean-display,.viewer-indicator-grid'))continue;
