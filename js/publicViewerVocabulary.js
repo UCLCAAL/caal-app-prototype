@@ -359,6 +359,487 @@
         ]
       ]
     ]
+  },
+  {
+    "slug": "vernacular-building-functions",
+    "scheme": "caalVernacularBuildingFunctions",
+    "fields": [
+      "Function",
+      "function"
+    ],
+    "terms": [
+      [
+        "https://vocab.uclcaal.org/concept/vernacular-building-functions/001",
+        [
+          "Abandoned",
+          "Қараусыз",
+          "Кароосуз калган/ташталган",
+          "Заброшенное",
+          "Партофташуда",
+          "Terk edilen",
+          "Tashlandiq",
+          "废弃"
+        ]
+      ],
+      [
+        "https://vocab.uclcaal.org/concept/vernacular-building-functions/002",
+        [
+          "Administrative",
+          "Әкімшілік",
+          "Админстративтик",
+          "Административное",
+          "Маъмурӣ",
+          "Administratiw",
+          "Ma'muriy",
+          "行政"
+        ]
+      ],
+      [
+        "https://vocab.uclcaal.org/concept/vernacular-building-functions/003",
+        [
+          "Commercial",
+          "Коммерциялық",
+          "Комерциялык",
+          "Коммерческое",
+          "Тиҷоратӣ",
+          "Söwda",
+          "Tadbirkorlik",
+          "商业"
+        ]
+      ],
+      [
+        "https://vocab.uclcaal.org/concept/vernacular-building-functions/004",
+        [
+          "Cultural",
+          "Мәдени",
+          "Маданий",
+          "Культурное",
+          "Фарҳангӣ",
+          "Medeni",
+          "Madaniy",
+          "文化"
+        ]
+      ],
+      [
+        "https://vocab.uclcaal.org/concept/vernacular-building-functions/005",
+        [
+          "Educational",
+          "Білім беру",
+          "Билим беруу",
+          "Образовательное",
+          "Таълимӣ",
+          "Bilim",
+          "Ta'lim",
+          "教育"
+        ]
+      ],
+      [
+        "https://vocab.uclcaal.org/concept/vernacular-building-functions/006",
+        [
+          "Handicraft",
+          "Қолөнер",
+          "Кол онорчулук",
+          "Ремесленное",
+          "Ҳунармандӣ",
+          "El işleri",
+          "Hunarmandchilik",
+          "手工艺"
+        ]
+      ],
+      [
+        "https://vocab.uclcaal.org/concept/vernacular-building-functions/007",
+        [
+          "Health",
+          "Медициналық",
+          "Саламатттыкты сактоо",
+          "Медицинское",
+          "Саломатӣ",
+          "Saglyk",
+          "Kasalxona",
+          "医疗"
+        ]
+      ],
+      [
+        "https://vocab.uclcaal.org/concept/vernacular-building-functions/008",
+        [
+          "Hotel",
+          "Қонақүй",
+          "Мейманкана",
+          "Гостиничное",
+          "Меҳмонхона",
+          "Myhmanhana",
+          "Mehmonxona",
+          "旅馆"
+        ]
+      ],
+      [
+        "https://vocab.uclcaal.org/concept/vernacular-building-functions/009",
+        [
+          "Public",
+          "Қоғамдық",
+          "Коомдук",
+          "Общественное",
+          "Ҷамъиятӣ",
+          "Jemgyýetçilik",
+          "Jamoat binosi",
+          "公共"
+        ]
+      ],
+      [
+        "https://vocab.uclcaal.org/concept/vernacular-building-functions/010",
+        [
+          "Residential",
+          "Тұрғын",
+          "Турак жай",
+          "Жилое",
+          "Истиқоматӣ",
+          "Ýaşaýyş jaýy",
+          "Turarjoy",
+          "居住"
+        ]
+      ],
+      [
+        "https://vocab.uclcaal.org/concept/vernacular-building-functions/011",
+        [
+          "Storage",
+          "Қоймалық",
+          "Кампа",
+          "Складское",
+          "Анбор",
+          "Ammar",
+          "Ombor",
+          "仓储"
+        ]
+      ],
+      [
+        "https://vocab.uclcaal.org/concept/vernacular-building-functions/012",
+        [
+          "Commercial (Hotel)"
+        ]
+      ]
+    ]
+  },
+  {
+    "slug": "vernacular-occupation-status",
+    "scheme": "caalVernacularOccupationStatus",
+    "fields": [
+      "Occupation",
+      "occupation"
+    ],
+    "terms": [
+      [
+        "https://vocab.uclcaal.org/concept/vernacular-occupation-status/001",
+        [
+          "Fully occupied",
+          "Толық пайдалануда",
+          "Толук ээлеген (толугу менен жашашат)",
+          "Полностью занято",
+          "Пурра ишғолшуда",
+          "Doly eýelenen",
+          "To‘liq foydalanilmoqda",
+          "完全使用"
+        ]
+      ],
+      [
+        "https://vocab.uclcaal.org/concept/vernacular-occupation-status/002",
+        [
+          "Not occupied",
+          "Пайдаланылмайды",
+          "Ээленген эмес",
+          "Не занято",
+          "Ишғолнашуда",
+          "Eýelenmedik",
+          "Foydalanilmaydi",
+          "未使用"
+        ]
+      ],
+      [
+        "https://vocab.uclcaal.org/concept/vernacular-occupation-status/003",
+        [
+          "Partially occupied",
+          "Ішінара пайдалануда",
+          "Жарым жартылай ээленген.",
+          "Частично занято",
+          "Қисман ишғолшуда",
+          "Bölekleýin eýelenen",
+          "Qisman foydalaniladi",
+          "部分使用"
+        ]
+      ]
+    ]
+  },
+  {
+    "slug": "vernacular-open-spaces",
+    "scheme": "caalVernacularOpenSpaces",
+    "fields": [
+      "Type of Open Space",
+      "type_of_open_space"
+    ],
+    "terms": [
+      [
+        "https://vocab.uclcaal.org/concept/vernacular-open-spaces/001",
+        [
+          "Courtyard",
+          "Аула",
+          "Ички короо",
+          "Двор",
+          "Ҳавлӣ",
+          "Howly",
+          "Hovli",
+          "院落"
+        ]
+      ],
+      [
+        "https://vocab.uclcaal.org/concept/vernacular-open-spaces/002",
+        [
+          "Garden",
+          "Бақ",
+          "Бакча",
+          "Сад",
+          "Боғ",
+          "Bag",
+          "Bog‘",
+          "花园"
+        ]
+      ],
+      [
+        "https://vocab.uclcaal.org/concept/vernacular-open-spaces/003",
+        [
+          "None",
+          "Жоқ",
+          "Жок",
+          "Ничего",
+          "Не",
+          "Hiç zatsyz",
+          "Hech biri",
+          "无"
+        ]
+      ],
+      [
+        "https://vocab.uclcaal.org/concept/vernacular-open-spaces/004",
+        [
+          "Orchard",
+          "Жеміс бағы",
+          "Момо-жемиш багы",
+          "Фруктовый сад",
+          "Боғи мева",
+          "Miweli bag",
+          "Mevali bog‘",
+          "果园"
+        ]
+      ],
+      [
+        "https://vocab.uclcaal.org/concept/vernacular-open-spaces/005",
+        [
+          "Other",
+          "Басқа",
+          "Башка",
+          "Другой",
+          "Дигар",
+          "Başga",
+          "Boshqa",
+          "其他"
+        ]
+      ],
+      [
+        "https://vocab.uclcaal.org/concept/vernacular-open-spaces/006",
+        [
+          "Storage area",
+          "Шаруашылық алаңы",
+          "Кампа аянты (сактоочу жай)",
+          "Складское помещение",
+          "Анбор",
+          "Ammar",
+          "Saqlash joyi",
+          "储物区"
+        ]
+      ]
+    ]
+  },
+  {
+    "slug": "vernacular-intervention-degrees",
+    "scheme": "caalVernacularInterventionDegrees",
+    "fields": [
+      "Degree of Intervention",
+      "degree_of_intervention"
+    ],
+    "terms": [
+      [
+        "https://vocab.uclcaal.org/concept/vernacular-intervention-degrees/001",
+        [
+          "Major",
+          "Елеулі",
+          "Негизги/Маанилуу",
+          "Крупный",
+          "Зиёд",
+          "Köp",
+          "Katta",
+          "重大干预"
+        ]
+      ],
+      [
+        "https://vocab.uclcaal.org/concept/vernacular-intervention-degrees/002",
+        [
+          "Minor",
+          "Болмашы",
+          "Кошумча/Мааниси томон",
+          "Незначительный",
+          "Кам",
+          "Az",
+          "Kichik",
+          "小型干预"
+        ]
+      ],
+      [
+        "https://vocab.uclcaal.org/concept/vernacular-intervention-degrees/003",
+        [
+          "None",
+          "Жоқ",
+          "Жок",
+          "Никакой",
+          "Нест",
+          "Hiç hili",
+          "Yo‘q",
+          "无干预"
+        ]
+      ],
+      [
+        "https://vocab.uclcaal.org/concept/vernacular-intervention-degrees/004",
+        [
+          "Total",
+          "Барлығы",
+          "Жалпы",
+          "Полный",
+          "Пурра",
+          "Doly",
+          "Jami",
+          "全面干预"
+        ]
+      ]
+    ]
+  },
+  {
+    "slug": "vernacular-intervention-types",
+    "scheme": "caalVernacularInterventionTypes",
+    "fields": [
+      "Type of Intervention",
+      "type_of_intervention"
+    ],
+    "terms": [
+      [
+        "https://vocab.uclcaal.org/concept/vernacular-intervention-types/001",
+        [
+          "Abandoned",
+          "Қараусыз",
+          "Кароосуз калган/ ташталган",
+          "Заброшенное",
+          "Партофташуда",
+          "Terk edilen",
+          "Tashlandiq",
+          "废弃"
+        ]
+      ],
+      [
+        "https://vocab.uclcaal.org/concept/vernacular-intervention-types/002",
+        [
+          "Adaptation",
+          "Бейімдеу",
+          "Ылайыкташтыруу",
+          "Адаптация",
+          "Мутобиқшавӣ",
+          "Adaptasiýa",
+          "Moslashtirish",
+          "适应性改造"
+        ]
+      ],
+      [
+        "https://vocab.uclcaal.org/concept/vernacular-intervention-types/003",
+        [
+          "Conservation",
+          "Консервация/Консервациялық жұмыстар",
+          "Сохранение",
+          "Asrab turish"
+        ]
+      ],
+      [
+        "https://vocab.uclcaal.org/concept/vernacular-intervention-types/004",
+        [
+          "Maintenance",
+          "Күтім",
+          "Техникалык тейлоо/ кутуу",
+          "Содержание",
+          "Нигоҳдорӣ",
+          "Hyzmat etme",
+          "Asrab turish",
+          "维护"
+        ]
+      ],
+      [
+        "https://vocab.uclcaal.org/concept/vernacular-intervention-types/005",
+        [
+          "New work",
+          "Жаңа құрылыс",
+          "Жаны жумуш",
+          "Новодел",
+          "Корҳои нав",
+          "Täze iş",
+          "Yangi qurilish",
+          "新建"
+        ]
+      ],
+      [
+        "https://vocab.uclcaal.org/concept/vernacular-intervention-types/006",
+        [
+          "Preservation",
+          "Сақтау",
+          "Сактоо/ Консервация",
+          "Сохранение",
+          "Муҳофизат",
+          "Gorap saklama",
+          "Saqlash",
+          "保护"
+        ]
+      ],
+      [
+        "https://vocab.uclcaal.org/concept/vernacular-intervention-types/007",
+        [
+          "Reconstruction",
+          "Қайта құру",
+          "Кайра куруу",
+          "Реконструкция",
+          "Барқарорсозӣ",
+          "Durky täzeleme",
+          "Tiklash",
+          "重建"
+        ]
+      ],
+      [
+        "https://vocab.uclcaal.org/concept/vernacular-intervention-types/008",
+        [
+          "Repair",
+          "Жөндеу",
+          "Ондоо",
+          "Ремонт",
+          "Таъмир",
+          "Bejeriş",
+          "Tuzatish / qayta qurish",
+          "修缮"
+        ]
+      ],
+      [
+        "https://vocab.uclcaal.org/concept/vernacular-intervention-types/009",
+        [
+          "Restoration",
+          "Қалпына келтіру",
+          "Калыбына келтируу",
+          "Реставрация",
+          "Тармим",
+          "Restawrasiýa",
+          "Qayta tiklash",
+          "修复"
+        ]
+      ]
+    ]
   }
 ];
   const vernacularInlineKey=s=>String(s??'').trim().replace(/\s+/g,' ').toLowerCase();
