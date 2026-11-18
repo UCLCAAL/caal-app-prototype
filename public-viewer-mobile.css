@@ -1,0 +1,88 @@
+/* Public Viewer only. Desktop layout remains in the existing stylesheets. */
+.public-mobile-menu,.public-mobile-navigation,.public-mobile-shape-button,.public-mobile-shape-preview,.public-mobile-tools-tray { display:none; }
+.public-mobile-shape-preview[hidden] { display:none; }
+body.public-viewer.is-mobile-viewer {
+  height:var(--public-mobile-height,100dvh); min-height:0; max-height:var(--public-mobile-height,100dvh);
+  overflow:hidden; padding-left:env(safe-area-inset-left); padding-right:env(safe-area-inset-right);
+}
+.public-viewer.is-mobile-viewer .app-header { position:relative; display:flex; align-items:center; justify-content:space-between; flex:0 0 auto; min-height:52px; gap:.5rem; padding:.4rem .65rem; padding-top:max(.4rem,env(safe-area-inset-top)); z-index:100; }
+.public-viewer.is-mobile-viewer .app-brand { min-width:0; gap:.55rem; }
+.public-viewer.is-mobile-viewer .app-brand-logo { width:40px; height:30px; object-fit:contain; }
+.public-viewer.is-mobile-viewer .app-brand h1 { font-size:1rem; line-height:1.2; margin:0; }
+.public-viewer.is-mobile-viewer .app-brand p { display:none; }
+.public-viewer.is-mobile-viewer .public-mobile-menu { display:block; flex-shrink:0; }
+.public-mobile-menu > summary { display:flex; align-items:center; justify-content:center; list-style:none; width:44px; height:44px; border:1px solid var(--border); border-radius:4px; color:var(--accent); cursor:pointer; }
+.public-mobile-menu > summary::-webkit-details-marker { display:none; }
+.public-viewer.is-mobile-viewer .public-mobile-menu-content { position:absolute; right:max(.65rem,env(safe-area-inset-right)); top:100%; z-index:110; width:min(320px,calc(100vw - 24px)); max-height:calc(var(--public-mobile-height,100dvh) - 70px); overflow:auto; padding:.8rem; background:var(--panel,#fff); border:1px solid var(--border); border-radius:4px; box-shadow:0 8px 24px #243d3026; }
+.public-viewer.is-mobile-viewer .public-page-tabs { display:flex; flex-wrap:wrap; margin-bottom:.8rem; }
+.public-viewer.is-mobile-viewer .public-page-tabs button { min-height:44px; }
+.public-viewer.is-mobile-viewer .public-header-actions { flex-wrap:wrap; justify-content:flex-start; }
+.public-viewer.is-mobile-viewer .public-language-selector > span { display:inline; }
+.public-viewer.is-mobile-viewer .public-language-selector select { min-height:44px; max-width:10rem; font-size:16px; }
+.public-viewer.is-mobile-viewer .public-sign-in { min-height:44px; display:inline-flex; align-items:center; }
+.public-viewer.is-mobile-viewer #publicViewerPage { position:relative; display:block; flex:1 1 0; height:0; min-height:0; margin:0; width:100%; overflow:hidden; }
+.public-viewer.is-mobile-viewer #publicViewerPage > .workspace-pane { display:none; position:absolute; inset:0; width:100%; height:100%; min-height:0; border:0; transform:none; opacity:1; visibility:visible; box-shadow:none; transition:none; }
+.public-viewer.is-mobile-viewer #publicViewerPage[data-mobile-view="map"] > .map-pane,
+.public-viewer.is-mobile-viewer #publicViewerPage[data-mobile-view="browse"] > .browse-pane,
+.public-viewer.is-mobile-viewer #publicViewerPage[data-mobile-view="record"] > .detail-pane { display:flex; flex-direction:column; }
+.public-viewer.is-mobile-viewer #publicViewerPage > .viewer-detail-edge-toggle { display:none; }
+.public-viewer.is-mobile-viewer .workspace-pane > .pane-body { flex:1 1 0; min-height:0; overflow:auto; -webkit-overflow-scrolling:touch; padding:.8rem; overscroll-behavior:contain; }
+.public-viewer.is-mobile-viewer .workspace-pane > .pane-header { flex:0 0 auto; padding:.55rem .8rem; }
+.public-viewer.is-mobile-viewer .workspace-pane > .pane-header h2 { font-size:1rem; }
+.public-viewer.is-mobile-viewer .workspace-pane > .pane-header p,.public-viewer.is-mobile-viewer .map-pane > .pane-header { display:none; }
+.public-viewer.is-mobile-viewer .map-pane-body { flex:1 1 0; position:relative; min-height:0; padding:0; overflow:hidden; }
+.public-viewer.is-mobile-viewer #publicMap { width:100%; height:100%; }
+.public-viewer.is-mobile-viewer .map-underbar { flex:0 0 auto; min-height:20px; max-height:32px; padding:.15rem .5rem; font-size:.72rem; overflow:hidden; }
+.public-viewer.is-mobile-viewer .map-underbar > * { margin:0; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.public-viewer.is-mobile-viewer .public-search-row { flex-wrap:nowrap; }
+.public-viewer.is-mobile-viewer .public-search-row input { width:0; min-width:0; font-size:16px; }
+.public-viewer.is-mobile-viewer .public-search-row .action-btn { width:auto; flex:0 0 auto; }
+.public-viewer.is-mobile-viewer input,.public-viewer.is-mobile-viewer select,.public-viewer.is-mobile-viewer textarea { font-size:16px; }
+.public-viewer.is-mobile-viewer .action-btn,.public-viewer.is-mobile-viewer .public-record-open,.public-viewer.is-mobile-viewer .viewer-layer-check,.public-viewer.is-mobile-viewer .viewer-result-group-header { min-height:44px; }
+.public-viewer.is-mobile-viewer .viewer-layer-grid-two-column { grid-template-columns:repeat(2,minmax(0,1fr)); gap:.7rem; }
+.public-viewer.is-mobile-viewer .viewer-layer-check { width:100%; padding:.55rem; }
+.public-viewer.is-mobile-viewer #publicDetails .group-grid { grid-template-columns:minmax(0,1fr); }
+.public-viewer.is-mobile-viewer .public-mobile-navigation { display:flex; flex:0 0 auto; gap:.25rem; background:var(--panel,#fff); border-top:1px solid var(--border); padding:.2rem .5rem; padding-bottom:max(.2rem,env(safe-area-inset-bottom)); z-index:90; }
+.public-mobile-navigation button { flex:1; display:flex; align-items:center; justify-content:center; gap:.45rem; min-height:44px; padding:.45rem; border:0; border-radius:4px; background:transparent; color:var(--muted); font:inherit; font-size:.85rem; }
+.public-mobile-navigation button[aria-selected="true"] { background:var(--accent-soft,#e7f1ed); color:var(--accent); font-weight:600; }
+.public-mobile-navigation button:disabled { opacity:.4; }
+.public-viewer.is-mobile-viewer .public-information-page { min-height:0; flex:1 1 0; padding:1rem; }
+.public-viewer.is-mobile-viewer .public-information-layout,.public-viewer.is-mobile-viewer .public-feedback-row { grid-template-columns:minmax(0,1fr); gap:1rem; }
+.public-viewer.is-mobile-viewer .public-information-sidebar { border-left:0; border-top:1px solid var(--border); padding:1rem 0 0; }
+.public-viewer.is-mobile-viewer .maplibregl-ctrl-group button,.public-viewer.is-mobile-viewer .map-custom-control button { width:40px; height:40px; min-height:40px; }
+.public-viewer.is-mobile-viewer .maplibregl-ctrl-compass { display:none; }
+.public-viewer.is-mobile-viewer .public-mobile-tools-tray:not([hidden]) { position:absolute; display:grid; grid-template-columns:repeat(2,44px); gap:6px; right:58px; top:8px; max-height:calc(100% - 16px); overflow:auto; padding:6px; background:#fffffff2; border:1px solid var(--border); border-radius:4px; z-index:75; }
+.public-viewer.is-mobile-viewer .public-mobile-tools-tray .maplibregl-ctrl { margin:0; float:none; width:44px; }
+.public-viewer.is-mobile-viewer .public-mobile-tools-tray button { width:44px; height:44px; }
+.public-viewer.is-mobile-viewer .map-options-panel,.public-viewer.is-mobile-viewer .viewer-measurement-panel { top:8px; right:8px; left:auto; width:min(300px,calc(100% - 16px)); max-width:calc(100% - 16px); max-height:calc(100% - 16px); overflow:auto; z-index:80; }
+.public-viewer.is-mobile-viewer #publicDrawInstruction { left:8px; right:54px; top:8px; transform:none; width:auto; max-width:none; padding:.45rem .55rem; font-size:.8rem; gap:.4rem; flex-wrap:wrap; }
+.public-viewer.is-mobile-viewer #publicDrawInstructionText { flex:1 1 100%; }
+.public-viewer.is-mobile-viewer #publicFinishDrawing:not([hidden]) { display:inline-flex !important; align-items:center; }
+.public-viewer.is-mobile-viewer #publicDrawInstruction button { min-height:36px; }
+.public-viewer.is-mobile-viewer .public-map-key { max-width:180px; max-height:min(240px,calc(var(--public-mobile-height,100dvh) - 180px)); overflow:auto; font-size:.75rem; padding:.5rem; }
+.public-viewer.is-mobile-viewer .public-map-key-close { min-width:36px; min-height:36px; }
+.public-viewer.is-mobile-viewer .maplibregl-ctrl-attrib { font-size:10px; max-width:calc(100% - 12px); }
+.public-viewer.is-mobile-viewer .maplibregl-popup { max-width:min(320px,calc(100% - 24px)) !important; }
+.public-viewer.is-mobile-viewer .public-map-picks { max-height:min(340px,calc(var(--public-mobile-height,100dvh) - 180px)); }
+.public-viewer.is-mobile-viewer .public-popup-close { min-width:36px; min-height:36px; }
+.public-viewer.is-mobile-viewer .public-list-shape-preview { display:none; }
+.public-viewer.is-mobile-viewer .public-mobile-shape-button { display:inline-flex; justify-content:center; align-items:center; width:40px; height:40px; flex:0 0 40px; border:1px solid var(--border); background:var(--panel,#fff); color:var(--accent); border-radius:4px; cursor:pointer; }
+.public-viewer.is-mobile-viewer .public-mobile-pick-row { display:flex; flex-wrap:wrap; align-items:center; gap:.35rem; }
+.public-viewer.is-mobile-viewer .public-mobile-pick-row > .public-map-pick { flex:1; min-width:0; }
+.public-viewer.is-mobile-viewer .public-record > .public-mobile-shape-button { position:absolute; right:3rem; top:.5rem; }
+.public-viewer.is-mobile-viewer .public-record:has(.public-mobile-shape-button) .public-record-open { padding-right:5.8rem; }
+.public-viewer.is-mobile-viewer .public-mobile-shape-preview:not([hidden]) { display:block; flex:1 1 100%; grid-column:1/-1; margin:.4rem 0; padding:.5rem; text-align:center; background:var(--panel,#fff); border:1px solid var(--border); border-radius:4px; }
+.public-viewer.is-mobile-viewer .public-mobile-shape-preview img { display:block; width:160px; height:120px; object-fit:contain; margin:auto; }
+.public-viewer.is-mobile-viewer .public-mobile-shape-preview p { margin:.25rem 0; font-size:.8rem; }
+@media(prefers-reduced-motion:reduce) { .public-viewer.is-mobile-viewer * { scroll-behavior:auto; } }
+
+@media(max-height:420px) {
+ .public-viewer.is-mobile-viewer .maplibregl-ctrl-top-right { display:flex; flex-direction:row-reverse; align-items:flex-start; gap:6px; top:8px; right:8px; }
+ .public-viewer.is-mobile-viewer .maplibregl-ctrl-top-right > .maplibregl-ctrl { margin:0; }
+ .public-viewer.is-mobile-viewer .public-mobile-tools-tray:not([hidden]) { top:60px; right:8px; max-height:calc(100% - 68px); }
+}
+
+.public-viewer.is-mobile-viewer #viewerMeasurementPanel { top:auto; bottom:8px; max-height:60%; width:min(280px,calc(100% - 16px)); }
+
+.public-viewer.is-mobile-viewer #publicDetails .measurement-row-fields { grid-template-columns:minmax(0,1fr); }
+.public-viewer.is-mobile-viewer #publicDetails .detail-value,.public-viewer.is-mobile-viewer #publicDetails .record-title h3 { overflow-wrap:anywhere; }

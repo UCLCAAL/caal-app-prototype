@@ -60,6 +60,7 @@
     el('publicResultsLocate')?.removeAttribute('aria-busy');syncResultsLocate();
   }
   async function zoomToResults(initial=false){
+    if(!initial)window.publicViewerMobile?.show('map');
     if(!state.map?.getSource('public-data')||!anyTypes())return;
     cancelResultsLocate();const sequence=resultsLocateSequence,controller=new AbortController();
     resultsLocateController=controller;
@@ -105,7 +106,7 @@
     if(previewAnchor){if(previewDescription)previewAnchor.setAttribute('aria-describedby',previewDescription);else previewAnchor.removeAttribute('aria-describedby');}
     previewAnchor=null;previewDescription=null;
   }
-  function showListPreview(r,anchor){clearListPreview();if(!rs(r.record_type)||!anchor)return;
+  function showListPreview(r,anchor){if(window.publicViewerMobile?.active())return;clearListPreview();if(!rs(r.record_type)||!anchor)return;
     previewTimer=setTimeout(async()=>{
       const box=node('div',undefined,'public-list-shape-preview');box.id='publicListShapePreview';box.setAttribute('role','tooltip');
       box.append(node('strong',label(r)),node('small',names[r.record_type]));
@@ -122,6 +123,16 @@
   window.addEventListener('scroll',clearListPreview,true);
   window.addEventListener('resize',clearListPreview);
   window.addEventListener('keydown',event=>{if(event.key==='Escape')clearListPreview();});
+  function addTouchPreview(container,r){
+    if(!rs(r.record_type))return;
+    const button=node('button',undefined,'public-mobile-shape-button');button.type='button';button.title=t('public_shape_preview','Preview geometry');button.setAttribute('aria-label',button.title);button.setAttribute('aria-expanded','false');
+    button.innerHTML='<svg aria-hidden="true" viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/></svg>';
+    const preview=node('div',undefined,'public-mobile-shape-preview');preview.hidden=true;
+    const image=node('img');image.width=160;image.height=120;image.alt=t('public_shape_preview_for','Geometry shape preview for {label}',{label:label(r)});image.hidden=true;
+    const status=uiNode('p','public_loading_shape','Loading shape...');preview.append(image,status);
+    button.onclick=async event=>{event.preventDefault();event.stopPropagation();preview.hidden=!preview.hidden;button.setAttribute('aria-expanded',String(!preview.hidden));if(preview.hidden){clearHover();return;}hoverRecord(r);if(!image.dataset.loaded){await shapeImage(r.record_type,r.source_row_id,image);if(!image.hidden){image.dataset.loaded='true';status.hidden=true;}else status.textContent=t('public_shape_preview_unavailable','Shape preview unavailable');}};
+    container.append(button,preview);
+  }
   const recordKey=r=>r.record_type+'/'+r.source_row_id;
   function rememberGeometry(r,geometry){if(!geometry)return;geometryCache.set(recordKey(r),geometry);if(geometryCache.size>100)geometryCache.delete(geometryCache.keys().next().value);}
   function cachedGeometry(r){return geometryCache.get(recordKey(r))||state.mapFeatures.find(f=>Number(f.properties.count||1)===1&&recordKey(f.properties)===recordKey(r))?.geometry;}
@@ -145,6 +156,7 @@
   // Locate a result without opening details or changing the selected record.
   let locateSequence=0;
   async function locateRecord(r){
+    window.publicViewerMobile?.show('map');
     cancelInitialFit();
     const sequence=++locateSequence;
     if(!state.map?.getSource('public-data')){(I?I.bind(el('publicMapStatus'),"public_map_is_not_ready_yet",'Map is not ready yet.',{},"textContent"):el('publicMapStatus').textContent=t("public_map_is_not_ready_yet",'Map is not ready yet.'));return false;}
@@ -202,7 +214,7 @@
     state.selected=r;clearHover();detailsUI?.clear();
     state.tools?.setSelected(cachedGeometry(r)||null,r);
     window.viewerDetailPanel?.select(r.record_type+'/'+r.source_row_id);
-    window.viewerDetailPanel?.open();state.tools?.refreshData();
+    window.viewerDetailPanel?.open();window.publicViewerMobile?.selectRecord();state.tools?.refreshData();
     document.querySelectorAll('.public-record').forEach(b=>b.classList.toggle('is-selected',b.dataset.recordKey===r.record_type+'/'+r.source_row_id));
     el('publicClose').hidden=false;const pane=el('publicDetails');pane.replaceChildren(uiNode('p',"public_loading_record",'Loading record...'));
     try{
@@ -239,10 +251,11 @@
   function initMap(){
     if(!window.maplibregl)throw new Error('MapLibre did not load. Check the map script request in the browser Network tab.');
     if(!Number.isFinite(maximumZoom())||maximumZoom()<0||maximumZoom()>22)throw new Error('Invalid public map zoom policy.');
-    state.map=new maplibregl.Map({container:'publicMap',style:basemapStyle(),center:[66.9,42.5],zoom:4,maxZoom:maximumZoom(),maxPitch:0,renderWorldCopies:false});
+    state.map=new maplibregl.Map({container:'publicMap',style:basemapStyle(),center:[66.9,42.5],zoom:4,maxZoom:maximumZoom(),maxPitch:0,renderWorldCopies:false,trackResize:false});
     state.map.dragRotate.disable();state.map.touchZoomRotate.disableRotation();state.map.addControl(new maplibregl.NavigationControl({showCompass:true}));state.map.addControl(new maplibregl.FullscreenControl({container:document.querySelector('.map-pane-body')}));state.map.addControl(new maplibregl.ScaleControl());
     const compass=el('publicMap').querySelector('.maplibregl-ctrl-compass');if(compass){compass.disabled=true;(I?I.bind(compass,"public_rotation_is_disabled_in_the_public_viewer",'Rotation is disabled in the public Viewer',{},"title"):compass.title=t("public_rotation_is_disabled_in_the_public_viewer",'Rotation is disabled in the public Viewer'));}
     state.tools=window.createPublicViewerTools({map:state.map,names,colors,onArea:g=>{state.areaPolygon=g;reload();},getFeatures:()=>state.mapFeatures,getSelected:()=>state.selected,onMapChange:()=>loadMap(),onBasemap:()=>{cancelResultsLocate();clearHover();state.mapController?.abort();popup?.remove();selectionPopup?.remove();state.map.setStyle(basemapStyle());syncResultsLocate();}});
+    window.publicViewerMobile?.mapReady(state.map);
     state.map.on('error',event=>mapError(event.error));
     state.map.on('style.load',()=>{el('publicMapError').hidden=true;state.map.addSource('public-data',{type:'geojson',data:{type:'FeatureCollection',features:[]}});
       const color=['match',['get','record_type'],...Object.entries(colors).flat(), '#487061'];
@@ -286,13 +299,13 @@
         const grouped=new Map();for(const f of [...records.values(),...clusters.values()]){const type=f.properties.record_type;if(!grouped.has(type))grouped.set(type,[]);grouped.get(type).push(f);}
         for(const [type,features] of grouped){const group=node('details',undefined,'public-map-pick-group');group.open=true;
           group.append(node('summary',names[type]+' ('+features.reduce((n,f)=>n+Number(f.properties.count||1),0).toLocaleString()+')'));
-          for(const f of features){if(Number(f.properties.count)>1){const groupedButton=node('button',t('public_grouped_zoom','{count} grouped records - zoom in',{count:Number(f.properties.count).toLocaleString(I?.locale())}),'action-btn public-map-pick');groupedButton.type='button';groupedButton.onclick=()=>{selectionPopup?.remove();state.map.easeTo({center:f.geometry.coordinates,zoom:Math.min(state.map.getZoom()+1,state.map.getMaxZoom())});};group.append(groupedButton);continue;}const b=node('button',label(f.properties),'action-btn public-map-pick');b.type='button';b.dataset.recordKey=recordKey(f.properties);b.classList.toggle('is-selected',!!state.selected&&recordKey(state.selected)===recordKey(f.properties));b.setAttribute('aria-pressed',String(b.classList.contains('is-selected')));if(f.properties.caal_id&&label(f.properties)!==f.properties.caal_id)b.append(node('small',f.properties.caal_id));b.onmouseenter=b.onfocus=()=>{hoverRecord(f.properties,f.geometry);showListPreview(f.properties,b);};b.onmouseleave=b.onblur=clearHover;b.onclick=()=>choose(f);group.append(b);}
+          for(const f of features){if(Number(f.properties.count)>1){const groupedButton=node('button',t('public_grouped_zoom','{count} grouped records - zoom in',{count:Number(f.properties.count).toLocaleString(I?.locale())}),'action-btn public-map-pick');groupedButton.type='button';groupedButton.onclick=()=>{selectionPopup?.remove();state.map.easeTo({center:f.geometry.coordinates,zoom:Math.min(state.map.getZoom()+1,state.map.getMaxZoom())});};group.append(groupedButton);continue;}const b=node('button',label(f.properties),'action-btn public-map-pick');b.type='button';b.dataset.recordKey=recordKey(f.properties);b.classList.toggle('is-selected',!!state.selected&&recordKey(state.selected)===recordKey(f.properties));b.setAttribute('aria-pressed',String(b.classList.contains('is-selected')));if(f.properties.caal_id&&label(f.properties)!==f.properties.caal_id)b.append(node('small',f.properties.caal_id));b.onmouseenter=b.onfocus=()=>{hoverRecord(f.properties,f.geometry);showListPreview(f.properties,b);};b.onmouseleave=b.onblur=clearHover;b.onclick=()=>choose(f);const row=node('div',undefined,'public-mobile-pick-row');row.append(b);addTouchPreview(row,f.properties);group.append(row);}
           list.append(group);}
         selectionPopup=new maplibregl.Popup({closeButton:false,closeOnClick:true,maxWidth:'320px',className:'public-draggable-popup'}).setLngLat(event.lngLat).setDOMContent(box).addTo(state.map);selectionPopup.on('close',clearHover);makePopupMovable(selectionPopup,box);
       });
       let hoverKey=null;
       state.map.on('mousemove',event=>{
-        if(state.tools?.isDrawing()||!event.point||event.originalEvent?.target?.closest?.('.maplibregl-popup'))return;
+        if(window.publicViewerMobile?.active()||state.tools?.isDrawing()||!event.point||event.originalEvent?.target?.closest?.('.maplibregl-popup'))return;
         const p=event.point,hits=state.map.queryRenderedFeatures([[p.x-3,p.y-3],[p.x+3,p.y+3]],{layers:['public-point-hit','public-line-hit','public-fill','public-related-points','public-related-outline','public-related-fill']});
         const f=hits[0];if(!f){hoverKey=null;popup?.remove();state.map.getCanvas().style.cursor='';return;}
         state.map.getCanvas().style.cursor='pointer';const props=f.properties;
@@ -334,7 +347,7 @@
   async function init(){
     try{
     relatedMap=window.createPublicViewerRelatedMap({getMap:()=>state.map,get,colors,status:message=>el('publicMapStatus').textContent=message});
-    detailsUI=window.createPublicViewerDetails({get,onOpen:openRecord,onLocate:locateRecord,onShowRelated:(record,relations)=>relatedMap.show(record,relations),onClearRelated:()=>relatedMap.clear(),onRelatedVisibility:value=>relatedMap.setVisibility(value)});
+    detailsUI=window.createPublicViewerDetails({get,onOpen:openRecord,onLocate:locateRecord,onShowRelated:(record,relations)=>{cancelInitialFit();window.publicViewerMobile?.show('map');return relatedMap.show(record,relations);},onClearRelated:()=>relatedMap.clear(),onRelatedVisibility:value=>relatedMap.setVisibility(value)});
     const [policy]=await Promise.all([get('/policy'),I?.load()]);state.policy=policy.policy;el('publicPreview').hidden=!state.policy.preview;
     const allowed=new Set(state.policy.record_types);
     for(const input of el('publicTypes').querySelectorAll('input')){
@@ -345,11 +358,11 @@
     el('publicResultsLocate').onclick=()=>zoomToResults();
     el('publicRetryResults').onclick=()=>loadList();
     el('publicClear').onclick=()=>{clearTimeout(searchAuditTimer);lastAuditedSearch=null;el('publicQuery').value='';state.filtersUI?.clear();state.areaPolygon=null;state.tools?.clearArea();el('publicMapFilter').checked=false;reload();};
-    el('publicClose').onclick=()=>{++state.detailSequence;state.detailController?.abort();state.selected=null;clearHover();detailsUI?.clear();if(mapPausedForDetails){mapPausedForDetails=false;void loadMap();}state.tools?.setSelected(null,{});window.viewerDetailPanel?.clear();document.querySelectorAll('.public-record').forEach(b=>b.classList.remove('is-selected'));el('publicDetails').replaceChildren(uiNode('p',"public_select_a_record_to_explore_its_details",'Select a record to explore its details.'));el('publicClose').hidden=true;};
+    el('publicClose').onclick=()=>{++state.detailSequence;state.detailController?.abort();state.selected=null;clearHover();detailsUI?.clear();if(mapPausedForDetails){mapPausedForDetails=false;void loadMap();}state.tools?.setSelected(null,{});window.viewerDetailPanel?.clear();window.publicViewerMobile?.clearRecord();document.querySelectorAll('.public-record').forEach(b=>b.classList.remove('is-selected'));el('publicDetails').replaceChildren(uiNode('p',"public_select_a_record_to_explore_its_details",'Select a record to explore its details.'));el('publicClose').hidden=true;};
     state.filtersUI=window.createPublicViewerFiltersUI({onChange:reload,getTypes:()=>[...el('publicTypes').querySelectorAll('input:checked')].map(i=>i.value),getText:()=>el('publicQuery').value.trim(),getArea:()=>state.areaPolygon,clearArea:()=>{state.areaPolygon=null;state.tools?.clearArea();},get});
     initialFitPending=state.filtersUI.hasLinkedFilters;
     state.groupsUI=window.createPublicViewerGroups({
-      get,filters,names,label,onOpen:openRecord,onLocate:locateRecord,getSelected:()=>state.selected,onHover:(r,b)=>{hoverRecord(r);showListPreview(r,b);},onHoverEnd:clearHover,beforeCounts:()=>initialMapStarted});
+      get,filters,names,label,onOpen:openRecord,onLocate:locateRecord,onAddPreview:addTouchPreview,getSelected:()=>state.selected,onHover:(r,b)=>{hoverRecord(r);showListPreview(r,b);},onHoverEnd:clearHover,beforeCounts:()=>initialMapStarted});
     // The list remains usable if the browser cannot initialise the map.
     initialMapTimer=setTimeout(releaseInitialMapStart,1500);
     try{initMap();}catch(error){mapError(error);releaseInitialMapStart();}void loadList();
@@ -359,6 +372,13 @@
     I?.onChange(()=>{state.groupsUI?.relabel();state.tools?.relabel();clearHover();selectionPopup?.remove();popup?.remove();return localiseCountries();});
     I?.apply();
   }catch(error){console.error('Public Viewer initialisation failed:',error);el('publicResultsStatus').textContent=error.message==='public_viewer_not_enabled'?t('public_not_enabled','The public Viewer is not enabled yet.'):t('public_temporarily_unavailable','The Viewer is temporarily unavailable.');(I?I.bind(el('publicMapStatus'),"public_viewer_unavailable",'Viewer unavailable.',{},"textContent"):el('publicMapStatus').textContent=t("public_viewer_unavailable",'Viewer unavailable.'));}}
-  window.addEventListener('viewer:layoutchange',()=>{state.map?.resize();tryInitialFit();});
+  window.addEventListener('public:panelchange',()=>{clearHover();popup?.remove();selectionPopup?.remove();});
+  const resizeVisibleMap=()=>{
+    const viewer=el('publicViewerPage');
+    if(viewer.hidden||(window.publicViewerMobile?.active()&&viewer.dataset.mobileView!=='map'))return;
+    state.map?.resize();tryInitialFit();
+  };
+  window.addEventListener('viewer:layoutchange',resizeVisibleMap);
+  window.addEventListener('resize',resizeVisibleMap);
   void init();
 })();

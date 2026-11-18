@@ -1,6 +1,6 @@
 (() => {
  'use strict';
- window.createPublicViewerGroups=({get,filters,names,label,onOpen,onLocate,getSelected,onHover,onHoverEnd,beforeCounts=()=>Promise.resolve()})=>{
+ window.createPublicViewerGroups=({get,filters,names,label,onOpen,onLocate,getSelected,onHover,onHoverEnd,onAddPreview,beforeCounts=()=>Promise.resolve()})=>{
   const host=document.getElementById('publicResults'),status=document.getElementById('publicResultsStatus'),retry=document.getElementById('publicRetryResults');
   const order=['monument','archive','rs3_poly','rs3_line','rs3_group','institution','vernacular','dataset','cartography'];
   function uiNode(tag,key,text,cls){const n=node(tag,undefined,cls);if(I)I.bind(n,key,text);else n.textContent=t(key,text);return n;}
@@ -44,7 +44,7 @@
      catch(_){(I?I.bind(locate,"public_location_could_not_be_loaded_try_again",'Location could not be loaded. Try again.',{},"title"):locate.title=t("public_location_could_not_be_loaded_try_again",'Location could not be loaded. Try again.'));}
      finally{locate.disabled=false;locate.removeAttribute('aria-busy');}
     };
-    b.append(open,locate);list.append(b);
+    b.append(open,locate);onAddPreview?.(b,r);list.append(b);
    }
   }
   async function loadGroup(g){

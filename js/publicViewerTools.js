@@ -506,7 +506,7 @@ window.createPublicViewerTools=({map,names,colors,onArea,getFeatures,getSelected
  }
 
  renderMeasurementIcons();showMeasurementPlaceholder(t('select_measurement_type','Select a measurement type.'));el('publicFinishDrawing').hidden=true;el('publicCancelDrawing').classList.add('viewer-spatial-draw-cancel');
- function stop(){if(mode?.startsWith('measure')){setSource('public-measure',lastMeasurement);if(!savedMeasurement)showMeasurementPlaceholder(t('select_measurement_type','Select a measurement type.'));}if(rectanglePanWasEnabled)map.dragPan?.enable();rectanglePanWasEnabled=false;rectangleStart=null;rectangleEnd=null;mode=null;points=[];el('publicDrawInstruction').hidden=true;el('viewerMeasurementInstruction').hidden=true;
+ function stop(){if(mode?.startsWith('measure')){setSource('public-measure',lastMeasurement);if(!savedMeasurement)showMeasurementPlaceholder(t('select_measurement_type','Select a measurement type.'));}if(rectanglePanWasEnabled)map.dragPan?.enable();rectanglePanWasEnabled=false;rectangleStart=null;rectangleEnd=null;mode=null;points=[];el('publicDrawInstruction').hidden=true;el('publicFinishDrawing').hidden=true;el('publicFinishDrawing').disabled=false;el('viewerMeasurementInstruction').hidden=true;
   for(const id of ['viewerMeasureDistanceBtn','viewerMeasureAreaBtn'])el(id).setAttribute('aria-pressed','false');
   el('publicDrawArea').setAttribute('aria-pressed',String(!!areaGeometry&&el('publicMapExtent').getAttribute('aria-pressed')!=='true'));map.getCanvas().style.cursor='';map.doubleClickZoom.enable();setSource('public-sketch',[]);}
  function start(kind){stop();mode=kind;
@@ -520,6 +520,11 @@ window.createPublicViewerTools=({map,names,colors,onArea,getFeatures,getSelected
   }else{
    el('publicDrawInstruction').hidden=false;
    el('publicDrawInstructionText').textContent=kind==='rectangle'?t('viewer_spatial_rectangle_drag_instruction','Click and drag to draw a rectangle.'):t('viewer_spatial_polygon_finish_instruction','Click to add points. Click the first point or right-click anywhere on the map to finish.');
+  }
+  if(window.publicViewerMobile?.active()){
+   window.publicViewerMobile.show('map');el('publicDrawInstruction').hidden=false;
+   el('publicDrawInstructionText').textContent=kind==='rectangle'?t('public_mobile_rectangle_instruction','Drag on the map to draw a rectangle.'):t('public_mobile_points_instruction','Tap to add points, then choose Finish.');
+   el('publicFinishDrawing').hidden=kind==='rectangle';el('publicFinishDrawing').disabled=true;
   }
  }
  function finish(){if(!mode)return;const kind=mode;
@@ -546,7 +551,7 @@ window.createPublicViewerTools=({map,names,colors,onArea,getFeatures,getSelected
  el('publicFinishDrawing').onclick=finish;el('publicCancelDrawing').onclick=stop;
  // Rectangle uses drag-to-draw, matching the authenticated Viewer.
  function beginRectangle(event){if(mode!=='rectangle')return;if(event.originalEvent?.button!=null&&event.originalEvent.button!==0)return;
-  event.preventDefault?.();event.originalEvent?.preventDefault?.();rectangleStart=[event.lngLat.lng,event.lngLat.lat];rectangleEnd=rectangleStart;points=[rectangleStart];
+  event.preventDefault?.();if(!event.originalEvent?.type?.startsWith('touch'))event.originalEvent?.preventDefault?.();rectangleStart=[event.lngLat.lng,event.lngLat.lat];rectangleEnd=rectangleStart;points=[rectangleStart];
  }
  function endRectangle(event){if(mode!=='rectangle'||!rectangleStart)return;
   event.preventDefault?.();const end=event.lngLat?[event.lngLat.lng,event.lngLat.lat]:rectangleEnd;
@@ -554,6 +559,10 @@ window.createPublicViewerTools=({map,names,colors,onArea,getFeatures,getSelected
   points=[rectangleStart,end];suppressDrawingClick=true;setTimeout(()=>{suppressDrawingClick=false;},250);finish();
  }
  map.on('mousedown',beginRectangle);map.on('mouseup',endRectangle);
+ map.on('touchstart',event=>{if(mode!=='rectangle')return;if(event.points?.length>1){stop();return;}beginRectangle(event);});
+ map.on('touchmove',event=>{if(mode!=='rectangle'||!rectangleStart)return;if(event.points?.length>1){stop();return;}event.preventDefault?.();rectangleEnd=[event.lngLat.lng,event.lngLat.lat];setSource('public-sketch',features(rectangle(rectangleStart,rectangleEnd),mode));});
+ map.on('touchend',event=>{if(mode==='rectangle'&&rectangleStart)endRectangle({preventDefault:()=>event.preventDefault?.(),lngLat:{lng:rectangleEnd[0],lat:rectangleEnd[1]}});});
+ map.getCanvas().addEventListener('touchcancel',()=>{if(mode==='rectangle')stop();});
  window.addEventListener('mouseup',event=>{if(mode==='rectangle'&&rectangleStart&&event.target!==map.getCanvas())stop();});
  map.on('click',event=>{
   if(suppressDrawingClick){event.publicViewerDrawing=true;suppressDrawingClick=false;return;}
@@ -561,7 +570,7 @@ window.createPublicViewerTools=({map,names,colors,onArea,getFeatures,getSelected
   const p=[event.lngLat.lng,event.lngLat.lat];if(Math.abs(p[0])>180||Math.abs(p[1])>85.0511)return;
   if((mode==='polygon'||mode==='measure-area')&&points.length>=3){const first=map.project(points[0]),current=map.project(p);if(Math.hypot(first.x-current.x,first.y-current.y)<=12){finish();return;}}
   const previous=points.at(-1);if(previous&&previous[0]===p[0]&&previous[1]===p[1])return;
-  points.push(p);setSource(mode.startsWith('measure')?'public-measure':'public-sketch',features(points,mode));if(mode.startsWith('measure'))renderMeasurement(points,mode);if(points.length>=198)finish();
+  points.push(p);if(window.publicViewerMobile?.active())el('publicFinishDrawing').disabled=points.length<(mode==='measure-distance'?2:3);setSource(mode.startsWith('measure')?'public-measure':'public-sketch',features(points,mode));if(mode.startsWith('measure'))renderMeasurement(points,mode);if(points.length>=198)finish();
  });
  map.on('dblclick',event=>{if(mode){event.preventDefault();finish();}});
  map.on('mousemove',event=>{
