@@ -79,6 +79,25 @@
     const selected=id=>[...el(id).selectedOptions].filter(o=>o.value);
     const treeInputs=(id='viewerFilterMonumentType')=>[
       ...el(id+'Tree').querySelectorAll('input[type=checkbox]')];
+    const hierarchyStates=new Map();
+    function syncHierarchyChecks(){
+      for(const [id,{byId}] of hierarchyStates){
+        const chosen=new Map(selected(id).map(o=>[o.value,o.textContent]));
+        for(const input of treeInputs(id)){
+          let parent=byId.get(input.value)?.parent_id,inheritedFrom=null;
+          const seen=new Set([input.value]);
+          while(parent&&!seen.has(parent)){
+            if(chosen.has(parent)){inheritedFrom=parent;break;}
+            seen.add(parent);parent=byId.get(parent)?.parent_id;
+          }
+          input.checked=chosen.has(input.value)||inheritedFrom!==null;
+          input.dataset.inherited=String(inheritedFrom!==null);
+          input.title=inheritedFrom===null?'':t('public_filter_inherited_from',
+            'Included by {label}. Remove that parent filter to change this selection.',
+            {label:chosen.get(inheritedFrom)});
+        }
+      }
+    }
     function changed(){render();onChange();}
     function remove(id,value){for(const o of el(id).options)if(o.value===value)o.selected=false;
       if(['viewerFilterMonumentType','viewerFilterCulturalPeriod'].includes(id))for(const i of treeInputs(id))if(i.value===value)i.checked=false;changed();}
@@ -107,6 +126,7 @@
           t('public_filters_matching_layers_only','Only layers that support all active filters are shown. Your layer selections are kept.');}
     }
     function render(){
+      syncHierarchyChecks();
       renderLayerAvailability();
       window.publicViewerVocabulary?.guides();
       if(linkedSelections.length){
@@ -129,7 +149,7 @@
       }
       for(const [id,field] of [['viewerFilterMonumentType','monument_types'],['viewerFilterCulturalPeriod','cultural_periods']]){
         const applies=getTypes().some(t=>(applicability[field]||[]).includes(t));
-        for(const input of treeInputs(id))input.disabled=!applies;
+        for(const input of treeInputs(id))input.disabled=!applies||input.dataset.inherited==='true';
       }
       const caal=el('viewerFilterCaalId');if(caal.value.trim())active.append(chip('CAAL_ID: '+caal.value.trim(),()=>{caal.value='';changed();}));
       const risk=el('viewerFilterRiskMin');risk.disabled=!getTypes().some(t=>applicability.risk_levels.includes(t));
@@ -159,6 +179,7 @@
       const oldSearch=host.querySelector('input[type=search]')?.value||'';
       const chosen=new Map(selected(select.id).map(o=>[o.value,o.textContent]));
       const byId=new Map(all.map(r=>[r.concept_id,r])),children=new Map();
+      hierarchyStates.set(select.id,{byId});
       for(const row of all){
         const parent=byId.has(row.parent_id)?row.parent_id:null;
         if(!children.has(parent))children.set(parent,[]);
