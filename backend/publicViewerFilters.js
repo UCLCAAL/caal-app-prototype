@@ -23,14 +23,20 @@ function advanced(query,values,clauses){
  const types=csv(query.monumentTypes);
  if(types.length){const p=add(types);scoped('monument_types',`filter_monument_types && ${p}::text[] OR filter_monument_type_concept_ids::text[] && (
  WITH RECURSIVE selected_tree AS (
-  SELECT concept_id FROM viewer_public.v_site_type_context WHERE concept_id=ANY(${p}::text[])
+  SELECT unnest(${p}::text[]) AS concept_id
   UNION SELECT c.concept_id FROM viewer_public.v_site_type_context c JOIN selected_tree p ON c.parent_id=p.concept_id
  ) SELECT coalesce(array_agg(concept_id::text),ARRAY[]::text[]) FROM selected_tree)`);}
  const periods=csv(query.culturalPeriods);
  if(periods.some(id=>!/^CP-[1-3]-[0-9]{4,8}$/.test(id)))throw Error('invalid_filters');
  if(periods.length)scoped('cultural_periods',`(source_row_id::text,caal_id) IN (
   SELECT cp.source_row_id::text,cp.caal_id FROM viewer_public.v_monument_cultural_periods cp
-  WHERE cp.concept_ids && ${add(periods)}::text[])`);
+  WHERE cp.concept_ids && (
+   WITH RECURSIVE selected_periods AS (
+    SELECT unnest(${add(periods)}::text[]) AS concept_id
+    UNION SELECT child.concept_id FROM viewer_public.v_cultural_period_context child
+      JOIN selected_periods parent ON child.parent_id=parent.concept_id
+   ) SELECT coalesce(array_agg(concept_id::text),ARRAY[]::text[]) FROM selected_periods
+  ))`);
  const levels=csv(query.condition).map(Number);
  if(levels.some(n=>!Number.isInteger(n)||n<1||n>5))throw Error('invalid_filters');
  if(levels.length)scoped('condition_levels',`filter_condition_levels && ${add(levels)}::int[]`);

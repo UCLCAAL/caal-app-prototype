@@ -89,13 +89,13 @@ function createPublicRouter(db, env=process.env) {
     res.json({ok:true,language:lang,site_types:rows.map(row=>({...row,label:publicTranslations.resolve({...row,...row.translations},lang,row.concept_id),display_label:publicTranslations.resolve({...row,...row.translations},lang,row.concept_id)})),field_applicability:CONDITIONAL_FIELDS});
   }));
   router.get('/cultural-periods',wrap(async(req,res)=>{
-    const rows=await cachedSmall('cultural_periods',
-      "SELECT family,lookup_name,item FROM viewer_public.v_detail_lookups WHERE family='monuments' AND lookup_name='cultural_period'",
-      'cultural_period_labels');
-    const options=(buildPublicDetailLookups(rows,req.query.lang).monuments.cultural_period||[])
-      .filter(row=>/^CP-[1-3]-[0-9]{4,8}$/.test(row.value))
-      .map(({value,label})=>({value,label:String(label||value)}));
-    res.json({ok:true,options:[...new Map(options.map(row=>[row.value,row])).values()]});
+    const rows=await cachedSmall('cultural_period_hierarchy',
+      "SELECT concept_id,parent_id,sort_order,translations FROM viewer_public.v_cultural_period_context ORDER BY sort_order NULLS LAST,concept_id",
+      'cultural_period_hierarchy');
+    const lang=publicTranslations.language(req.query.lang);
+    const options=rows.map(row=>({value:row.concept_id,concept_id:row.concept_id,parent_id:row.parent_id,
+      label:publicTranslations.resolve(row.translations,lang,row.concept_id)}));
+    res.json({ok:true,options});
   }));
   router.get('/location-confidence',wrap(async(req,res)=>{
     const [values,lookupRows]=await Promise.all([
