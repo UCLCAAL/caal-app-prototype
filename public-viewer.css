@@ -285,3 +285,6 @@
 .public-viewer .public-vocabulary-guide:hover { background:var(--accent-soft,#e7f1ed); }
 .public-viewer .public-vocabulary-guide:focus-visible,.public-viewer .public-vocabulary-link:focus-visible { outline:2px solid var(--accent,#487061); outline-offset:3px; }
 @media (pointer:coarse) { .public-viewer .public-vocabulary-guide { width:44px; height:44px; flex-basis:44px; } }
+
+/* Date ranges use the corrected Cultural Period chronology. */
+.public-tree-date { color:#69726d; font-size:.85em; font-weight:400; }

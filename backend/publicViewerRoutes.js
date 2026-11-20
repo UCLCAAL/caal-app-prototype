@@ -90,10 +90,10 @@ function createPublicRouter(db, env=process.env) {
   }));
   router.get('/cultural-periods',wrap(async(req,res)=>{
     const rows=await cachedSmall('cultural_period_hierarchy',
-      "SELECT concept_id,parent_id,sort_order,translations FROM viewer_public.v_cultural_period_context ORDER BY sort_order NULLS LAST,concept_id",
+      "SELECT concept_id,parent_id,sort_order,translations,date_range FROM viewer_public.v_cultural_period_context ORDER BY sort_order NULLS LAST,concept_id",
       'cultural_period_hierarchy');
     const lang=publicTranslations.language(req.query.lang);
-    const options=rows.map(row=>({value:row.concept_id,concept_id:row.concept_id,parent_id:row.parent_id,
+    const options=rows.map(row=>({value:row.concept_id,concept_id:row.concept_id,parent_id:row.parent_id,date_range:row.date_range,
       label:publicTranslations.resolve(row.translations,lang,row.concept_id)}));
     res.json({ok:true,options});
   }));

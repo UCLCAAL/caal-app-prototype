@@ -203,7 +203,11 @@
         const label=make('label',undefined,'browse-checkbox'),check=make('input');
         check.type='checkbox';check.value=row.concept_id;check.checked=option.selected;
         check.onchange=()=>{option.selected=check.checked;changed();};
-        label.append(check,make('span',labelText));line.append(label);box.append(line);
+        const name=make('span',labelText);
+        const range=typeof row.date_range==='string'?row.date_range.trim().replace(/^\((.*)\)$/,'$1').trim():'';
+        if(range&&range.toUpperCase()!=='NULL')name.append(
+          document.createTextNode(' '),make('span','('+range+')','public-tree-date'));
+        label.append(check,name);line.append(label);box.append(line);
         for(const child of descendants){const n=branch(child,depth+1);if(n)box.append(n);}
         return box;
       }
