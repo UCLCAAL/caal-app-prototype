@@ -133,6 +133,7 @@ app.get("/", (req, res, next) => {
     return next();
   }
 
+  res.locals.auditPage = "public_viewer";
   res.sendFile(path.join(appRoot, "public-viewer.html"));
 });
 

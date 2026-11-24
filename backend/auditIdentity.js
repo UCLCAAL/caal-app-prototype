@@ -9,17 +9,26 @@ for(const cidr of ['173.245.48.0/20','103.21.244.0/22','103.22.200.0/22','103.31
 function canonicalIp(value){const ip=normaliseIp(value);if(!ip)return null;return net.isIP(ip)===6?new URL(`http://[${ip}]/`).hostname.slice(1,-1):ip;}
 function proxyIp(ip){return ip&&cloudflare.check(ip,net.isIP(ip)===4?'ipv4':'ipv6');}
 function createAuditIdentity({secret=process.env.AUDIT_ID_SECRET,now=()=>Date.now(),ipLocation=null,
- useDigitalOceanIp=process.env.AUDIT_TRUST_DO_CONNECTING_IP==='true'}={}){
+ useDigitalOceanIp=process.env.AUDIT_TRUST_DO_CONNECTING_IP==='true',
+ publicVisitorPeriod=process.env.AUDIT_PUBLIC_VISITOR_PERIOD||'month'}={}){
  if(!/^[a-f0-9]{64,}$/i.test(secret||''))throw new Error('AUDIT_ID_SECRET must be a random hex secret of at least 32 bytes');
  const key=Buffer.from(secret,'hex');
- return async req=>{
+ return async (req,{isPublicViewer=false,occurredAt}={})=>{
   // Enable only behind App Platform ingress after verifying it overwrites this header.
   const ip=canonicalIp(useDigitalOceanIp?req.doConnectingIp:(req.ip||req.socket?.remoteAddress));
-  const period=String(Math.floor(now()/(7*86400000)));
+  const eventTime=Date.parse(occurredAt);
+  const time=Number.isFinite(eventTime)?eventTime:now();
+  const date=new Date(time);
+  const annual=publicVisitorPeriod==='year';
+  // Keep the existing numeric-string format: YYYYMM for months, YYYY00 for years.
+  const period=isPublicViewer
+   ?String(date.getUTCFullYear())+(annual?'00':String(date.getUTCMonth()+1).padStart(2,'0'))
+   :String(Math.floor(time/(7*86400000)));
+  const namespace=isPublicViewer?(annual?'caal-audit:public-year:v1':'caal-audit:public-month:v1'):'caal-audit:v1';
   const status=!ip?'unavailable':proxyIp(ip)?'proxy_unresolved':!isPublicIp(ip)?'non_public':null;
   const location=!status&&ipLocation?await ipLocation.lookup(ip):null;
   // Local and unresolved proxy endpoints must not be counted as visitors.
-  const token=!status?createHmac('sha256',key).update(`caal-audit:v1:${period}:${ip}`).digest('hex'):null;
+  const token=!status?createHmac('sha256',key).update(`${namespace}:${period}:${ip}`).digest('hex'):null;
   const user=req.session?.appSession?.user;
   return {visitor_id:token,visitor_period:token?period:null,
    country_code:location?.country_code||null,country_name:location?.country_name||null,

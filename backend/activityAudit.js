@@ -2,6 +2,7 @@ const {getDefaultIpLocation}=require('./ipLocation');
 const {createAuditIdentity,canonicalIp,proxyIp}=require('./auditIdentity');
 const {isPublicIp}=require('./ipLocation');
 function classify(value){const ip=canonicalIp(value);return !ip?'invalid':proxyIp(ip)?'cloudflare':isPublicIp(ip)?'public':'private';}
+const PUBLIC_VIEWER_PATH='/public-viewer.html';
 function createActivityAudit(pool,{flushMs=1000,maxQueue=1000,batchSize=100,logger=console,
  ipLocation=getDefaultIpLocation(),secret=process.env.AUDIT_ID_SECRET,identityFactory=createAuditIdentity}={}){
  const identify=identityFactory({secret,ipLocation});
@@ -14,7 +15,10 @@ function createActivityAudit(pool,{flushMs=1000,maxQueue=1000,batchSize=100,logg
   const captured={ip:req.ip,socket:{remoteAddress:req.socket?.remoteAddress},
    doConnectingIp:req.get?.('do-connecting-ip'),
    session:{appSession:{user:{...req.session?.appSession?.user}}},get:()=>req.get?.('user-agent')};
-  const job=Promise.resolve().then(()=>identify(captured)).then(identity=>queue.push({...event,...identity}))
+  const isPublicViewer=event.event_kind==='public_search'||
+   (event.event_kind==='page_request'&&event.path===PUBLIC_VIEWER_PATH);
+  const job=Promise.resolve().then(()=>identify(captured,{isPublicViewer,occurredAt:event.occurred_at}))
+   .then(identity=>queue.push({...event,...identity}))
    .catch(error=>{failed++;logger.error('Audit identity failed',{code:error.code||'IDENTITY_ERROR'});})
    .finally(()=>{pending--;jobs.delete(job);});jobs.add(job);return true;
  }
@@ -44,7 +48,9 @@ function createActivityAudit(pool,{flushMs=1000,maxQueue=1000,batchSize=100,logg
   const api=path.startsWith('/api/')&&!['/api/health','/api/test'].includes(path);
   if(page||api){const start=process.hrtime.bigint();res.once('finish',()=>enqueue(req,{
    occurred_at:new Date().toISOString(),event_kind:page?'page_request':'api_request',
-   http_method:String(req.method||'GET').slice(0,10),path:path.slice(0,512),status_code:res.statusCode,
+   http_method:String(req.method||'GET').slice(0,10),
+   path:path==='/'&&res.locals?.auditPage==='public_viewer'?PUBLIC_VIEWER_PATH:path.slice(0,512),
+   status_code:res.statusCode,
    duration_ms:Math.max(0,Math.round(Number(process.hrtime.bigint()-start)/1e6))}));}
   next();
  }
