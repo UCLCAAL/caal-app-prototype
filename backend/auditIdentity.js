@@ -8,12 +8,13 @@ for(const cidr of ['173.245.48.0/20','103.21.244.0/22','103.22.200.0/22','103.31
 }
 function canonicalIp(value){const ip=normaliseIp(value);if(!ip)return null;return net.isIP(ip)===6?new URL(`http://[${ip}]/`).hostname.slice(1,-1):ip;}
 function proxyIp(ip){return ip&&cloudflare.check(ip,net.isIP(ip)===4?'ipv4':'ipv6');}
-function createAuditIdentity({secret=process.env.AUDIT_ID_SECRET,now=()=>Date.now(),ipLocation=null}={}){
+function createAuditIdentity({secret=process.env.AUDIT_ID_SECRET,now=()=>Date.now(),ipLocation=null,
+ useDigitalOceanIp=process.env.AUDIT_TRUST_DO_CONNECTING_IP==='true'}={}){
  if(!/^[a-f0-9]{64,}$/i.test(secret||''))throw new Error('AUDIT_ID_SECRET must be a random hex secret of at least 32 bytes');
  const key=Buffer.from(secret,'hex');
  return async req=>{
-  // req.ip uses the application's existing Express trust policy. Do not trust browser-supplied headers here.
-  const ip=canonicalIp(req.ip||req.socket?.remoteAddress);
+  // Enable only behind App Platform ingress after verifying it overwrites this header.
+  const ip=canonicalIp(useDigitalOceanIp?req.doConnectingIp:(req.ip||req.socket?.remoteAddress));
   const period=String(Math.floor(now()/(7*86400000)));
   const status=!ip?'unavailable':proxyIp(ip)?'proxy_unresolved':!isPublicIp(ip)?'non_public':null;
   const location=!status&&ipLocation?await ipLocation.lookup(ip):null;

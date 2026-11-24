@@ -12,6 +12,7 @@ function createActivityAudit(pool,{flushMs=1000,maxQueue=1000,batchSize=100,logg
   pending++;
   // Capture request identity before session teardown; raw IP exists only during the in-memory lookup.
   const captured={ip:req.ip,socket:{remoteAddress:req.socket?.remoteAddress},
+   doConnectingIp:req.get?.('do-connecting-ip'),
    session:{appSession:{user:{...req.session?.appSession?.user}}},get:()=>req.get?.('user-agent')};
   const job=Promise.resolve().then(()=>identify(captured)).then(identity=>queue.push({...event,...identity}))
    .catch(error=>{failed++;logger.error('Audit identity failed',{code:error.code||'IDENTITY_ERROR'});})
@@ -26,15 +27,18 @@ function createActivityAudit(pool,{flushMs=1000,maxQueue=1000,batchSize=100,logg
  }
  const timer=setInterval(()=>void flush(),flushMs);timer.unref?.();
  function middleware(req,res,next){
-  if(process.env.AUDIT_PROXY_DIAGNOSTIC==='true'&&diagnostics<5){
-   diagnostics++;logger.info('Audit proxy diagnostic',{express_ip_kind:classify(req.ip),
+  const path=String(req.originalUrl||req.url||'').split('?')[0];
+  if(process.env.AUDIT_PROXY_DIAGNOSTIC==='true'&&diagnostics<12&&['/','/public-viewer.html'].includes(path)){
+   const doIp=req.get?.('do-connecting-ip');
+   diagnostics++;logger.info('Audit proxy diagnostic',{path,express_ip_kind:classify(req.ip),
     socket_kind:classify(req.socket?.remoteAddress),
     forwarded_chain_left_to_right:String(req.get?.('x-forwarded-for')||'').split(',').filter(Boolean).slice(0,10).map(x=>classify(x.trim())),
+    do_connecting_ip_kind:doIp?classify(doIp):'absent',
+    do_connecting_ip_is_test_value:canonicalIp(doIp)==='192.0.2.123',
     cf_connecting_ip_present:Boolean(req.get?.('cf-connecting-ip'))});
   }
   req.recordPublicSearch=event=>enqueue(req,{search_text:event.search_text,filters:event.filters,
    trigger:event.trigger,language:event.language,event_kind:'public_search',occurred_at:new Date().toISOString()});
-  const path=String(req.originalUrl||req.url||'').split('?')[0];
   const page=['/','/index.html','/home.html','/monuments.html','/archive.html','/viewer.html',
    '/public-viewer.html','/about.html','/feedback.html'].includes(path);
   const api=path.startsWith('/api/')&&!['/api/health','/api/test'].includes(path);
