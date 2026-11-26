@@ -1898,7 +1898,7 @@ function archiveWireClickToggleMultiSelects() {
 
     select.addEventListener("mousedown", (event) => {
       const option = event.target;
-      if (!option || option.tagName !== "OPTION") return;
+      if (!option || option.tagName !== "OPTION" || option.disabled) return;
 
       event.preventDefault();
       option.selected = !option.selected;
@@ -2666,7 +2666,7 @@ function archiveRenderSelect(fieldName, label, lookupName, currentValue, fullWid
     .map((item) => {
       const value = item.value ?? "";
       const selected = String(value) === String(currentValue ?? "") ? "selected" : "";
-      return `<option value="${value}" ${selected}>${item.label ?? value}</option>`;
+      return `<option value="${archiveAttributeValue(value)}" ${selected} ${item.raw?.is_selectable===false&&!selected?"disabled":""}>${archiveAttributeValue(item.label ?? value)}</option>`;
     })
     .join("");
 
@@ -2696,7 +2696,7 @@ function archiveRenderMultiSelect(fieldName, label, lookupName, currentValue, fu
     .map((item) => {
       const value = String(item.value ?? "");
       const selected = selectedValues.includes(value) ? "selected" : "";
-      return `<option value="${value}" ${selected}>${item.label ?? value}</option>`;
+      return `<option value="${archiveAttributeValue(value)}" ${selected} ${item.raw?.is_selectable===false&&!selected?"disabled":""}>${archiveAttributeValue(item.label ?? value)}</option>`;
     })
     .join("");
 
@@ -2794,7 +2794,7 @@ function archiveWireEditMultiSelects() {
     selectEl.addEventListener("mousedown", (event) => {
       const option = event.target;
 
-      if (!option || option.tagName !== "OPTION") return;
+      if (!option || option.tagName !== "OPTION" || option.disabled) return;
 
       event.preventDefault();
 

@@ -6450,6 +6450,7 @@ function mRenderLegacyMultiSelect({
         <option
           value="${mAttributeValue(value)}"
           ${selected}
+          ${item.raw?.is_selectable===false&&!selected?"disabled":""}
         >
           ${optionLabel}
         </option>
@@ -6816,6 +6817,7 @@ function mRenderLegacyTreePicker({
               data-parent-id="${mAttributeValue(parentId)}"
               data-chip-label="${mAttributeValue(treeChipLabel(item))}"
               ${checked ? "checked" : ""}
+              ${item.raw?.is_selectable===false&&!checked?"disabled":""}
             >
             <span>${itemLabel(item)}</span>
           </label>
@@ -7003,7 +7005,7 @@ function mWireEditMultiSelects() {
     selectEl.addEventListener("mousedown", (event) => {
       const option = event.target;
 
-      if (!option || option.tagName !== "OPTION") return;
+      if (!option || option.tagName !== "OPTION" || option.disabled) return;
 
       event.preventDefault();
 
@@ -7807,6 +7809,7 @@ function mRenderSelect(
           value="${mAttributeValue(value)}"
           title="${mAttributeValue(optionLabel)}"
           ${selected}
+          ${item.raw?.is_selectable===false&&!selected?"disabled":""}
         >
           ${optionLabel}
         </option>
@@ -13241,7 +13244,7 @@ function wireClickToggleMultiSelects({ excludeSelects = [] } = {}) {
     select.addEventListener("mousedown", (event) => {
       const option = event.target;
 
-      if (!option || option.tagName !== "OPTION") return;
+      if (!option || option.tagName !== "OPTION" || option.disabled) return;
 
       event.preventDefault();
 

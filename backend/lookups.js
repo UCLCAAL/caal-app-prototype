@@ -169,6 +169,7 @@ async function fetchHierarchicalLookupTree({
 
   if (includeDates) {
     columns.push(
+      "is_selectable",
       "date_range",
       "date_from",
       "date_to"
